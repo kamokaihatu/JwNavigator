@@ -1,0 +1,16 @@
+﻿# ===== ✂️ config.csv START ✂️ =====
+左,単独,線,h,line
+左,単独,矩形,b,rect
+左,単独,円,e,circle
+左,単独,文字,a,text
+左,単独,寸法,s,dimension
+左,単独,範囲,y,range
+左,単独,複写,c,copy
+左,単独,移動,m,move
+左,単独,消去,d,delete
+左,単独,伸縮,t,stretch
+左,単独,コーナー,v,corner
+左,単独,面取,r,chamfer
+左,単独,戻る（アンドゥ）,{ESC},undo
+左,単独,進む（リドゥ）,+{ESC},redo
+# ===== ✂️ config.csv END ✂️ =====

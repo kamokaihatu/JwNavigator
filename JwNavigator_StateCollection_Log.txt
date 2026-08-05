@@ -1,0 +1,27 @@
+12:28:36  STATE       線・円マウス | state=STATE_UNKNOWN | rule=NONE_MATCH
+12:48:30  STATE        | state=STATE_IDLE | rule=IDLE_READY
+12:48:30  STATE       線・円マウス | state=STATE_UNKNOWN | rule=NONE_MATCH
+12:48:30  STATE        | state=STATE_IDLE | rule=IDLE_READY
+12:48:30  STATE       線・円マウス | state=STATE_UNKNOWN | rule=NONE_MATCH
+12:48:30  STATE        | state=STATE_IDLE | rule=IDLE_READY
+12:48:31  STATE       線・円マウス | state=STATE_UNKNOWN | rule=NONE_MATCH
+12:48:31  STATE        | state=STATE_IDLE | rule=IDLE_READY
+12:48:32  STATE       線・円マウス | state=STATE_UNKNOWN | rule=NONE_MATCH
+12:48:32  STATE        | state=STATE_IDLE | rule=IDLE_READY
+12:48:32  STATE       線・円マウス | state=STATE_UNKNOWN | rule=NONE_MATCH
+12:48:32  STATE        | state=STATE_IDLE | rule=IDLE_READY
+12:48:33  STATE       線・円マウス | state=STATE_UNKNOWN | rule=NONE_MATCH
+12:48:33  STATE        | state=STATE_IDLE | rule=IDLE_READY
+12:48:34  STATE       線・円マウス | state=STATE_UNKNOWN | rule=NONE_MATCH
+12:48:34  STATE        | state=STATE_IDLE | rule=IDLE_READY
+12:48:34  STATE       線・円マウス | state=STATE_UNKNOWN | rule=NONE_MATCH
+12:48:34  STATE        | state=STATE_IDLE | rule=IDLE_READY
+13:00:57  STATE        | state=STATE_IDLE | rule=IDLE_READY
+13:00:57  STATE       線・円マウス | state=STATE_UNKNOWN | rule=NONE_MATCH
+13:00:57  STATE        | state=STATE_IDLE | rule=IDLE_READY
+13:00:58  STATE       線・円マウス | state=STATE_UNKNOWN | rule=NONE_MATCH
+13:00:58  STATE        | state=STATE_IDLE | rule=IDLE_READY
+13:00:59  STATE       線・円マウス | state=STATE_UNKNOWN | rule=NONE_MATCH
+13:00:59  STATE        | state=STATE_IDLE | rule=IDLE_READY
+13:01:03  STATE       線・円マウス | state=STATE_UNKNOWN | rule=NONE_MATCH
+13:01:03  STATE        | state=STATE_IDLE | rule=IDLE_READY

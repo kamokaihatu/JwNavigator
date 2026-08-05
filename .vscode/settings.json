@@ -1,0 +1,18 @@
+{
+  "python.defaultInterpreterPath": "${workspaceFolder}\\.venv\\Scripts\\python.exe",
+  "python.analysis.extraPaths": [
+    "${workspaceFolder}/typings",
+    "${workspaceFolder}\\.venv\\Lib\\site-packages"
+  ],
+  "editor.formatOnPaste": true,
+  "editor.formatOnSave": true,
+  "[python]": {
+    "editor.defaultFormatter": "ms-python.black-formatter"
+  },
+  "python.formatting.provider": "black",
+  "python.formatting.blackPath": "${workspaceFolder}\\.venv\\Scripts\\black.exe",
+  "python.formatting.blackArgs": [
+    "--line-length",
+    "88"
+  ]
+}
