@@ -5,18 +5,20 @@
 # 使い方:
 #   1. Jw_cadを起動しておく
 #   2. .venv/Scripts/python.exe tests/record_status_transitions.py を実行
-#   3. これからテストするコマンドの command_id（commands_master.csv参照。例: C001）を入力
+#   3. data/_collector_control.txt に command_id（commands_master.csv参照。例: C001）を書き込む
+#      （テキストエディタで直接編集してもよいし、他プロセスから書き込んでもよい）
 #   4. Jw_cad側でそのコマンドを実際に操作する（ホバー・クリック・作業領域移動・ESCなど）
 #   5. 以下のイベントが起きるたびに自動でCSVへ1行追記される
-#        MOVE        : Jw_cadウィンドウ内でのマウス移動（250ms間隔で間引き）
+#        （MOVEは監視しない。フックコールバックの呼び出し頻度そのものが
+#          クラッシュ頻度に直結していたため、クリック系のみに絞っている）
 #        CLICK       : 左クリック直後（ボタン押下時）
 #        CLICK_AFTER : 左クリックのボタン離し時
 #        RCLICK      : 右クリック直後
 #        RCLICK_AFTER: 右クリックのボタン離し時
 #        ESC         : ESCキー押下時
 #        AUTO        : 上記イベントを伴わずにステータスバー文字列だけが変化した場合
-#   6. 次のコマンドに移るときは、また command_id を入力し直す
-#   7. quit または Ctrl+C で終了
+#   6. 次のコマンドに移るときは、また data/_collector_control.txt を書き換える
+#   7. data/_collector_control.txt に QUIT と書き込むか Ctrl+C で終了
 #
 # ドラッグ操作は収集対象外（commands_master.md の方針通り）。
 #
@@ -53,7 +55,6 @@ JW_CAD_EXE_NAME = "jw_win.exe"
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 OUTPUT_PATH = os.path.join(REPO_ROOT, "data", "status_transitions.csv")
 POLL_INTERVAL_SEC = 0.1
-MOVE_THROTTLE_SEC = 0.25
 
 WH_MOUSE_LL = 14
 WM_MOUSEMOVE = 0x0200
@@ -131,7 +132,6 @@ class Collector:
         self._lock = threading.Lock()
         self._running = True
         self._last_raw_text = None
-        self._last_move_time = 0.0
         # 👑 フックコールバックはここへ積むだけにして、実処理（重いWin32呼び出し）は
         # 別スレッド（drain_hook_queue）で行う。ネイティブクラッシュ対策。
         self._hook_event_queue = queue.Queue()
@@ -241,21 +241,19 @@ class InputHookController:
             # 重いWin32呼び出しは絶対に行わない（ネイティブクラッシュ対策）。
             if nCode >= 0:
                 try:
-                    data = ctypes.cast(lParam, ctypes.POINTER(MSLLHOOKSTRUCT)).contents
-                    x, y = data.pt.x, data.pt.y
-                    if wParam == WM_MOUSEMOVE:
-                        now = time.perf_counter()
-                        if now - self.collector._last_move_time >= MOVE_THROTTLE_SEC:
-                            self.collector._last_move_time = now
-                            self.collector._hook_event_queue.put(("MOVE", x, y))
-                    elif wParam == WM_LBUTTONDOWN:
-                        self.collector._hook_event_queue.put(("CLICK", x, y))
-                    elif wParam == WM_LBUTTONUP:
-                        self.collector._hook_event_queue.put(("CLICK_AFTER", x, y))
-                    elif wParam == WM_RBUTTONDOWN:
-                        self.collector._hook_event_queue.put(("RCLICK", x, y))
-                    elif wParam == WM_RBUTTONUP:
-                        self.collector._hook_event_queue.put(("RCLICK_AFTER", x, y))
+                    # 👑 WM_MOUSEMOVEは監視しない（システム全体で最高頻度のイベントであり、
+                    # フックコールバックの呼び出し回数そのものがクラッシュ頻度に直結して
+                    # いたため、実機検証でクリック系のみに絞ることにした）。
+                    click_kind = {
+                        WM_LBUTTONDOWN: "CLICK",
+                        WM_LBUTTONUP: "CLICK_AFTER",
+                        WM_RBUTTONDOWN: "RCLICK",
+                        WM_RBUTTONUP: "RCLICK_AFTER",
+                    }.get(wParam)
+                    if click_kind:
+                        data = ctypes.cast(lParam, ctypes.POINTER(MSLLHOOKSTRUCT)).contents
+                        x, y = data.pt.x, data.pt.y
+                        self.collector._hook_event_queue.put((click_kind, x, y))
                 except Exception:
                     pass
             return ctypes.windll.user32.CallNextHookEx(None, nCode, wParam, lParam)
@@ -287,15 +285,32 @@ class InputHookController:
                 ctypes.windll.user32.DispatchMessageW(ctypes.byref(msg))
 
 
+CONTROL_PATH = os.path.join(REPO_ROOT, "data", "_collector_control.txt")
+
+
 def main():
     print("=== JwNavigator ステータスバー収集ツール ===")
     print(f"出力先: {OUTPUT_PATH}")
-    print("これからテストする command_id（例: C001）を入力してから、Jw_cad側を操作してください。")
-    print("マウス移動・クリック（左右）・ESCが自動記録されます。空Enterで command_id なし。")
-    print("'quit' で終了します。")
+    print(f"制御ファイル: {CONTROL_PATH}")
+    print(
+        "このファイルに command_id（例: C001）を書き込むと自動的に切り替わります。"
+        "'QUIT' と書き込むと終了します。"
+    )
+    print("マウス移動・クリック（左右）・ESCが自動記録されます。")
 
     collector = Collector()
     collector.ensure_csv_header()
+
+    # 👑 起動直後の取りこぼし対策: poll_loop（別スレッド）を開始する前に、
+    # 既に書かれているcommand_idを読み込んでおく（読み込み前にAUTO検知が
+    # 走ってcommand_id未設定のまま記録されてしまうレースを防ぐ）。
+    last_control = None
+    if os.path.exists(CONTROL_PATH):
+        with open(CONTROL_PATH, "r", encoding="utf-8") as f:
+            last_control = f.read().strip()
+        if last_control and last_control.upper() != "QUIT":
+            collector.set_command_id(last_control)
+            print(f"command_id -> {last_control}")
 
     poll_thread = threading.Thread(target=collector.poll_loop, daemon=True)
     poll_thread.start()
@@ -305,11 +320,19 @@ def main():
 
     try:
         while True:
-            command_id = input("command_id> ").strip()
-            if command_id.lower() in ("quit", "exit"):
+            time.sleep(0.5)
+            if not os.path.exists(CONTROL_PATH):
+                continue
+            with open(CONTROL_PATH, "r", encoding="utf-8") as f:
+                content = f.read().strip()
+            if content == last_control:
+                continue
+            last_control = content
+            if content.upper() == "QUIT":
                 break
-            collector.set_command_id(command_id)
-    except (KeyboardInterrupt, EOFError):
+            collector.set_command_id(content)
+            print(f"command_id -> {content or '(未設定)'}")
+    except KeyboardInterrupt:
         pass
     finally:
         hooks.stop()

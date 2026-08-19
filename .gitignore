@@ -39,6 +39,7 @@ pip-delete-this-directory.txt
 # JwNavigator runtime logs (generated at run time, not source)
 JwNavigator_Log.txt
 JwNavigator_StateCollection_Log.txt
+data/_collector_control.txt
 
 # Unit test / coverage reports
 htmlcov/
