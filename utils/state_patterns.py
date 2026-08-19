@@ -156,6 +156,15 @@ STATE_DATABASE = {
     "STATE_FILE_SAVE_OVER": [(r"上書き保存", RuleId.FILE_SAVE_OVER)],
     "STATE_FILE_OPEN_EXIST": [(r"既存のファイルを開く", RuleId.FILE_OPEN_EXIST)],
     "STATE_FILE_NEW": [(r"新規にファイルを作成", RuleId.FILE_NEW)],
-    "STATE_TWO_FIVE_D_MODE": [(r"建物の高さを設定する線端部", RuleId.TWO_FIVE_D_WAIT)]
+    # 👑 2026-08-19実測で判明: このパターンは元々2.5D用のつもりだったが、実際の
+    # 2.5D文言は「高さ・奥行を設定する線端部または円を指示」であり、
+    # 「建物の高さを設定する線端部を指示してください」は日影図・天空図の文言
+    # だった（天空図は自身のツールチップで「日影図のデータを使用して」と明言
+    # しており、意図的に同じ高さ設定データを共有している）。日影図・天空図は
+    # まだ専用のSTATEを持たないため、判定を壊さないよう文言を実測値に訂正する
+    # にとどめる。日影図/天空図を区別したくなったら、2段階目の固有文言
+    # （天空図: 「正射影　測定点を指示してください。」「天空図の作図位置（円中心）
+    # を指示してください。」）を使うこと。
+    "STATE_TWO_FIVE_D_MODE": [(r"高さ・奥行を設定する線端部または円を指示", RuleId.TWO_FIVE_D_WAIT)]
 }
 # ===== ✂️ utils/state_patterns.py END PART 2 ✂️ =====
