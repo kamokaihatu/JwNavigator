@@ -56,6 +56,7 @@ class RuleId(Enum):
     POINT_WAIT = auto()
     SESSEN_WAIT = auto()
     HATCH_WAIT = auto()
+    SETSUEN_WAIT_3RD = auto()
     TATEG_WAIT = auto()
     RANGE_WAIT = auto()
     FUKUSEN_WAIT = auto()
@@ -92,13 +93,27 @@ STATE_DATABASE = {
     "STATE_TEXT": [(r"文字を書きます", RuleId.TEXT_TOOLTIP), (r"文字を入力するか", RuleId.TEXT_WAIT)],
     "STATE_DIM": [(r"寸法を記入します", RuleId.DIM_TOOLTIP), (r"\[寸法\]", RuleId.DIM_BRACKET), (r"寸法線の位置を指示して下さい", RuleId.DIM_WAIT)],
     "STATE_TWO_LINE": [(r"２線を作図します", RuleId.TWO_LINE_TOOLTIP), (r"基準線を指示してください", RuleId.TWO_LINE_WAIT)],
-    "STATE_CENTER": [(r"中心線を作図します", RuleId.CENTER_TOOLTIP)],  # CENTER_WAIT: 未実測のため削除（実測後に追加）
+    # 👑 CENTER_WAIT実測メモ（2026-08-19収集）: 実際の文言は
+    # "１番目の線・円をﾏｳｽ(L)で、読取点をﾏｳｽ(R)で指示してください。" だが、
+    # この文言はSTATE_SETSUEN（接円）の1〜2番目指示と完全に同一で衝突するため、
+    # 誤判定を避けるためあえて登録しない。区別できるのはSTATE_SETSUEN側の
+    # 「３番目」の文言が出た場合のみ（接円は3つ必要、中心線は2つで確定するため）。
+    "STATE_CENTER": [(r"中心線を作図します", RuleId.CENTER_TOOLTIP)],
     "STATE_RENTENT": [(r"連続線・連続円弧を作図します", RuleId.RENTENT_TOOLTIP)],
     "STATE_AUTO": [(r"AUTOモードを実行します", RuleId.AUTO_TOOLTIP), (r"AUTOモード   \(L\)free", RuleId.AUTO_WAIT)],
     "STATE_POINT": [(r"点を書きます", RuleId.POINT_TOOLTIP), (r"点位置を指示してください", RuleId.POINT_WAIT)],
     "STATE_SESSEN": [(r"接線を作図します", RuleId.SESSEN_TOOLTIP), (r"円を指示してください", RuleId.SESSEN_WAIT)],
-    "STATE_SETSUEN": [(r"接円を作図します", RuleId.SETSUEN_TOOLTIP)],
-    "STATE_HATCH": [(r"ハッチングを行います", RuleId.HATCH_TOOLTIP)],  # HATCH_WAIT: 未実測のため削除（実測後に追加）
+    # 👑 SETSUEN実測メモ（2026-08-19収集）: 1〜2番目の指示文言はSTATE_CENTERと
+    # 完全に同一で衝突するため未登録。「３番目」はSTATE_CENTERに存在しない
+    # （接円は円3つが必要、中心線は2つで確定するため）唯一の区別可能な文言。
+    "STATE_SETSUEN": [
+        (r"接円を作図します", RuleId.SETSUEN_TOOLTIP),
+        (r"３番目の線・円をﾏｳｽ", RuleId.SETSUEN_WAIT_3RD),
+    ],
+    "STATE_HATCH": [
+        (r"ハッチングを行います", RuleId.HATCH_TOOLTIP),
+        (r"始めの線・弧をﾏｳｽ\(L\)で、閉鎖連続線・円をﾏｳｽ\(R\)で指示してください", RuleId.HATCH_WAIT),
+    ],
     "STATE_TATEG": [(r"建具を選択してください", RuleId.TATEG_WAIT), (r"ﾊﾟラメトリックな建具", RuleId.TATEG_TOOLTIP)],
     "STATE_POLYGON": [(r"多角形（２辺）を作図します", RuleId.POLYGON_TOOLTIP)],
     "STATE_CURVE": [(r"曲線を作図します", RuleId.CURVE_TOOLTIP)],
