@@ -20,6 +20,14 @@
 #
 # ドラッグ操作は収集対象外（commands_master.md の方針通り）。
 #
+# ⚠️ 既知の不安定要素:
+#   このマウス/キーボードフック機構（SetWindowsHookExW）は、実機検証で
+#   Python 3.13.14環境において不定タイミングでネイティブクラッシュ
+#   （_ctypes.pyd, 0xC000041D/0xC0000005）することを確認している
+#   （詳細はJwNavigator本体main.pyのコメント参照）。
+#   1イベントごとにCSVへ即時追記しているため、クラッシュしても収集済みの
+#   行は失われない。落ちたらそのまま再実行して収集を続行すればよい。
+#
 # 出力: data/status_transitions.csv
 #   (timestamp, command_id, event_type, x, y, raw_status_text)
 import csv
@@ -27,14 +35,20 @@ import ctypes
 from ctypes import wintypes
 import datetime
 import os
+import queue
 import sys
 import threading
 import time
 
+import win32api
+import win32con
 import win32gui
+import win32process
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from utils.jww_watcher import get_raw_statusbar_text
+
+JW_CAD_EXE_NAME = "jw_win.exe"
 
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 OUTPUT_PATH = os.path.join(REPO_ROOT, "data", "status_transitions.csv")
@@ -62,16 +76,33 @@ class MSLLHOOKSTRUCT(ctypes.Structure):
     ]
 
 
+def _get_exe_name_for_hwnd(hwnd):
+    handle = None
+    try:
+        _, pid = win32process.GetWindowThreadProcessId(hwnd)
+        handle = win32api.OpenProcess(
+            win32con.PROCESS_QUERY_INFORMATION | win32con.PROCESS_VM_READ, False, pid
+        )
+        path = win32process.GetModuleFileNameEx(handle, 0)
+        return os.path.basename(path).lower()
+    except Exception:
+        return None
+    finally:
+        if handle:
+            win32api.CloseHandle(handle)
+
+
 def find_jw_cad_window():
-    # 👑 【本体からの独立方針】main.pyの厳密なパレット判定ロジックには依存せず、
-    # 収集ツール単体で完結する簡易版のウィンドウ検出を持つ。
+    # 👑 タイトル文字列の部分一致ではなく、実行ファイル名（jw_win.exe）で厳密に判定する。
+    # Explorerやエディタ等の無関係なウィンドウを誤って対象にしないため。
     found = []
 
     def enum_cb(hwnd, extra):
         if not win32gui.IsWindowVisible(hwnd):
             return True
-        title_lower = win32gui.GetWindowText(hwnd).lower()
-        if ("jw" in title_lower or "cad" in title_lower) and win32gui.GetParent(hwnd) == 0:
+        if win32gui.GetParent(hwnd) != 0:
+            return True
+        if _get_exe_name_for_hwnd(hwnd) == JW_CAD_EXE_NAME:
             found.append(hwnd)
         return True
 
@@ -101,6 +132,9 @@ class Collector:
         self._running = True
         self._last_raw_text = None
         self._last_move_time = 0.0
+        # 👑 フックコールバックはここへ積むだけにして、実処理（重いWin32呼び出し）は
+        # 別スレッド（drain_hook_queue）で行う。ネイティブクラッシュ対策。
+        self._hook_event_queue = queue.Queue()
 
     def set_command_id(self, command_id):
         with self._lock:
@@ -135,15 +169,30 @@ class Collector:
         hwnd = find_jw_cad_window()
         if not hwnd:
             return
+        if x is not None and y is not None and not is_point_in_window(hwnd, x, y):
+            return
         raw_text = get_raw_statusbar_text(hwnd)
         self._last_raw_text = raw_text
         self.append_row(event_type, x, y, raw_text)
         print(f"[{self.get_command_id() or '(未設定)'}] {event_type} ({x},{y}) {raw_text}")
 
+    def drain_hook_queue(self):
+        while True:
+            try:
+                event_type, x, y = self._hook_event_queue.get_nowait()
+            except queue.Empty:
+                break
+            try:
+                self.record_event(event_type, x, y)
+            except Exception:
+                pass
+
     def poll_loop(self):
         # 👑 マウス/キーボードイベントを伴わない自然な状態変化（AUTOモードの自動遷移等）を
-        # 取りこぼさないための補助ポーリング。
+        # 取りこぼさないための補助ポーリング。フックが積んだイベントもここで処理する
+        # （ネイティブなフックコールバックの外で重い処理を行うことでクラッシュを避ける）。
         while self._running:
+            self.drain_hook_queue()
             hwnd = find_jw_cad_window()
             if hwnd:
                 raw_text = get_raw_statusbar_text(hwnd)
@@ -188,25 +237,25 @@ class InputHookController:
 
         @callback_type
         def mouse_proc(nCode, wParam, lParam):
+            # 👑 ここでは座標をキューへ積むだけ。ウィンドウ列挙やSendMessage等の
+            # 重いWin32呼び出しは絶対に行わない（ネイティブクラッシュ対策）。
             if nCode >= 0:
                 try:
                     data = ctypes.cast(lParam, ctypes.POINTER(MSLLHOOKSTRUCT)).contents
                     x, y = data.pt.x, data.pt.y
-                    hwnd = find_jw_cad_window()
-                    if hwnd and is_point_in_window(hwnd, x, y):
-                        if wParam == WM_MOUSEMOVE:
-                            now = time.perf_counter()
-                            if now - self.collector._last_move_time >= MOVE_THROTTLE_SEC:
-                                self.collector._last_move_time = now
-                                self.collector.record_event("MOVE", x, y)
-                        elif wParam == WM_LBUTTONDOWN:
-                            self.collector.record_event("CLICK", x, y)
-                        elif wParam == WM_LBUTTONUP:
-                            self.collector.record_event("CLICK_AFTER", x, y)
-                        elif wParam == WM_RBUTTONDOWN:
-                            self.collector.record_event("RCLICK", x, y)
-                        elif wParam == WM_RBUTTONUP:
-                            self.collector.record_event("RCLICK_AFTER", x, y)
+                    if wParam == WM_MOUSEMOVE:
+                        now = time.perf_counter()
+                        if now - self.collector._last_move_time >= MOVE_THROTTLE_SEC:
+                            self.collector._last_move_time = now
+                            self.collector._hook_event_queue.put(("MOVE", x, y))
+                    elif wParam == WM_LBUTTONDOWN:
+                        self.collector._hook_event_queue.put(("CLICK", x, y))
+                    elif wParam == WM_LBUTTONUP:
+                        self.collector._hook_event_queue.put(("CLICK_AFTER", x, y))
+                    elif wParam == WM_RBUTTONDOWN:
+                        self.collector._hook_event_queue.put(("RCLICK", x, y))
+                    elif wParam == WM_RBUTTONUP:
+                        self.collector._hook_event_queue.put(("RCLICK_AFTER", x, y))
                 except Exception:
                     pass
             return ctypes.windll.user32.CallNextHookEx(None, nCode, wParam, lParam)
@@ -220,7 +269,7 @@ class InputHookController:
                             lParam, ctypes.POINTER(ctypes.c_ulong)
                         ).contents.value
                         if vk_code == VK_ESCAPE:
-                            self.collector.record_event("ESC")
+                            self.collector._hook_event_queue.put(("ESC", None, None))
                 except Exception:
                     pass
             return ctypes.windll.user32.CallNextHookEx(None, nCode, wParam, lParam)

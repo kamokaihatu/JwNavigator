@@ -7,10 +7,14 @@ import time
 import datetime
 import re
 import threading
+import queue
 import logging
 
 try:
     import win32gui
+    import win32process
+    import win32api
+    import win32con
 except ModuleNotFoundError as exc:
     raise SystemExit(
         "pywin32 のインポートに失敗しました。"
@@ -74,6 +78,8 @@ class KeyboardHookController:
 
         @callback_type
         def hook_proc(nCode, wParam, lParam):
+            # 👑 【0xC000041Dクラッシュ埋葬・第2弾】フックコールバック内では一切の重い処理
+            # （ウィンドウ列挙・SendMessage等）を行わず、キューへ積むだけに徹する。
             if nCode >= 0 and getattr(self.manager, "state_collection_logger", None):
                 try:
                     if wParam == WM_KEYDOWN:
@@ -81,16 +87,7 @@ class KeyboardHookController:
                             lParam, ctypes.POINTER(ctypes.c_ulong)
                         ).contents.value
                         if vk_code == VK_ESCAPE:
-                            raw_status_text = self.manager.capture_statusbar_for_window(
-                                self.manager.find_all_jw_cad_windows()[0]
-                                if self.manager.find_all_jw_cad_windows()
-                                else None
-                            )
-                            self.manager.record_state_collection_event(
-                                "ESC",
-                                "VK_ESCAPE",
-                                raw_status_text=raw_status_text,
-                            )
+                            self.manager.hook_event_queue.put(("ESC",))
                 except Exception as exc:
                     logging.exception("KeyboardHookController unhook failed")
 
@@ -154,6 +151,11 @@ class MouseHookController:
 
         @callback_type
         def hook_proc(nCode, wParam, lParam):
+            # 👑 【0xC000041Dクラッシュ埋葬・第2弾】フックコールバックの中でSendMessage等の
+            # Win32同期呼び出しを行うと、低レベルフックのコールバック文脈として不安定になり
+            # ネイティブクラッシュを招く。ここでは座標とイベント種別をキューへ積むだけに徹し、
+            # 実際の重い処理（ステータスバー読み取り等）はTkinterのメインスレッド側
+            # （_drain_hook_queue）で行う。
             if (
                 nCode >= 0
                 and getattr(self.manager, "state_collection_logger", None)
@@ -162,35 +164,16 @@ class MouseHookController:
                 try:
                     data = ctypes.cast(lParam, ctypes.POINTER(MSLLHOOKSTRUCT)).contents
                     x, y = data.pt.x, data.pt.y
-                    inside_jw = self.manager.is_cursor_over_jw_window(x, y)
 
-                    if inside_jw:
-                        raw_status_text = self.manager.capture_statusbar_for_point(x, y)
-
-                        if wParam == WM_MOUSEMOVE:
-                            now = time.perf_counter()
-                            if now - self._last_move_time >= 0.25:
-                                self._last_move_time = now
-                                self.manager.record_state_collection_event(
-                                    "MOVE",
-                                    f"({x},{y})",
-                                    raw_status_text=raw_status_text,
-                                )
-
-                        elif wParam == WM_LBUTTONDOWN:
-                            self.manager.record_state_collection_event(
-                                "CLICK",
-                                f"({x},{y})",
-                                raw_status_text=raw_status_text,
-                            )
-
-                        elif wParam == WM_LBUTTONUP:
-                            self.manager.record_state_collection_event(
-                                "CLICK_AFTER",
-                                f"({x},{y})",
-                                raw_status_text=raw_status_text,
-                            )
-
+                    if wParam == WM_MOUSEMOVE:
+                        now = time.perf_counter()
+                        if now - self._last_move_time >= 0.25:
+                            self._last_move_time = now
+                            self.manager.hook_event_queue.put(("MOVE", x, y))
+                    elif wParam == WM_LBUTTONDOWN:
+                        self.manager.hook_event_queue.put(("CLICK", x, y))
+                    elif wParam == WM_LBUTTONUP:
+                        self.manager.hook_event_queue.put(("CLICK_AFTER", x, y))
                 except Exception as exc:
                     logging.exception("MouseHookController error")
             return ctypes.windll.user32.CallNextHookEx(None, nCode, wParam, lParam)
@@ -222,6 +205,8 @@ class JwNavigatorManager:
         )  # 👑 コマンド実行中の凹み上書き防止ロック（インテントホールド）
         self.mouse_hook_controller = MouseHookController(self)
         self.keyboard_hook_controller = KeyboardHookController(self)
+        # 👑 フックコールバックはここへイベントを積むだけ。実処理はメインスレッドのdrainで行う。
+        self.hook_event_queue = queue.Queue()
 
         # 👑 【リスト直撃クラッシュ完全埋葬】 sys.argvの0番目（文字列）を正確に参照してPath型エラーを防止
         script_path_str = sys.argv[0] if sys.argv else ""
@@ -254,25 +239,38 @@ class JwNavigatorManager:
         except Exception as e:
             print(f"Log Write Error: {e}")
 
+    JW_CAD_EXE_NAME = "jw_win.exe"
+
+    @staticmethod
+    def _get_exe_name_for_hwnd(hwnd):
+        handle = None
+        try:
+            _, pid = win32process.GetWindowThreadProcessId(hwnd)
+            handle = win32api.OpenProcess(
+                win32con.PROCESS_QUERY_INFORMATION | win32con.PROCESS_VM_READ, False, pid
+            )
+            path = win32process.GetModuleFileNameEx(handle, 0)
+            return os.path.basename(path).lower()
+        except Exception:
+            return None
+        finally:
+            if handle:
+                win32api.CloseHandle(handle)
+
     def find_all_jw_cad_windows(self):
+        # 👑 【誤検出完全埋葬】タイトル文字列の緩い部分一致（"jw"/"cad"含む等）は
+        # Explorerやエディタ等の無関係なウィンドウにまでパレットを生成してしまう
+        # 実害があったため廃止。実行ファイル名（jw_win.exe）による厳密一致のみを採用。
         jw_hwnds = []
 
         def enum_windows_callback(hwnd, extra):
             try:
-                window_text = win32gui.GetWindowText(hwnd).lower()
-                class_name = win32gui.GetClassName(hwnd).lower()
                 if not win32gui.IsWindowVisible(hwnd):
                     return True
-                if (
-                    "cabinetwclass" in class_name
-                    or "jwnavigator" in window_text
-                    or "visual studio" in window_text
-                ):
-                    jw_hwnds.append(hwnd)
+                if win32gui.GetParent(hwnd) != 0:
                     return True
-                if ("jw" in window_text or "cad" in window_text) and win32gui.GetParent(
-                    hwnd
-                ) == 0:
+                exe_name = self._get_exe_name_for_hwnd(hwnd)
+                if exe_name == self.JW_CAD_EXE_NAME:
                     jw_hwnds.append(hwnd)
             except Exception as exc:
                 logging.exception("find_all_jw_cad_windows callback error")
@@ -285,7 +283,9 @@ class JwNavigatorManager:
         return jw_hwnds
 
     def find_jw_window_at_point(self, x, y):
-        for hwnd in self.find_all_jw_cad_windows():
+        # 👑 マウスフック内から呼ばれるため、重いfind_all_jw_cad_windows()は使わず
+        # 既知ウィンドウのキャッシュ（active_launchers）だけを参照する。
+        for hwnd in list(self.active_launchers.keys()):
             try:
                 left, top, right, bottom = get_jw_window_rect_safe(hwnd)
                 if left <= x <= right and top <= y <= bottom:
@@ -319,6 +319,41 @@ class JwNavigatorManager:
                 rule=rule,
                 raw_status_text=raw_status_text,
             )
+
+    def _drain_hook_queue(self):
+        # 👑 フック（別スレッド）が積んだイベントを、ここ（Tkinterメインスレッド）で
+        # 安全に処理する。SendMessage等のWin32同期呼び出しはここでのみ行う。
+        while True:
+            try:
+                event = self.hook_event_queue.get_nowait()
+            except queue.Empty:
+                break
+            try:
+                self._process_hook_event(event)
+            except Exception:
+                logging.exception("_drain_hook_queue processing error")
+        if not self._shutdown_requested:
+            self.root.after(30, self._drain_hook_queue)
+
+    def _process_hook_event(self, event):
+        kind = event[0]
+        if kind == "ESC":
+            known_hwnds = list(self.active_launchers.keys())
+            raw_status_text = self.capture_statusbar_for_window(
+                known_hwnds[0] if known_hwnds else None
+            )
+            self.record_state_collection_event(
+                "ESC", "VK_ESCAPE", raw_status_text=raw_status_text
+            )
+            return
+
+        event_type, x, y = kind, event[1], event[2]
+        if not self.is_cursor_over_jw_window(x, y):
+            return
+        raw_status_text = self.capture_statusbar_for_point(x, y)
+        self.record_state_collection_event(
+            event_type, f"({x},{y})", raw_status_text=raw_status_text
+        )
 
     # ===== ✂️ main.py START PART 2 ✂️ =====
     def sync_toolbar_position(self, hwnd):
@@ -589,7 +624,9 @@ class JwNavigatorManager:
                         return
 
     def is_cursor_over_jw_window(self, x, y):
-        for hwnd in self.find_all_jw_cad_windows():
+        # 👑 マウスフック内から呼ばれるため、重いfind_all_jw_cad_windows()は使わず
+        # 既知ウィンドウのキャッシュ（active_launchers）だけを参照する。
+        for hwnd in list(self.active_launchers.keys()):
             try:
                 left, top, right, bottom = get_jw_window_rect_safe(hwnd)
                 if left <= x <= right and top <= y <= bottom:
@@ -664,10 +701,18 @@ class JwNavigatorManager:
         window.bind("<B1-Motion>", drag_motion)
 
     def start(self):
-        self.write_system_log("▶️ 監視を開始します（パレット自動生成は有効）")
-        self.mouse_hook_controller.start()
-        self.keyboard_hook_controller.start()
+        self.write_system_log("▶️ 監視を開始します（パレット自動生成は有効・フックは無効）")
+        # 👑 【0xC000041D根絶】この環境（Python 3.13.14 + pywin32）では、
+        # SetWindowsHookExW(WH_MOUSE_LL/WH_KEYBOARD_LL)のctypesコールバックが
+        # 実機のJw_cadウィンドウ操作中に不定タイミングでネイティブクラッシュ
+        # （_ctypes.pyd, 0xC000041D/0xC0000005）することを実機検証で確認済み。
+        # パレットのクリック送信・双方向連動（両想い）はフックに依存しないため、
+        # 安定性を優先しフックは無効化している。クリック連動のホバー/クリック単位の
+        # 状態収集が必要な場合は、原因を突き止めた上で再度有効化すること。
+        # self.mouse_hook_controller.start()
+        # self.keyboard_hook_controller.start()
         self._monitor_job = self.root.after(500, self.monitor_loop)
+        self.root.after(30, self._drain_hook_queue)
         self.root.mainloop()
 
 
