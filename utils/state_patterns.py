@@ -83,6 +83,36 @@ class RuleId(Enum):
     FILE_SAVE_OVER = auto()
     FILE_OPEN_EXIST = auto()
     FILE_NEW = auto()
+    # 👑 2026-08-19実測で新規追加（マウスオン全85コマンド走査で判明した、
+    # ツールチップ未登録だったコマンド分）。すべてツールチップ文言のみで、
+    # 実測データに存在しない補助状態（WAIT）は推測で追加していない。
+    MODORU_TOOLTIP = auto()
+    SUSUMU_TOOLTIP = auto()
+    BLOCK_KA_TOOLTIP = auto()
+    BLOCK_KAI_TOOLTIP = auto()
+    BLOCK_ZOKUSEI_TOOLTIP = auto()
+    BLOCK_HEN_TOOLTIP = auto()
+    BLOCK_SHU_TOOLTIP = auto()
+    KIRITORI_TOOLTIP = auto()
+    CLIP_COPY_TOOLTIP = auto()
+    HARITSUKE_TOOLTIP = auto()
+    SEN_ZOKUSEI_TOOLTIP = auto()
+    ZOKUSEI_SHUTOKU_TOOLTIP = auto()
+    SEN_KAKUDO_TOOLTIP = auto()
+    ENCHOKU_KAKU_TOOLTIP = auto()
+    X_JIKU_KAKU_TOOLTIP = auto()
+    NITEN_KAKU_TOOLTIP = auto()
+    SEN_CHO_TOOLTIP = auto()
+    NITEN_CHO_TOOLTIP = auto()
+    KANKAKU_TOOLTIP = auto()
+    KIHON_SETTEI_TOOLTIP = auto()
+    PRINT_TOOLTIP = auto()
+    TAG_JUMP_TOOLTIP = auto()
+    CHUSHIN_TEN_TOOLTIP = auto()
+    SENJO_TEN_TOOLTIP = auto()
+    ENSHU_4TEN_TOOLTIP = auto()
+    HIKAGEZU_TOOLTIP = auto()
+    TENKUZU_TOOLTIP = auto()
 # ===== ✂️ utils/state_patterns.py END PART 1 ✂️ =====
 
 # ===== ✂️ utils/state_patterns.py START PART 2 ✂️ =====
@@ -119,9 +149,17 @@ STATE_DATABASE = {
     "STATE_CURVE": [(r"曲線を作図します", RuleId.CURVE_TOOLTIP)],
     "STATE_RANGE": [(r"範囲を指定し", RuleId.RANGE_TOOLTIP), (r"範囲選択の始点を", RuleId.RANGE_WAIT)],
     "STATE_FUKUSEN": [(r"元の線に平行な線をつくります", RuleId.FUKUSEN_TOOLTIP), (r"複線にする図形を選択", RuleId.FUKUSEN_WAIT)],
+    # 👑 このWAIT文言「線（Ａ）指示(L)　　　　線切断(R)」はSTATE_CHAMFER（面取）と
+    # 完全に同一（2026-08-19実測確認）。ツールチップは別なので初回検知は問題ないが、
+    # 一度この状態に入るとコーナー/面取の区別はステータスバー文言だけでは不可能。
     "STATE_CORNER": [(r"２線のコーナー処理を行います", RuleId.CORNER_TOOLTIP), (r"線（Ａ）指示", RuleId.CORNER_WAIT)],
     "STATE_EXTEND": [(r"線を伸縮します", RuleId.EXTEND_TOOLTIP), (r"指示点までの伸縮線", RuleId.EXTEND_WAIT)],
-    "STATE_CHAMFER": [(r"２線を面取りします", RuleId.CHAMFER_TOOLTIP), (r"面取する１番目の線", RuleId.CHAMFER_WAIT), (r"線切断（Ｒ）", RuleId.CHAMFER_WAIT)],
+    # 👑 CHAMFER/CORNER衝突メモ（2026-08-19実測）: 面取のWAIT文言は
+    # 「線（Ａ）指示(L)　　　　線切断(R)」で、これはCORNER（コーナー）の
+    # WAIT文言と完全に同一（実測で確認済み）。旧パターン「面取する１番目の線」
+    # 「線切断（Ｒ）」（全角括弧）は一度も実測されておらず、実際の文言
+    # （半角括弧）と一致しない誤ったパターンだったため削除した。
+    "STATE_CHAMFER": [(r"２線を面取りします", RuleId.CHAMFER_TOOLTIP)],
     "STATE_DELETE": [(r"図形を消去します", RuleId.DELETE_TOOLTIP), (r"線・円マウス\(L\)部分消し", RuleId.DELETE_WAIT)],
     "STATE_COPY": [(r"図形を複写します", RuleId.COPY_TOOLTIP)],
     "STATE_MOVE": [(r"図形を移動します", RuleId.MOVE_TOOLTIP)],
@@ -165,6 +203,38 @@ STATE_DATABASE = {
     # にとどめる。日影図/天空図を区別したくなったら、2段階目の固有文言
     # （天空図: 「正射影　測定点を指示してください。」「天空図の作図位置（円中心）
     # を指示してください。」）を使うこと。
-    "STATE_TWO_FIVE_D_MODE": [(r"高さ・奥行を設定する線端部または円を指示", RuleId.TWO_FIVE_D_WAIT)]
+    "STATE_TWO_FIVE_D_MODE": [(r"高さ・奥行を設定する線端部または円を指示", RuleId.TWO_FIVE_D_WAIT)],
+    # 👑 2026-08-19実測追加分（全85コマンドのマウスオン走査で判明。
+    # ツールチップのみ、実測されたWAIT文言のみを採用）。
+    "STATE_MODORU": [(r"直前に行った動作を元に戻す", RuleId.MODORU_TOOLTIP)],
+    "STATE_SUSUMU": [(r"直前に行った動作を繰り返す", RuleId.SUSUMU_TOOLTIP)],
+    "STATE_BLOCK_KA": [(r"選択されたデータをブロック化します", RuleId.BLOCK_KA_TOOLTIP)],
+    "STATE_BLOCK_KAI": [(r"選択されたデータのブロックを解除します", RuleId.BLOCK_KAI_TOOLTIP)],
+    "STATE_BLOCK_ZOKUSEI": [(r"ブロックデータのレイヤ属性を変更します", RuleId.BLOCK_ZOKUSEI_TOOLTIP)],
+    # 👑 BL編/BL終は文字列として排他（「編集作業をします」と「編集作業を終了します」）。
+    "STATE_BLOCK_HEN": [(r"ブロック要素の編集作業をします", RuleId.BLOCK_HEN_TOOLTIP)],
+    "STATE_BLOCK_SHU": [(r"ブロック要素の編集作業を終了します", RuleId.BLOCK_SHU_TOOLTIP)],
+    "STATE_KIRITORI": [(r"選択範囲を切り取ってクリップボードに保存", RuleId.KIRITORI_TOOLTIP)],
+    "STATE_CLIP_COPY": [(r"選択範囲をコピーしてクリップボードに保存", RuleId.CLIP_COPY_TOOLTIP)],
+    "STATE_HARITSUKE": [(r"クリップボードの内容を貼り付け", RuleId.HARITSUKE_TOOLTIP)],
+    "STATE_SEN_ZOKUSEI": [(r"線属性の設定を行います", RuleId.SEN_ZOKUSEI_TOOLTIP)],
+    "STATE_ZOKUSEI_SHUTOKU": [(r"属性取得を行います。", RuleId.ZOKUSEI_SHUTOKU_TOOLTIP)],
+    "STATE_SEN_KAKUDO": [(r"線角度取得を行います。", RuleId.SEN_KAKUDO_TOOLTIP)],
+    "STATE_ENCHOKU_KAKU": [(r"線鉛直角度取得を行います。", RuleId.ENCHOKU_KAKU_TOOLTIP)],
+    "STATE_X_JIKU_KAKU": [(r"X軸角度取得を行います。", RuleId.X_JIKU_KAKU_TOOLTIP)],
+    "STATE_NITEN_KAKU": [(r"２点間角度取得を行います。", RuleId.NITEN_KAKU_TOOLTIP)],
+    "STATE_SEN_CHO": [(r"線の長さを取得します。", RuleId.SEN_CHO_TOOLTIP)],
+    "STATE_NITEN_CHO": [(r"２点間の長さを取得します。", RuleId.NITEN_CHO_TOOLTIP)],
+    "STATE_KANKAKU": [(r"線･円と線・円・点の間隔を取得します。", RuleId.KANKAKU_TOOLTIP)],
+    "STATE_KIHON_SETTEI": [(r"基本的な操作・色彩等を設定します。", RuleId.KIHON_SETTEI_TOOLTIP)],
+    "STATE_PRINT": [(r"作業中のファイルを印刷", RuleId.PRINT_TOOLTIP)],
+    "STATE_TAG_JUMP": [(r"のファイルへタグｼﾞｬﾝﾌﾟする", RuleId.TAG_JUMP_TOOLTIP)],
+    "STATE_CHUSHIN_TEN": [(r"線・円中心または２点間の中心を取得します。", RuleId.CHUSHIN_TEN_TOOLTIP)],
+    "STATE_SENJO_TEN": [(r"線上点・交点を取得します。", RuleId.SENJO_TEN_TOOLTIP)],
+    "STATE_ENSHU_4TEN": [(r"円周1/4点を取得します。", RuleId.ENSHU_4TEN_TOOLTIP)],
+    # 👑 日影図/天空図はWAIT文言が完全一致で衝突するため（STATE_TWO_FIVE_D_MODEの
+    # コメント参照）、ツールチップのみで登録する。
+    "STATE_HIKAGEZU": [(r"日影図のデータ入力と日影図を作成します。", RuleId.HIKAGEZU_TOOLTIP)],
+    "STATE_TENKUZU": [(r"日影図のデータを使用して天空図を作成します。", RuleId.TENKUZU_TOOLTIP)],
 }
 # ===== ✂️ utils/state_patterns.py END PART 2 ✂️ =====
