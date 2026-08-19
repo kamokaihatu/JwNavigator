@@ -132,6 +132,13 @@ STATE_DATABASE = {
     "STATE_ATTRIB": [(r"データの属性を変更します", RuleId.ATTRIB_TOOLTIP), (r"変更するデータを指示してください", RuleId.ATTRIB_WAIT)],
     "STATE_ZUGEI": [(r"図形ファイルを読み込みます", RuleId.ZUGEI_TOOLTIP)],
     "STATE_KIGOU": [(r"線記号変形を行います", RuleId.KIGOU_TOOLTIP), (r"記号を選択してください", RuleId.KIGOU_WAIT)],
+    # 👑 COORD/SHIKI衝突メモ（2026-08-19実測）: 座標(COORD)と式計算(SHIKI)は、
+    # どちらも自コマンドのツールチップの直後に全く同じ文言
+    # "□□　　　項目を選択してください　　　□□" を表示する（汚染データではなく
+    # Jw_cad側の実仕様として確認済み）。現状はSHIKI側の正規表現の方が長いため
+    # ソート順で先にマッチし、実際にはCOORDが呼ばれていてもSHIKIと誤判定される。
+    # ステータスバー文言だけでは区別不可能。区別が必要になったら、直前に押した
+    # ボタン（インテントロック）などステータスバー以外の情報を併用すること。
     "STATE_COORD": [(r"座標ファイルの読込・書込", RuleId.COORD_TOOLTIP), (r"項目を選択してください", RuleId.COORD_WAIT)],
     "STATE_GAIBU": [(r"外部変形を行います", RuleId.GAIBU_TOOLTIP)],
     "STATE_SOKUTEI": [(r"距離・面積・座標・角度を測定", RuleId.SOKUTEI_TOOLTIP)],
