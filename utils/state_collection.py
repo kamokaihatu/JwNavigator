@@ -7,6 +7,18 @@ class StateCollectionLogger:
         self.log_file_path = log_file_path
         self._enabled = False
 
+    def enable(self):
+        self._enabled = True
+
+    def disable(self):
+        self._enabled = False
+
+    def is_enabled(self) -> bool:
+        return self._enabled
+
+    def _timestamp(self) -> str:
+        return datetime.datetime.now().strftime("%H:%M:%S.%f")[:-3]
+
     def record(
         self,
         event_type: str,

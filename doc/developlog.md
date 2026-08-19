@@ -72,3 +72,159 @@ JwNavigator/
 
 *   **現在のステータス**: **「片思い（片方向連動）」状態の完全復活完了。** パレットのボタンを押すことで、Jww側のコマンドが最表面でサクサクと確実に切り替わることが実証されている。
 *   **残された最終タスク**: **「両思い（双方向連動）」の開通。** Jww側で直接「線」や「矩形」をクリックした際に、パレット側の対応するボタンも連動して自動で凹凸トグル点灯（選択状態の同期・Idle時の自動リセット）を走らせるための、`main.py` (PART 3) 内の逆引き判定スキャンのカチ込み。
+
+
+# DEVELOPMENT_STATUS 20260806
+
+## 1. プロジェクト概要
+
+- JwNavigator は、Jw_cad の操作を補助するための Windows 向け Python アプリケーションである。
+- 目的は、Jw_cad のツールバーが小さく操作しづらい点を補うため、コマンドパレットと状態収集機能を通じて操作を支援することにある。
+- 現在の開発目的は、Jw_cad の状態遷移を検出し、対応するボタンの選択状態や送信動作を反映することにある。
+- 仕様書では「Jw_cad 10.03 以降」を対象とし、Windows 11 / Python 3.13 / pywin32 / ctypes を利用した実装として整理されている。
+
+## 2. 開発環境
+
+- OS: Windows
+- 実際の Python バージョン: 3.13.14
+- .venv の Python バージョン: 3.13.14
+- .venv の場所: [.venv](.venv)
+- Jw_cad のバージョン:
+  - リポジトリ内の文書では「Jw_cad 10.03 以降」と記載されている。
+  - 実行環境上の具体的なバージョン情報は、この作業時点では確認できていない。
+- 主要ライブラリ:
+  - pywin32
+  - tkinter
+  - ctypes
+  - win32com.client
+- VS Code / Git / GitHub:
+  - Git リポジトリあり
+  - GitHub remote は https://github.com/kamokaihatu/JwNavigator.git
+  - 現在の作業ブランチは fix/main-lint
+
+## 3. 現在の Git 状態
+
+- 現在のブランチ: fix/main-lint
+- remote: origin -> https://github.com/kamokaihatu/JwNavigator.git
+- 直近のコミット: 4ba3a71ecf35253881a8a12d6e451e2748e6e9db
+- Git 履歴の確認では、初期コミットと main との merge が確認できる。
+- 現在の working tree が clean かどうかについては、この作業では Git コマンド実行による直接確認は行っていない。
+- GitHub へ push 済みか: この作業時点では確認できていない。
+- 現在の状態から安全に戻れるコミット: 4ba3a71ecf35253881a8a12d6e451e2748e6e9db が現状のブランチ先頭コミットとして確認できる。
+
+## 4. 現在のプロジェクト構成
+
+- [main.py](main.py)
+  - アプリの司令塔。JwNavigator の全体制御、フック、監視ループ、Tkinter UI、状態解析・送信をまとめて担当する。
+- [utils/](utils)
+  - [utils/jww_watcher.py](utils/jww_watcher.py): Jw_cad のステータスバー文字列を取得する。
+  - [utils/state_parser.py](utils/state_parser.py): ステータスバー文字列を解析して状態 ID とルールを返す。
+  - [utils/state_patterns.py](utils/state_patterns.py): 状態パターン定義。
+  - [utils/parse_result.py](utils/parse_result.py): パース結果の構造体。
+  - [utils/send_key.py](utils/send_key.py): Windows 上でキー送信を行う。
+  - [utils/state_collection.py](utils/state_collection.py): 状態収集ログの記録処理。
+  - [utils/event_engine.py](utils/event_engine.py): イベント判定用の補助モジュール。
+- [widgets/](widgets)
+  - [widgets/toolbar.py](widgets/toolbar.py): パレットの UI を構成するウィンドウ。
+  - [widgets/button.py](widgets/button.py): ボタンの描画と挙動を担当する。
+  - [widgets/debug_window.py](widgets/debug_window.py): デバッグ用ウィンドウ。
+- [tests/](tests)
+  - [tests/test_state_collection.py](tests/test_state_collection.py): 状態収集の行整形テスト。
+  - [tests/record_status_transitions.py](tests/record_status_transitions.py): 状態遷移記録用の補助スクリプト。
+- [config/](config)
+  - [config/config.csv](config/config.csv): パレットボタン構成を定義する設定ファイル。
+- [data/](data)
+  - [data/commands_master.csv](data/commands_master.csv) と [data/commands_master.md](data/commands_master.md): Jw_cad のコマンド情報を整理したマスターデータ。
+- [typings/](typings)
+  - [typings/win32api.pyi](typings/win32api.pyi), [typings/win32con.pyi](typings/win32con.pyi), [typings/win32gui.pyi](typings/win32gui.pyi): pywin32 用の型情報。
+- [_internal/]( _internal)
+  - PyInstaller / Python ランタイム周りの内部資産や DLL を含むディレクトリ。
+
+## 5. JwNavigator の現在の起動経路
+
+- [main.py](main.py) の `if __name__ == "__main__":` で `JwNavigatorManager()` を生成している。
+- `JwNavigatorManager.__init__()` で Tk のルートウィンドウを作成し、各種状態変数とフック制御オブジェクトを初期化する。
+- `StateCollectionLogger` を生成し、`enable()` を呼び出して状態収集を有効化する。
+- `JwNavigatorManager.start()` で `MouseHookController.start()` と `KeyboardHookController.start()` を呼び、次に `root.after(500, self.monitor_loop)` で監視ループを開始し、最後に `root.mainloop()` を実行する。
+- `monitor_loop()` は 1 秒ごとに再スケジュールされ、Jw_cad ウィンドウの列挙、状態解析、ログ出力、UI 更新を行う。
+
+## 6. 現在確認されている問題
+
+### 確認済み事実
+
+- Python 実行環境は 3.13 系であり、.venv も 3.13.14 である。
+- 以前に `typing.py` が壊れており、Python の標準ライブラリ読み込み時に構文エラーが発生する事象が確認されていた。
+- .venv は再作成済みである。
+- pywin32 は再インストール済みである。
+- `StateCollectionLogger` には `enable()` / `disable()` / `is_enabled()` の不整合があり、[main.py](main.py) の呼び出しと実装が一致していなかった。
+- 起動時に `0xC000041D` / `-1073740771` が発生する事象が確認されている。
+- MouseHook / KeyboardHook を有効にしたときに、起動直後の挙動が重くなり、しばらく後にプロセスが終了して PowerShell に戻る現象が確認されている。
+- 両方の Hook を有効にした場合、CPU 負荷が高くなる挙動が確認されている。
+- UI が表示されない理由として、`self.root.withdraw()` が実行されていることと、`self._auto_create_palettes = False` でパレットの動的生成条件が成立しないことがコード上確認できる。
+
+### 推測・可能性
+
+- フック周りの処理と監視ループの重なりが、起動後の高負荷や終了につながっている可能性がある。
+- 低レベルフック処理、Windows API 呼び出し、状態収集ログの書き込み、Jw_cad ウィンドウ列挙が同時に発生しているため、原因の切り分けが必要である。
+
+## 7. StateCollection 関連
+
+- [utils/state_collection.py](utils/state_collection.py) では、`StateCollectionLogger` がログの有効/無効フラグをもつ。
+- `record()` は `_enabled` が False の場合に何もしない。
+- [main.py](main.py) の `JwNavigatorManager.__init__()` で `StateCollectionLogger` を生成し、`enable()` を呼び出している。
+- [main.py](main.py) の `record_state_collection_event()` から `record()` が呼ばれる。
+- [main.py](main.py) の `MouseHookController` と `KeyboardHookController` のイベント処理からも、状態収集ログの記録が発生する可能性がある。
+- 依存関係として、[utils/state_collection.py](utils/state_collection.py) から [utils/state_parser.py](utils/state_parser.py) と [utils/jww_watcher.py](utils/jww_watcher.py) の結果を受ける構造になっている。
+
+## 8. Hook 関連
+
+- [main.py](main.py) の `JwNavigatorManager.__init__()` で `MouseHookController(self)` と `KeyboardHookController(self)` が生成される。
+- [main.py](main.py) の `JwNavigatorManager.start()` で `self.mouse_hook_controller.start()` と `self.keyboard_hook_controller.start()` が呼ばれる。
+- MouseHookController は `ctypes.windll.user32.SetWindowsHookExW()`、`GetMessageW()`、`TranslateMessage()`、`DispatchMessageW()`、`CallNextHookEx()` を利用している。
+- KeyboardHookController も同様に `SetWindowsHookExW()` と `CallNextHookEx()` などを利用している。
+- どちらも `ctypes.WINFUNCTYPE(...)` で callback を定義し、Windows からイベントを受け取ったときに `self.manager` 経由で状態取得・イベント記録・ステータス収集を行う。
+
+## 9. 現在の変更点
+
+- 本作業ではコード変更は行っていない。
+- ただし、以下の点は確認済みである。
+  - [utils/state_collection.py](utils/state_collection.py) に `enable()` / `disable()` / `is_enabled()` を追加する対応が必要であった。
+  - [main.py](main.py) では、フック起動と監視ループの実行順が起動時の挙動に大きく影響している。
+  - 既存の [main.py](main.py) と [utils/state_collection.py](utils/state_collection.py) の API には不整合がある。
+
+## 10. 現在の作業状態
+
+### 現在できていること
+
+- プロジェクト構成、主要ファイル、Git 設定、起動経路、Hook / StateCollection 周りの実装を確認できている。
+- 既知の異常について、コード上の実際の箇所と症状の対応を整理できている。
+
+### 現在できていないこと
+
+- 0xC000041D の直接的な原因をコード修正なしで断定できていない。
+- フックと監視ループのどちらが主因かを、実行ログやデバッグ手段で明示的に切り分け切れていない。
+
+### 未解決の問題
+
+- 0xC000041D / -1073740771 の原因。
+- 起動後の高負荷とプロセス終了の関係。
+- UI が表示されない原因の切り分け。
+
+### 次に調査すべきこと
+
+- Hook を単独で起動した場合の再現性確認。
+- `monitor_loop()` と `root.after()` の連鎖を止めた場合の挙動確認。
+- 状態収集ログ書き込みを抑止した場合の挙動確認。
+- `root.withdraw()` と `_auto_create_palettes=False` を含む UI 起動条件の再確認。
+
+## 11. AI 作業時の注意事項
+
+- 大規模な変更を一度に行わない。
+- 1 ファイルまたは小さな変更単位で作業する。
+- 変更前に対象ファイルを読む。
+- 変更後は必ず起動テストをする。
+- 動作確認後に Git コミットする。
+- 既存機能を勝手に削除しない。
+- 状態収集機能と JwNavigator 本体の役割を混同しない。
+- 原因調査とコード修正を同時に行わない。
+- 不明な部分は推測で修正せず、確認を求める。

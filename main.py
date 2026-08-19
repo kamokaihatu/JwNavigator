@@ -7,6 +7,7 @@ import time
 import datetime
 import re
 import threading
+import logging
 
 try:
     import win32gui
@@ -37,7 +38,8 @@ def get_jw_window_rect_safe(hwnd):
     try:
         left, top, right, bottom = win32gui.GetWindowRect(hwnd)
         return left, top, right, bottom
-    except Exception:
+    except Exception as exc:
+        logging.exception("main.py エラー")
         return 0, 0, 0, 0
 
 
@@ -60,8 +62,9 @@ class KeyboardHookController:
         if self._hook:
             try:
                 ctypes.windll.user32.UnhookWindowsHookEx(self._hook)
-            except Exception:
-                pass
+            except Exception as exc:
+                logging.exception("KeyboardHookController unhook failed")
+
             self._hook = None
 
     def _message_loop(self):
@@ -88,8 +91,9 @@ class KeyboardHookController:
                                 "VK_ESCAPE",
                                 raw_status_text=raw_status_text,
                             )
-                except Exception:
-                    pass
+                except Exception as exc:
+                    logging.exception("KeyboardHookController unhook failed")
+
             return ctypes.windll.user32.CallNextHookEx(None, nCode, wParam, lParam)
 
         try:
@@ -101,8 +105,9 @@ class KeyboardHookController:
                 if ctypes.windll.user32.GetMessageW(ctypes.byref(msg), None, 0, 0) != 0:
                     ctypes.windll.user32.TranslateMessage(ctypes.byref(msg))
                     ctypes.windll.user32.DispatchMessageW(ctypes.byref(msg))
-        except Exception:
-            pass
+        except Exception as exc:
+            logging.exception("KeyboardHookController unhook failed")
+
         finally:
             self.stop()
 
@@ -137,8 +142,9 @@ class MouseHookController:
         if self._hook:
             try:
                 ctypes.windll.user32.UnhookWindowsHookEx(self._hook)
-            except Exception:
-                pass
+            except Exception as exc:
+                logging.exception("MouseHookController unhook failed")
+
             self._hook = None
 
     def _message_loop(self):
@@ -184,9 +190,9 @@ class MouseHookController:
                                 f"({x},{y})",
                                 raw_status_text=raw_status_text,
                             )
-                except Exception:
-                    pass
 
+                except Exception as exc:
+                    logging.exception("MouseHookController error")
             return ctypes.windll.user32.CallNextHookEx(None, nCode, wParam, lParam)
 
         try:
@@ -198,8 +204,8 @@ class MouseHookController:
                 if ctypes.windll.user32.GetMessageW(ctypes.byref(msg), None, 0, 0) != 0:
                     ctypes.windll.user32.TranslateMessage(ctypes.byref(msg))
                     ctypes.windll.user32.DispatchMessageW(ctypes.byref(msg))
-        except Exception:
-            pass
+        except Exception as exc:
+            logging.exception("MouseHookController error")
         finally:
             self.stop()
 
@@ -235,7 +241,7 @@ class JwNavigatorManager:
         self._shutdown_requested = False
         self._monitor_scheduled = False
         self._safe_mode = False
-        self._auto_create_palettes = False
+        self._auto_create_palettes = True
         self.root.withdraw()
         self.write_system_log("--- JwNavigator Ver2.0 メインシステム始動 ---")
         self.write_system_log("🧪 状態収集モードを有効化しました。")
@@ -268,8 +274,8 @@ class JwNavigatorManager:
                     hwnd
                 ) == 0:
                     jw_hwnds.append(hwnd)
-            except Exception:
-                pass
+            except Exception as exc:
+                logging.exception("find_all_jw_cad_windows callback error")
             return True
 
         try:
@@ -284,8 +290,8 @@ class JwNavigatorManager:
                 left, top, right, bottom = get_jw_window_rect_safe(hwnd)
                 if left <= x <= right and top <= y <= bottom:
                     return hwnd
-            except Exception:
-                pass
+            except Exception as exc:
+                logging.exception("find_jw_window_at_point error")
         return None
 
     def capture_statusbar_for_window(self, hwnd):
@@ -294,7 +300,8 @@ class JwNavigatorManager:
         try:
             raw_text = get_raw_statusbar_text(hwnd)
             return raw_text.strip()
-        except Exception:
+        except Exception as exc:
+            logging.exception("capture_statusbar_for_window error")
             return ""
 
     def capture_statusbar_for_point(self, x, y):
@@ -587,8 +594,8 @@ class JwNavigatorManager:
                 left, top, right, bottom = get_jw_window_rect_safe(hwnd)
                 if left <= x <= right and top <= y <= bottom:
                     return True
-            except Exception:
-                pass
+            except Exception as exc:
+                logging.exception("is_cursor_over_jw_window error")
         return False
 
     def close_single_palette(self, hwnd):
@@ -619,8 +626,8 @@ class JwNavigatorManager:
                 tr.destroy()
         try:
             self.root.after_cancel(self._monitor_job)
-        except Exception:
-            pass
+        except Exception as exc:
+            logging.exception("shutdown_manager after_cancel failed")
         self.root.quit()
         self.root.destroy()
 
@@ -657,7 +664,7 @@ class JwNavigatorManager:
         window.bind("<B1-Motion>", drag_motion)
 
     def start(self):
-        self.write_system_log("▶️ 監視を開始します（パレット自動生成は無効）")
+        self.write_system_log("▶️ 監視を開始します（パレット自動生成は有効）")
         self.mouse_hook_controller.start()
         self.keyboard_hook_controller.start()
         self._monitor_job = self.root.after(500, self.monitor_loop)
