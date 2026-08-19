@@ -92,13 +92,13 @@ STATE_DATABASE = {
     "STATE_TEXT": [(r"文字を書きます", RuleId.TEXT_TOOLTIP), (r"文字を入力するか", RuleId.TEXT_WAIT)],
     "STATE_DIM": [(r"寸法を記入します", RuleId.DIM_TOOLTIP), (r"\[寸法\]", RuleId.DIM_BRACKET), (r"寸法線の位置を指示して下さい", RuleId.DIM_WAIT)],
     "STATE_TWO_LINE": [(r"２線を作図します", RuleId.TWO_LINE_TOOLTIP), (r"基準線を指示してください", RuleId.TWO_LINE_WAIT)],
-    "STATE_CENTER": [(r"中心線を作図します", RuleId.CENTER_TOOLTIP), (r"１番目の線・円をﾏ🇺🇸"[:10], RuleId.CENTER_WAIT)],
+    "STATE_CENTER": [(r"中心線を作図します", RuleId.CENTER_TOOLTIP)],  # CENTER_WAIT: 未実測のため削除（実測後に追加）
     "STATE_RENTENT": [(r"連続線・連続円弧を作図します", RuleId.RENTENT_TOOLTIP)],
     "STATE_AUTO": [(r"AUTOモードを実行します", RuleId.AUTO_TOOLTIP), (r"AUTOモード   \(L\)free", RuleId.AUTO_WAIT)],
     "STATE_POINT": [(r"点を書きます", RuleId.POINT_TOOLTIP), (r"点位置を指示してください", RuleId.POINT_WAIT)],
     "STATE_SESSEN": [(r"接線を作図します", RuleId.SESSEN_TOOLTIP), (r"円を指示してください", RuleId.SESSEN_WAIT)],
     "STATE_SETSUEN": [(r"接円を作図します", RuleId.SETSUEN_TOOLTIP)],
-    "STATE_HATCH": [(r"ハッチングを行います", RuleId.HATCH_TOOLTIP), (r"閉鎖連続線・円をﾏ🇺🇸"[:10], RuleId.HATCH_WAIT)],
+    "STATE_HATCH": [(r"ハッチングを行います", RuleId.HATCH_TOOLTIP)],  # HATCH_WAIT: 未実測のため削除（実測後に追加）
     "STATE_TATEG": [(r"建具を選択してください", RuleId.TATEG_WAIT), (r"ﾊﾟラメトリックな建具", RuleId.TATEG_TOOLTIP)],
     "STATE_POLYGON": [(r"多角形（２辺）を作図します", RuleId.POLYGON_TOOLTIP)],
     "STATE_CURVE": [(r"曲線を作図します", RuleId.CURVE_TOOLTIP)],
@@ -112,7 +112,7 @@ STATE_DATABASE = {
     "STATE_MOVE": [(r"図形を移動します", RuleId.MOVE_TOOLTIP)],
     "STATE_IMAGE": [(r"画像の挿入、サイズ調整", RuleId.IMAGE_TOOLTIP)],
     "STATE_HOURAKU": [(r"図形の外郭線をつなげて整理します", RuleId.HOURAKU_TOOLTIP), (r"包絡範囲の始点指示", RuleId.HOURAKU_WAIT)],
-    "STATE_BUNKATSU": [(r"点や線の間を分割します", RuleId.BUNKATSU_TOOLTIP), (r"線・円（Ａ）指示　ﾏ🇺🇸"[:10], RuleId.BUNKATSU_WAIT)],
+    "STATE_BUNKATSU": [(r"点や線の間を分割します", RuleId.BUNKATSU_TOOLTIP)],  # BUNKATSU_WAIT: 未実測のため削除（実測後に追加）
     "STATE_CLEANUP": [(r"データの整理をします", RuleId.CLEANUP_TOOLTIP)],
     "STATE_ATTRIB": [(r"データの属性を変更します", RuleId.ATTRIB_TOOLTIP), (r"変更するデータを指示してください", RuleId.ATTRIB_WAIT)],
     "STATE_ZUGEI": [(r"図形ファイルを読み込みます", RuleId.ZUGEI_TOOLTIP)],
@@ -120,10 +120,10 @@ STATE_DATABASE = {
     "STATE_COORD": [(r"座標ファイルの読込・書込", RuleId.COORD_TOOLTIP), (r"項目を選択してください", RuleId.COORD_WAIT)],
     "STATE_GAIBU": [(r"外部変形を行います", RuleId.GAIBU_TOOLTIP)],
     "STATE_SOKUTEI": [(r"距離・面積・座標・角度を測定", RuleId.SOKUTEI_TOOLTIP)],
-    "STATE_HYOU": [(r"表計算を行います", RuleId.HYOU_TOOLTIP), (r"範囲選択の始点をﾏ🇺🇸"[:10], RuleId.HYOU_WAIT)],
+    "STATE_HYOU": [(r"表計算を行います", RuleId.HYOU_TOOLTIP)],  # HYOU_WAIT: 未実測のため削除（実測後に追加。旧パターンはSTATE_RANGEの文言の誤コピーだった）
     "STATE_DIST": [(r"始点からの距離を指定して点", RuleId.DIST_TOOLTIP), (r"始点を指示してください  \(L\)free", RuleId.DIST_WAIT)],
     "STATE_SHIKI": [(r"式計算を行います", RuleId.SHIKI_TOOLTIP), (r"□□　　　項目を選択してください", RuleId.SHIKI_WAIT)],
-    "STATE_PARA": [(r"図形のﾊﾟラメトリック変形を行います"[:14], RuleId.PARA_TOOLTIP), (r"範囲選択の始点をﾏ🇺🇸"[:8], RuleId.PARA_WAIT)],
+    "STATE_PARA": [(r"図形のﾊﾟラメトリック変形を行います", RuleId.PARA_TOOLTIP)],  # PARA_WAIT: 未実測のため削除（旧パターンはSTATE_RANGEの文言の誤コピーだった）
     "STATE_REG": [(r"図形登録\(JWK\)を行います", RuleId.REG_TOOLTIP)],
     "STATE_DIM_ZUGEI": [(r"寸法図形にします", RuleId.DIM_ZUGEI_TOOLTIP), (r"寸法図形にする  ［寸法線］", RuleId.DIM_ZUGEI_WAIT)],
     "STATE_DIM_ZUGEI_BREAK": [(r"寸法図形を解除します", RuleId.DIM_BREAK_TOOLTIP), (r"解除する寸法図形を指示してください", RuleId.DIM_BREAK_BREAK_WAIT if hasattr(RuleId, "DIM_BREAK_BREAK_WAIT") else RuleId.DIM_BREAK_WAIT)],
