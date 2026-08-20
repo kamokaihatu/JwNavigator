@@ -370,22 +370,22 @@ class JwNavigatorManager:
             num_l = len(tl.buttons)
             num_r = len(tr.buttons)
 
-            # 各列フレームにはドラッグ用の余白（padx/pady=3、widgets/toolbar.py
-            # の_next_column_slot参照）が付いているため、その分をサイズ計算にも
-            # 反映する。反映し忘れると右端の列がウィンドウ幅からはみ出す。
-            COLUMN_PAD = 1
+            # ボタン列自体は隙間なく詰めてあり、外周だけcolumns_container側の
+            # padx/pady=3で余白を確保している（widgets/toolbar.py参照）。
+            # 反映し忘れると右端の列がウィンドウ幅からはみ出す。
+            OUTER_PAD = 3
 
             def columns_and_height(count, max_rows):
                 if count <= 0:
                     return 0, 0
                 rows = min(count, max_rows) if max_rows > 0 else count
                 cols = -(-count // max_rows) if max_rows > 0 else 1
-                return cols, (rows * 52) + 52 + (COLUMN_PAD * 2)
+                return cols, (rows * 52) + 52 + (OUTER_PAD * 2)
 
             cols_l, tb_h_l = columns_and_height(num_l, tl.max_rows)
             cols_r, tb_h_r = columns_and_height(num_r, tr.max_rows)
-            tb_w_l = cols_l * (52 + COLUMN_PAD * 2)
-            tb_w_r = cols_r * (52 + COLUMN_PAD * 2)
+            tb_w_l = (cols_l * 52) + (OUTER_PAD * 2) if cols_l > 0 else 0
+            tb_w_r = (cols_r * 52) + (OUTER_PAD * 2) if cols_r > 0 else 0
             is_maximized = (
                 x1 <= 0 and y1 <= 0 and jw_w >= self.root.winfo_screenwidth() - 20
             )
@@ -397,15 +397,40 @@ class JwNavigatorManager:
                 left_x = x1 - tb_w_l
                 right_x = x2
                 top_off = 0
+            # 最大化時など、jw_cadの実際のウィンドウ矩形は見えない分の
+            # リサイズ境界を含んで画面幅を超えることがある（Windowsの仕様）。
+            # そのまま使うと右パレットが画面外にはみ出すため、実際の
+            # モニター全体（マルチモニター含む仮想スクリーン）の範囲に
+            # 収まるようクランプする。
+            virtual_left = win32api.GetSystemMetrics(76)
+            virtual_top = win32api.GetSystemMetrics(77)
+            virtual_width = win32api.GetSystemMetrics(78)
+            virtual_height = win32api.GetSystemMetrics(79)
+            top_y = y1 + top_off
+
             if not tl.is_pinned and num_l > 0:
-                tl.wm_geometry(f"{tb_w_l}x{tb_h_l}+{left_x}+{y1 + top_off}")
-                # wm_geometry()だけだと、他の操作（ボタン押下など）で
-                # イベントループが回るまで実際の描画に反映されないことが
-                # あるため、ここで強制的に反映させる。
-                tl.update_idletasks()
+                clamped_left_x = max(virtual_left, min(left_x, virtual_left + virtual_width - tb_w_l))
+                clamped_top_y = max(virtual_top, min(top_y, virtual_top + virtual_height - tb_h_l))
+                new_geom_l = (tb_w_l, tb_h_l, clamped_left_x, clamped_top_y)
+                # 位置が変わっていないのに毎回wm_geometry()を呼ぶと、
+                # Windows側で「位置が更新された」扱いになり、意図せず
+                # 最前面に上がってくることがある（実測で確認）。実際に
+                # 変化があった時だけ呼ぶ。
+                if getattr(tl, "_last_geom", None) != new_geom_l:
+                    tl.wm_geometry(f"{tb_w_l}x{tb_h_l}+{clamped_left_x}+{clamped_top_y}")
+                    # wm_geometry()だけだと、他の操作（ボタン押下など）で
+                    # イベントループが回るまで実際の描画に反映されないことが
+                    # あるため、ここで強制的に反映させる。
+                    tl.update_idletasks()
+                    tl._last_geom = new_geom_l
             if not tr.is_pinned and num_r > 0:
-                tr.wm_geometry(f"{tb_w_r}x{tb_h_r}+{right_x}+{y1 + top_off}")
-                tr.update_idletasks()
+                clamped_right_x = max(virtual_left, min(right_x, virtual_left + virtual_width - tb_w_r))
+                clamped_top_y = max(virtual_top, min(top_y, virtual_top + virtual_height - tb_h_r))
+                new_geom_r = (tb_w_r, tb_h_r, clamped_right_x, clamped_top_y)
+                if getattr(tr, "_last_geom", None) != new_geom_r:
+                    tr.wm_geometry(f"{tb_w_r}x{tb_h_r}+{clamped_right_x}+{clamped_top_y}")
+                    tr.update_idletasks()
+                    tr._last_geom = new_geom_r
             if foreground_hwnd in (hwnd, tl.winfo_id(), tr.winfo_id()):
                 if num_l > 0:
                     tl.attributes("-topmost", True)
@@ -416,6 +441,21 @@ class JwNavigatorManager:
                 tr.attributes("-topmost", False)
         except Exception as e:
             self.write_system_log(f"❌ ウィンドウ同期エラー [HWND:{hwnd}]: {str(e)}")
+
+    def _fast_sync_loop(self):
+        # 👑 位置合わせ（sync_toolbar_position）だけをmonitor_loopの1秒周期から
+        # 切り離し、こちらで高頻度に回す。jw_cadをドラッグしている最中でも
+        # パレットが滑らかに追従できるようにするため。状態解析・ログ出力は
+        # 重いのでmonitor_loop側の1秒周期のまま据え置く。
+        if self._shutdown_requested:
+            return
+        for hwnd in list(self.active_launchers.keys()):
+            try:
+                self.sync_toolbar_position(hwnd)
+            except Exception as e:
+                self.write_system_log(f"❌ 高速位置同期エラー [HWND:{hwnd}]: {str(e)}")
+        if not self._shutdown_requested:
+            self.root.after(100, self._fast_sync_loop)
 
     def monitor_loop(self):
         if self._shutdown_requested:
@@ -534,8 +574,6 @@ class JwNavigatorManager:
                 tl.deiconify()
             if not tr.winfo_viewable() and len(tr.buttons) > 0:
                 tr.deiconify()
-
-        self.sync_toolbar_position(hwnd)
 
         raw_text = get_raw_statusbar_text(hwnd)
         # 👑 【2.0仕様：ステータスバーテキストのクリーンアップ強化】
@@ -752,6 +790,7 @@ class JwNavigatorManager:
         # self.mouse_hook_controller.start()
         # self.keyboard_hook_controller.start()
         self._monitor_job = self.root.after(500, self.monitor_loop)
+        self.root.after(500, self._fast_sync_loop)
         self.root.after(30, self._drain_hook_queue)
         self.root.mainloop()
 

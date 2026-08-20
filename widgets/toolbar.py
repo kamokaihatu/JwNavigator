@@ -34,35 +34,40 @@ class Toolbar(tk.Toplevel):
         self._is_dragging = False
 
         self.create_pin_button()
+        self._bind_drag_move(self)
         self.columns_container = tk.Frame(self, bg="#f0f0f0")
-        self.columns_container.pack(side="top", fill="both", expand=True)
-        self._enable_drag_move()
+        self.columns_container.pack(side="top", fill="both", expand=True, padx=3, pady=3)
+        self._bind_drag_move(self.columns_container)
         self.load_and_build_buttons()
 
     def create_pin_button(self):
         self.pin_btn = tk.Button(
             self, text="👣 追従", font=("Meiryo UI", 8),
-            bg="#ffcccc", relief="sunken", bd=1, command=self.toggle_pin
+            bg="#ffcccc", relief="sunken", bd=1
         )
         self.pin_btn.pack(side="top", fill="x")
+        # 👑 command=は使わない。tk.Buttonの標準クリック処理は
+        # <ButtonPress-1>/<B1-Motion>/<ButtonRelease-1>を自分のクラス
+        # バインドで消費してしまい、Toplevel側へは伝播しない（実測で確認、
+        # ドラッグしても常にクリック扱いになっていた）。ボタン自身に
+        # 直接バインドして、クリックとドラッグを自前で判定する。
+        self._bind_drag_move(self.pin_btn, click_action=self.toggle_pin)
 
-    def _enable_drag_move(self):
-        # β版で実際に動いていた方式：ウィジェット相対座標（event.x/event.y）を
-        # 使う。event.x_root/y_rootとwinfo_x()を組み合わせる方式は、
-        # wm_geometry()直後にwinfo_x()が不正確な値を返すことがあり、
-        # ドラッグ中に誤差が蓄積して暴れることが分かったため採用しない。
-        # ウィジェット相対座標は毎回そのウィジェットの「今の」画面位置を
-        # 基準にTkが計算し直すため、1回の誤差が蓄積しない。
-        # Toplevel全体に直接バインドするので、NavButton側でbreakを
-        # 返さないと、ボタン上のドラッグもここに伝播してしまう点に注意。
+    def _bind_drag_move(self, widget, click_action=None):
+        # ウィジェット相対座標（event.x/event.y）を使う。event.x_root/y_root
+        # とwinfo_x()を組み合わせる方式は、wm_geometry()直後にwinfo_x()が
+        # 不正確な値を返すことがあり、ドラッグ中に誤差が蓄積して暴れる
+        # ことが分かったため採用しない。ウィジェット相対座標は毎回その
+        # ウィジェットの「今の」画面位置を基準にTkが計算し直すため、
+        # 1回の誤差が蓄積しない（β版で実際に動いていた方式）。
         DRAG_THRESHOLD_PX = 8
 
-        def start_drag(event):
+        def on_press(event):
             self._drag_start_x = event.x
             self._drag_start_y = event.y
             self._is_dragging = False
 
-        def drag_motion(event):
+        def on_motion(event):
             dx = event.x - self._drag_start_x
             dy = event.y - self._drag_start_y
             if (dx * dx + dy * dy) ** 0.5 > DRAG_THRESHOLD_PX:
@@ -77,30 +82,38 @@ class Toolbar(tk.Toplevel):
                 new_y = self.winfo_y() + dy
                 self.wm_geometry(f"+{new_x}+{new_y}")
 
-        self.bind("<Button-1>", start_drag)
-        self.bind("<B1-Motion>", drag_motion)
+        def on_release(event):
+            if not self._is_dragging and click_action:
+                click_action()
+
+        widget.bind("<ButtonPress-1>", on_press)
+        widget.bind("<B1-Motion>", on_motion)
+        widget.bind("<ButtonRelease-1>", on_release)
 
     def _next_column_slot(self):
         if self.current_column is None or self.current_column_row_count >= self.max_rows:
             self.current_column = tk.Frame(self.columns_container, bg="#f0f0f0")
-            # 上下左右に数pxの余白を残す。この余白はcolumns_container自身の
-            # 背景なので、ボタンには重ならずドラッグでウィンドウを掴める。
-            self.current_column.pack(side="left", anchor="n", padx=1, pady=1)
+            # 列同士は詰めて配置する（外周の余白はcolumns_container側のpadx/
+            # padyで確保済み）。
+            self.current_column.pack(side="left", anchor="n")
             self.current_column_row_count = 0
         self.current_column_row_count += 1
         return self.current_column
 
     def toggle_pin(self):
-        # 追従ボタンのcommand=は、ドラッグ移動と同じ<Button-1>系イベントで
-        # 発火するため、実際にドラッグした直後の指離しでも呼ばれてしまう。
-        # ドラッグが起きていた場合はここで無視し、二重切り替えを防ぐ。
-        if self._is_dragging:
-            return
+        # click_actionとして呼ばれるのはon_release()がドラッグでなかったと
+        # 判定した時だけなので、ここでは単純にトグルするだけでよい。
         self.is_pinned = not self.is_pinned
         if self.is_pinned:
             self.pin_btn.configure(text="自由", bg="#e1e1e1", relief="raised")
         else:
             self.pin_btn.configure(text="👣 追従", bg="#ffcccc", relief="sunken")
+            # 自由配置中に手動でドラッグ移動していると、main.py側が
+            # 覚えている「前回適用した座標」（_last_geom）が実際の位置と
+            # ズレたままになる。追従に戻す時はこれを捨てて、次のsync tickで
+            # 必ず新しい座標を適用させる（そうしないと「変化なし」と
+            # 誤判定されて、追従位置へ飛んでくれないことがある）。
+            self._last_geom = None
 
     def load_and_build_buttons(self):
         try:
@@ -166,7 +179,7 @@ class Toolbar(tk.Toplevel):
                     btn.icon_name = icon_name
                     btn.load_and_draw()
                     
-                    btn.pack(side="top", pady=1, padx=2)
+                    btn.pack(side="top")
                     self.buttons.append(btn)
                     
             if self.manager_ref:
