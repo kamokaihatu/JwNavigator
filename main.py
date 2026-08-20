@@ -399,8 +399,13 @@ class JwNavigatorManager:
                 top_off = 0
             if not tl.is_pinned and num_l > 0:
                 tl.wm_geometry(f"{tb_w_l}x{tb_h_l}+{left_x}+{y1 + top_off}")
+                # wm_geometry()だけだと、他の操作（ボタン押下など）で
+                # イベントループが回るまで実際の描画に反映されないことが
+                # あるため、ここで強制的に反映させる。
+                tl.update_idletasks()
             if not tr.is_pinned and num_r > 0:
                 tr.wm_geometry(f"{tb_w_r}x{tb_h_r}+{right_x}+{y1 + top_off}")
+                tr.update_idletasks()
             if foreground_hwnd in (hwnd, tl.winfo_id(), tr.winfo_id()):
                 if num_l > 0:
                     tl.attributes("-topmost", True)

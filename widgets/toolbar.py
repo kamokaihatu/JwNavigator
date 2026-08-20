@@ -29,73 +29,56 @@ class Toolbar(tk.Toplevel):
         self.wm_overrideredirect(True)
         self.attributes("-topmost", True)
 
-        self._drag_origin_x = 0
-        self._drag_origin_y = 0
-        self._drag_press_root_x = 0
-        self._drag_press_root_y = 0
-        self._drag_moved = False
-        self._pre_drag_pinned = False
+        self._drag_start_x = 0
+        self._drag_start_y = 0
+        self._is_dragging = False
 
         self.create_pin_button()
         self.columns_container = tk.Frame(self, bg="#f0f0f0")
         self.columns_container.pack(side="top", fill="both", expand=True)
-        self._bind_drag_move(self.columns_container)
+        self._enable_drag_move()
         self.load_and_build_buttons()
 
     def create_pin_button(self):
         self.pin_btn = tk.Button(
             self, text="👣 追従", font=("Meiryo UI", 8),
-            bg="#ffcccc", relief="sunken", bd=1
+            bg="#ffcccc", relief="sunken", bd=1, command=self.toggle_pin
         )
         self.pin_btn.pack(side="top", fill="x")
-        self._bind_drag_move(self.pin_btn, click_action=self.toggle_pin)
 
-    def _bind_drag_move(self, widget, click_action=None):
-        DRAG_THRESHOLD_PX = 5
+    def _enable_drag_move(self):
+        # β版で実際に動いていた方式：ウィジェット相対座標（event.x/event.y）を
+        # 使う。event.x_root/y_rootとwinfo_x()を組み合わせる方式は、
+        # wm_geometry()直後にwinfo_x()が不正確な値を返すことがあり、
+        # ドラッグ中に誤差が蓄積して暴れることが分かったため採用しない。
+        # ウィジェット相対座標は毎回そのウィジェットの「今の」画面位置を
+        # 基準にTkが計算し直すため、1回の誤差が蓄積しない。
+        # Toplevel全体に直接バインドするので、NavButton側でbreakを
+        # 返さないと、ボタン上のドラッグもここに伝播してしまう点に注意。
+        DRAG_THRESHOLD_PX = 8
 
-        def set_pin_visual(pinned):
-            if pinned:
-                self.pin_btn.configure(text="自由", bg="#e1e1e1", relief="raised")
-            else:
-                self.pin_btn.configure(text="👣 追従", bg="#ffcccc", relief="sunken")
+        def start_drag(event):
+            self._drag_start_x = event.x
+            self._drag_start_y = event.y
+            self._is_dragging = False
 
-        def on_press(event):
-            self._drag_moved = False
-            self._pre_drag_pinned = self.is_pinned
-            # 追従中の自動位置補正（sync_toolbar_position）が掴んだ直後の
-            # わずかな隙に発火して引き戻すのを防ぐため、押した瞬間に
-            # 先に自由モードへ切り替えておく。クリックだけだった場合は
-            # on_releaseで元の状態に戻してから本来のクリック処理を行う。
-            if not self.is_pinned:
-                self.is_pinned = True
-                set_pin_visual(True)
-            # ドラッグ中はwinfo_x()/winfo_y()を読み直さない（wm_geometry()
-            # 直後の数msは信頼できない値を返すことがあるため）。押した瞬間
-            # の位置だけを基準に、以降は総移動量から絶対位置を計算する。
-            self._drag_origin_x = self.winfo_x()
-            self._drag_origin_y = self.winfo_y()
-            self._drag_press_root_x = self.winfo_pointerx()
-            self._drag_press_root_y = self.winfo_pointery()
-
-        def on_motion(event):
-            total_dx = event.x_root - self._drag_press_root_x
-            total_dy = event.y_root - self._drag_press_root_y
-            if (total_dx * total_dx + total_dy * total_dy) ** 0.5 > DRAG_THRESHOLD_PX:
-                self._drag_moved = True
-                new_x = self._drag_origin_x + total_dx
-                new_y = self._drag_origin_y + total_dy
+        def drag_motion(event):
+            dx = event.x - self._drag_start_x
+            dy = event.y - self._drag_start_y
+            if (dx * dx + dy * dy) ** 0.5 > DRAG_THRESHOLD_PX:
+                self._is_dragging = True
+                # 追従中の自動位置補正（sync_toolbar_position）が掴んだ直後の
+                # わずかな隙に発火して引き戻すのを防ぐため、動かし始めた
+                # 瞬間に自由モードへ切り替えておく。
+                if not self.is_pinned:
+                    self.is_pinned = True
+                    self.pin_btn.configure(text="自由", bg="#e1e1e1", relief="raised")
+                new_x = self.winfo_x() + dx
+                new_y = self.winfo_y() + dy
                 self.wm_geometry(f"+{new_x}+{new_y}")
 
-        def on_release(event):
-            if not self._drag_moved:
-                self.is_pinned = self._pre_drag_pinned
-                set_pin_visual(self.is_pinned)
-                if click_action:
-                    click_action()
-
-        widget.bind("<ButtonPress-1>", on_press)
-        widget.bind("<B1-Motion>", on_motion)
-        widget.bind("<ButtonRelease-1>", on_release)
+        self.bind("<Button-1>", start_drag)
+        self.bind("<B1-Motion>", drag_motion)
 
     def _next_column_slot(self):
         if self.current_column is None or self.current_column_row_count >= self.max_rows:
@@ -108,6 +91,11 @@ class Toolbar(tk.Toplevel):
         return self.current_column
 
     def toggle_pin(self):
+        # 追従ボタンのcommand=は、ドラッグ移動と同じ<Button-1>系イベントで
+        # 発火するため、実際にドラッグした直後の指離しでも呼ばれてしまう。
+        # ドラッグが起きていた場合はここで無視し、二重切り替えを防ぐ。
+        if self._is_dragging:
+            return
         self.is_pinned = not self.is_pinned
         if self.is_pinned:
             self.pin_btn.configure(text="自由", bg="#e1e1e1", relief="raised")
