@@ -25,6 +25,8 @@ except ModuleNotFoundError as exc:
 
 from widgets.toolbar import Toolbar
 from utils.send_key import send_key_to_hwnd
+from utils.send_command import send_command_to_hwnd
+from utils import command_master
 from utils.jww_watcher import get_raw_statusbar_text
 from utils.state_parser import parse_statusbar_text
 from utils.state_collection import StateCollectionLogger
@@ -365,26 +367,40 @@ class JwNavigatorManager:
         try:
             x1, y1, x2, y2 = get_jw_window_rect_safe(hwnd)
             jw_w = x2 - x1
-            tb_w = 52
             num_l = len(tl.buttons)
             num_r = len(tr.buttons)
-            tb_h_l = (num_l * 52) + 52 if num_l > 0 else 0
-            tb_h_r = (num_r * 52) + 52 if num_r > 0 else 0
+
+            # 各列フレームにはドラッグ用の余白（padx/pady=3、widgets/toolbar.py
+            # の_next_column_slot参照）が付いているため、その分をサイズ計算にも
+            # 反映する。反映し忘れると右端の列がウィンドウ幅からはみ出す。
+            COLUMN_PAD = 1
+
+            def columns_and_height(count, max_rows):
+                if count <= 0:
+                    return 0, 0
+                rows = min(count, max_rows) if max_rows > 0 else count
+                cols = -(-count // max_rows) if max_rows > 0 else 1
+                return cols, (rows * 52) + 52 + (COLUMN_PAD * 2)
+
+            cols_l, tb_h_l = columns_and_height(num_l, tl.max_rows)
+            cols_r, tb_h_r = columns_and_height(num_r, tr.max_rows)
+            tb_w_l = cols_l * (52 + COLUMN_PAD * 2)
+            tb_w_r = cols_r * (52 + COLUMN_PAD * 2)
             is_maximized = (
                 x1 <= 0 and y1 <= 0 and jw_w >= self.root.winfo_screenwidth() - 20
             )
             if is_maximized:
                 left_x = 0
-                right_x = jw_w - tb_w - 16
+                right_x = jw_w - tb_w_r - 16
                 top_off = 70
             else:
-                left_x = x1 - tb_w
+                left_x = x1 - tb_w_l
                 right_x = x2
                 top_off = 0
             if not tl.is_pinned and num_l > 0:
-                tl.wm_geometry(f"{tb_w}x{tb_h_l}+{left_x}+{y1 + top_off}")
+                tl.wm_geometry(f"{tb_w_l}x{tb_h_l}+{left_x}+{y1 + top_off}")
             if not tr.is_pinned and num_r > 0:
-                tr.wm_geometry(f"{tb_w}x{tb_h_r}+{right_x}+{y1 + top_off}")
+                tr.wm_geometry(f"{tb_w_r}x{tb_h_r}+{right_x}+{y1 + top_off}")
             if foreground_hwnd in (hwnd, tl.winfo_id(), tr.winfo_id()):
                 if num_l > 0:
                     tl.attributes("-topmost", True)
@@ -438,14 +454,14 @@ class JwNavigatorManager:
                         master=self.root,
                         side_type="左",
                         hwnd=hwnd,
-                        send_key_func=self.logged_send_key,
+                        execute_func=self.logged_execute_command,
                         manager_ref=self,
                     )
                     toolbar_r = Toolbar(
                         master=self.root,
                         side_type="右",
                         hwnd=hwnd,
-                        send_key_func=self.logged_send_key,
+                        execute_func=self.logged_execute_command,
                         manager_ref=self,
                     )
                     toolbar_l.status_label = tk.Label(
@@ -597,19 +613,38 @@ class JwNavigatorManager:
                                 tb.select_button(btn)
                                 break
 
-    def logged_send_key(self, hwnd, key_str, mode="A"):
-        self.write_system_log(
-            f"【Jw送信】 source=palette target_hwnd={hwnd} key={key_str} mode={mode}"
-        )
-        self.record_state_collection_event("SEND", key_str)
-        send_key_to_hwnd(hwnd, key_str, mode=mode)
+    def logged_execute_command(self, hwnd, command_id):
+        id_command = command_master.get_id_command(command_id)
+        if id_command:
+            self.write_system_log(
+                f"【Jw送信】 source=palette target_hwnd={hwnd} command_id={command_id} idCommand={id_command}"
+            )
+            self.record_state_collection_event("SEND", command_id)
+            sent = send_command_to_hwnd(hwnd, id_command)
+            if not sent:
+                self.write_system_log(
+                    f"⚠️ [送信スキップ] ダイアログ等でメインウィンドウが無効なため command_id={command_id} を送信しませんでした。"
+                )
+                return
+        else:
+            shortcut_key = command_master.get_shortcut_key(command_id)
+            if not shortcut_key:
+                self.write_system_log(
+                    f"⚠️ [送信不可] command_id={command_id} にidCommandもshortcut_keyも見つかりません。"
+                )
+                return
+            self.write_system_log(
+                f"【Jw送信】 source=palette target_hwnd={hwnd} command_id={command_id} key={shortcut_key}（フォールバック）"
+            )
+            self.record_state_collection_event("SEND", command_id)
+            send_key_to_hwnd(hwnd, shortcut_key, mode="A")
 
         # 👑 【2.0仕様：ランチャー側クリック時は即座に先行点灯し、インテントをロック】
         for side_key in ["左", "右"]:
             if hwnd in self.active_launchers:
                 tb = self.active_launchers[hwnd][side_key]
                 for btn in tb.buttons:
-                    if btn.command_key == key_str:
+                    if btn.command_key == command_id:
                         tb.select_button(btn)
                         # トグル動作でない機能を除外してインテントを先行ロック
                         if btn.name not in [

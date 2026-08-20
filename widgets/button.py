@@ -103,6 +103,8 @@ class NavButton(tk.Frame):
         self.icon_name = "fallback"
         self.selected = False
         self._is_dragging = False
+        self._press_x = 0
+        self._press_y = 0
         self.photo_img = None
 
         self.canvas = tk.Canvas(
@@ -167,15 +169,24 @@ class NavButton(tk.Frame):
             justify="center",
         )
 
+    DRAG_THRESHOLD_PX = 8
+
     def press(self, event):
         self._is_dragging = False
+        self._press_x = event.x
+        self._press_y = event.y
+        return "break"
 
     def motion(self, event):
-        self._is_dragging = True
+        dx = event.x - self._press_x
+        dy = event.y - self._press_y
+        if (dx * dx + dy * dy) ** 0.5 > self.DRAG_THRESHOLD_PX:
+            self._is_dragging = True
+        return "break"
 
     def release(self, event):
         if self._is_dragging:
-            return
+            return "break"
 
         try:
             self.winfo_toplevel().attributes("-topmost", False)
@@ -202,6 +213,7 @@ class NavButton(tk.Frame):
             self.winfo_toplevel().attributes("-topmost", True)
         except Exception:
             pass
+        return "break"
 
     def enter(self, event):
         if getattr(self.manager_ref, "record_state_collection_event", None):

@@ -1,0 +1,57 @@
+# ===== ✂️ utils/command_master.py START ✂️ =====
+import csv
+import os
+import sys
+
+_cache = None
+
+
+def _resolve_csv_path():
+    try:
+        script_path_str, *_ = sys.argv
+        exe_dir = os.path.dirname(os.path.abspath(script_path_str))
+        path = os.path.join(exe_dir, "data", "commands_master.csv")
+        if os.path.exists(path):
+            return path
+    except Exception:
+        pass
+    return os.path.join("data", "commands_master.csv")
+
+
+def _load():
+    global _cache
+    if _cache is not None:
+        return _cache
+
+    _cache = {}
+    path = _resolve_csv_path()
+    if not os.path.exists(path):
+        return _cache
+
+    with open(path, "r", encoding="utf-8-sig", newline="") as f:
+        for row in csv.DictReader(f):
+            command_id = row.get("command_id", "").strip()
+            if command_id:
+                _cache[command_id] = row
+    return _cache
+
+
+def get_by_command_id(command_id: str):
+    return _load().get(command_id)
+
+
+def get_id_command(command_id: str):
+    row = get_by_command_id(command_id)
+    if not row:
+        return None
+    value = row.get("idCommand", "").strip()
+    return int(value) if value else None
+
+
+def get_shortcut_key(command_id: str):
+    row = get_by_command_id(command_id)
+    if not row:
+        return None
+    value = row.get("shortcut_key", "").strip()
+    return value or None
+# ===== ✂️ utils/command_master.py END ✂️ =====
