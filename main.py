@@ -524,8 +524,6 @@ class JwNavigatorManager:
                         fg="#888888",
                     )
                     toolbar_l.status_label.pack(side="top", fill="x", pady=(0, 2))
-                    self.enable_drag_move(toolbar_l)
-                    self.enable_drag_move(toolbar_r)
 
                     def show_exit_popup(event, target_hwnd=hwnd):
                         menu = tk.Menu(self.root, tearoff=0, font=("Meiryo UI", 9))
@@ -752,38 +750,6 @@ class JwNavigatorManager:
             logging.exception("shutdown_manager after_cancel failed")
         self.root.quit()
         self.root.destroy()
-
-    def enable_drag_move(self, window):
-        import win32api
-
-        def start_drag(event):
-            window._drag_start_x, window._drag_start_y = event.x, event.y
-            window.is_dragging = False
-
-        def drag_motion(event):
-            dx = event.x - window._drag_start_x
-            dy = event.y - window._drag_start_y
-            if abs(dx) > 3 or abs(dy) > 3:
-                window.is_dragging = True
-                if not window.is_pinned:
-                    window.is_pinned = True
-                    window.pin_btn.configure(text="自由", bg="#e1e1e1", relief="raised")
-
-                tx = window.winfo_x() + dx
-                ty = window.winfo_y() + dy
-                wh = window.winfo_height()
-
-                virtual_left = win32api.GetSystemMetrics(76)
-                virtual_top = win32api.GetSystemMetrics(77)
-                virtual_width = win32api.GetSystemMetrics(78)
-                virtual_height = win32api.GetSystemMetrics(79)
-
-                tx = max(virtual_left, min(tx, virtual_left + virtual_width - 52))
-                ty = max(virtual_top, min(ty, virtual_top + virtual_height - wh))
-                window.wm_geometry(f"+{tx}+{ty}")
-
-        window.bind("<Button-1>", start_drag)
-        window.bind("<B1-Motion>", drag_motion)
 
     def start(self):
         self.write_system_log("▶️ 監視を開始します（パレット自動生成は有効・フックは無効）")
