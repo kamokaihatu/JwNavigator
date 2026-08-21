@@ -379,15 +379,18 @@ class JwNavigatorManager:
             BUTTON_SIZE = 48
             PIN_BUTTON_HEIGHT = 23
 
-            def columns_and_height(count, max_rows):
-                if count <= 0:
+            def columns_and_height(toolbar):
+                # #BREAKディレクティブ（config.csv）を使うと列ごとの行数が
+                # 揃わないことがあるため、想定計算ではなくtoolbar自身が
+                # 実際に作った列の数・一番高い列の行数をそのまま使う。
+                cols = len(toolbar.column_row_counts)
+                if cols <= 0:
                     return 0, 0
-                rows = min(count, max_rows) if max_rows > 0 else count
-                cols = -(-count // max_rows) if max_rows > 0 else 1
+                rows = toolbar.max_column_rows()
                 return cols, (rows * BUTTON_SIZE) + PIN_BUTTON_HEIGHT + (OUTER_PAD * 2)
 
-            cols_l, tb_h_l = columns_and_height(num_l, tl.max_rows)
-            cols_r, tb_h_r = columns_and_height(num_r, tr.max_rows)
+            cols_l, tb_h_l = columns_and_height(tl)
+            cols_r, tb_h_r = columns_and_height(tr)
             tb_w_l = (cols_l * BUTTON_SIZE) + (OUTER_PAD * 2) if cols_l > 0 else 0
             tb_w_r = (cols_r * BUTTON_SIZE) + (OUTER_PAD * 2) if cols_r > 0 else 0
             is_maximized = (

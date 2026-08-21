@@ -23,6 +23,7 @@ class Toolbar(tk.Toplevel):
         self.columns_container = None
         self.current_column = None
         self.current_column_row_count = 0
+        self.column_row_counts = []
 
         self.title(f"JwNavigator - {self.side_type}")
         self.configure(bg="#f0f0f0")
@@ -102,8 +103,16 @@ class Toolbar(tk.Toplevel):
             # padyで確保済み）。
             self.current_column.pack(side="left", anchor="n")
             self.current_column_row_count = 0
+            self.column_row_counts.append(0)
         self.current_column_row_count += 1
+        self.column_row_counts[-1] += 1
         return self.current_column
+
+    def max_column_rows(self):
+        # #BREAKを使うと列ごとの行数が揃わないことがあるため、main.py側の
+        # ウィンドウ高さ計算は「最大rows数」ではなく、実際に一番高い列の
+        # 行数をここから取得して使う。
+        return max(self.column_row_counts) if self.column_row_counts else 0
 
     def toggle_pin(self):
         # click_actionとして呼ばれるのはon_release()がドラッグでなかったと
@@ -149,6 +158,15 @@ class Toolbar(tk.Toplevel):
                             self.max_rows = int(row[1].strip())
                         except ValueError:
                             pass
+                        continue
+                    if first_col == "#BREAK":
+                        # #BREAK,<配置> という行で、行数に関係なく強制的に
+                        # 次のボタンから新しい列を開始する（実際のツールバーが
+                        # 「内側n個・外側m個」のように、行数の都合とは無関係な
+                        # 区切りで列を分けている場合に使う）。
+                        break_side = "".join(row[1:2]).strip() if len(row) >= 2 else ""
+                        if break_side == self.side_type:
+                            self.current_column = None
                         continue
                     if first_col.startswith("#"):
                         continue
