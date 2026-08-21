@@ -54,4 +54,29 @@ def get_shortcut_key(command_id: str):
         return None
     value = row.get("shortcut_key", "").strip()
     return value or None
+
+
+def list_available_commands():
+    # idCommandとshortcut_keyが両方とも空の行は実行できないため除外する
+    rows = []
+    for command_id, row in _load().items():
+        id_cmd = (row.get("idCommand") or "").strip()
+        shortcut = (row.get("shortcut_key") or "").strip()
+        if not id_cmd and not shortcut:
+            continue
+        rows.append(
+            {
+                "command_id": command_id,
+                "toolbar_name": (row.get("toolbar_name") or "").strip() or command_id,
+                "category": (row.get("category") or "").strip() or "その他",
+                "shortcut_key": shortcut,
+                "id_command": int(id_cmd) if id_cmd.isdigit() else None,
+            }
+        )
+    rows.sort(key=lambda r: (r["category"], r["command_id"]))
+    return rows
+
+
+def list_categories():
+    return sorted({r["category"] for r in list_available_commands()})
 # ===== ✂️ utils/command_master.py END ✂️ =====

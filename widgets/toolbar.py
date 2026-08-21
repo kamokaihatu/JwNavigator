@@ -1,10 +1,25 @@
 # ===== ✂️ widgets/toolbar.py START ✂️ =====
 import tkinter as tk
-import os
-import csv
-import sys
 import importlib
 from widgets.button import NavButton
+from utils import palette_config
+
+_ICON_MODULE_CACHE = {}
+
+
+def _import_icon_module(icon_name):
+    if not icon_name:
+        return None
+    if icon_name in _ICON_MODULE_CACHE:
+        return _ICON_MODULE_CACHE[icon_name]
+    module = None
+    try:
+        module = importlib.import_module(f"icons.{icon_name}")
+    except Exception as e:
+        print(f"[WARN] icon module load failed: {icon_name} ({e})")
+    _ICON_MODULE_CACHE[icon_name] = module
+    return module
+
 
 class Toolbar(tk.Toplevel):
     def __init__(self, master, side_type, hwnd, execute_func=None, manager_ref=None):
@@ -13,17 +28,17 @@ class Toolbar(tk.Toplevel):
         self.target_hwnd = hwnd
         self.execute_func = execute_func
         self.manager_ref = manager_ref
-        
+
         self.current_selected_button = None
         self.buttons = []
         self.is_pinned = False
         self.user_hidden = False
 
-        self.max_rows = 20
+        self.orientation = palette_config.ORIENTATION_PORTRAIT
+        self.button_size = palette_config.DEFAULT_BUTTON_SIZE
         self.columns_container = None
-        self.current_column = None
-        self.current_column_row_count = 0
-        self.column_row_counts = []
+        self.group_frames = []
+        self.group_sizes = []
 
         self.title(f"JwNavigator - {self.side_type}")
         self.configure(bg="#f0f0f0")
@@ -96,23 +111,11 @@ class Toolbar(tk.Toplevel):
         widget.bind("<B1-Motion>", on_motion)
         widget.bind("<ButtonRelease-1>", on_release)
 
-    def _next_column_slot(self):
-        if self.current_column is None or self.current_column_row_count >= self.max_rows:
-            self.current_column = tk.Frame(self.columns_container, bg="#f0f0f0")
-            # 列同士は詰めて配置する（外周の余白はcolumns_container側のpadx/
-            # padyで確保済み）。
-            self.current_column.pack(side="left", anchor="n")
-            self.current_column_row_count = 0
-            self.column_row_counts.append(0)
-        self.current_column_row_count += 1
-        self.column_row_counts[-1] += 1
-        return self.current_column
+    def group_count(self):
+        return len(self.group_sizes)
 
-    def max_column_rows(self):
-        # #BREAKを使うと列ごとの行数が揃わないことがあるため、main.py側の
-        # ウィンドウ高さ計算は「最大rows数」ではなく、実際に一番高い列の
-        # 行数をここから取得して使う。
-        return max(self.column_row_counts) if self.column_row_counts else 0
+    def max_group_length(self):
+        return max(self.group_sizes) if self.group_sizes else 0
 
     def toggle_pin(self):
         # click_actionとして呼ばれるのはon_release()がドラッグでなかったと
@@ -130,87 +133,60 @@ class Toolbar(tk.Toplevel):
             self._last_geom = None
 
     def load_and_build_buttons(self):
-        try:
-            script_path_str, *dummy_args = sys.argv
-            exe_dir = os.path.dirname(os.path.abspath(script_path_str))
-            csv_path = os.path.join(exe_dir, "config", "config.csv")
-        except Exception:
-            csv_path = os.path.join("config", "config.csv")
-
-        if not os.path.exists(csv_path):
-            csv_path = os.path.join("config", "config.csv")
-            
-        if not os.path.exists(csv_path):
-            if self.manager_ref:
-                self.manager_ref.write_system_log("⚠️ [物理クラッシュ] config/config.csv が見つかりません。")
-            return
+        for child in self.columns_container.winfo_children():
+            try:
+                child.destroy()
+            except Exception:
+                pass
+        self.buttons = []
+        self.group_frames = []
+        self.group_sizes = []
+        self.current_selected_button = None
 
         try:
-            with open(csv_path, "r", encoding="utf-8-sig") as f:
-                reader = csv.reader(f)
-                for row in reader:
-                    if not row:
-                        continue
-                    
-                    first_col = "".join(row[0:1]).strip()
-                    if first_col == "#MAX_ROWS" and len(row) >= 2:
-                        try:
-                            self.max_rows = int(row[1].strip())
-                        except ValueError:
-                            pass
-                        continue
-                    if first_col == "#BREAK":
-                        # #BREAK,<配置> という行で、行数に関係なく強制的に
-                        # 次のボタンから新しい列を開始する（実際のツールバーが
-                        # 「内側n個・外側m個」のように、行数の都合とは無関係な
-                        # 区切りで列を分けている場合に使う）。
-                        break_side = "".join(row[1:2]).strip() if len(row) >= 2 else ""
-                        if break_side == self.side_type:
-                            self.current_column = None
-                        continue
-                    if first_col.startswith("#"):
-                        continue
-
-                    if len(row) < 5:
-                        continue
-                    
-                    pos = "".join(row[0:1]).strip()
-                    btn_type = "".join(row[1:2]).strip()
-                    name = "".join(row[2:3]).strip()
-                    command_id = "".join(row[3:4]).strip()
-                    icon_name = "".join(row[4:5]).strip()
-
-                    if pos != self.side_type:
-                        continue
-
-                    icon_module = None
-                    try:
-                        icon_module = importlib.import_module(f"icons.{icon_name}")
-                    except Exception as e:
-                        if self.manager_ref:
-                            self.manager_ref.write_system_log(f"⚠️ [アイコン未検出] icons.{icon_name} 読込スキップ: {e}")
-
-                    color = "#333333"
-                    column = self._next_column_slot()
-                    btn = NavButton(
-                        master=column, name=name, icon_module=icon_module, cmd_color=color,
-                        command=lambda k=command_id: self.execute_command(k), manager_ref=self.manager_ref
-                    )
-
-                    btn.command_key = command_id
-                    btn.hwnd = self.target_hwnd
-                    btn.icon_name = icon_name
-                    btn.load_and_draw()
-                    
-                    btn.pack(side="top")
-                    self.buttons.append(btn)
-                    
-            if self.manager_ref:
-                self.manager_ref.write_system_log(f"🎨 [{self.side_type}ツールバー] config.csv から正常に {len(self.buttons)} 個のボタンをパッキング整列しました。")
-                
+            config = palette_config.load_config()
+            side_cfg = palette_config.side_config(config, self.side_type)
         except Exception as e:
             if self.manager_ref:
-                self.manager_ref.write_system_log(f"❌ [{self.side_type}ツールバー] CSV展開物理クラッシュ: {str(e)}")
+                self.manager_ref.write_system_log(f"❌ [{self.side_type}ツールバー] config.json読込失敗: {str(e)}")
+            side_cfg = {"orientation": palette_config.ORIENTATION_PORTRAIT, "button_size": palette_config.DEFAULT_BUTTON_SIZE, "groups": []}
+
+        self.orientation = side_cfg["orientation"]
+        self.button_size = side_cfg["button_size"]
+
+        if self.orientation == palette_config.ORIENTATION_LANDSCAPE:
+            group_side, group_anchor, button_side = "top", "w", "left"
+        else:
+            group_side, group_anchor, button_side = "left", "n", "top"
+
+        for group in side_cfg["groups"]:
+            entries = group.get("buttons") or []
+            if not entries:
+                continue
+
+            frame = tk.Frame(self.columns_container, bg="#f0f0f0")
+            frame.pack(side=group_side, anchor=group_anchor)
+            self.group_frames.append(frame)
+
+            for entry in entries:
+                icon_module = _import_icon_module(entry["icon"])
+                btn = NavButton(
+                    master=frame, name=entry["name"], icon_module=icon_module, cmd_color=entry["color"],
+                    command=lambda k=entry["command_id"]: self.execute_command(k), manager_ref=self.manager_ref,
+                    size=self.button_size,
+                )
+                btn.command_key = entry["command_id"]
+                btn.hwnd = self.target_hwnd
+                btn.icon_name = entry["icon"]
+                btn.load_and_draw()
+
+                btn.pack(side=button_side)
+                self.buttons.append(btn)
+
+            self.group_sizes.append(len(entries))
+
+        if self.manager_ref:
+            self.manager_ref.write_system_log(f"🎨 [{self.side_type}ツールバー] config.json から正常に {len(self.buttons)} 個のボタンをパッキング整列しました。")
 
         print(f"{self.side_type}: {len(self.buttons)} 個")
 

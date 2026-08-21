@@ -24,6 +24,7 @@ except ModuleNotFoundError as exc:
     ) from exc
 
 from widgets.toolbar import Toolbar
+from widgets.settings_window import SettingsWindow
 from utils.send_key import send_key_to_hwnd
 from utils.send_command import send_command_to_hwnd
 from utils import command_master
@@ -201,6 +202,7 @@ class JwNavigatorManager:
         self.root = tk.Tk()
         self.root.withdraw()
         self.active_launchers = {}
+        self.settings_window = None
         self.last_jww_state = "STATE_IDLE"
         self.event_engines = {}  # 👑 ウィンドウ個別の安定判定エンジン管理辞書
         self.locked_intent = (
@@ -379,19 +381,19 @@ class JwNavigatorManager:
                 win32api.GetSystemMetrics(78),
                 win32api.GetSystemMetrics(79),
             )
-            # #BREAKディレクティブ（config.csv）を使うと列ごとの行数が
-            # 揃わないことがあるため、想定計算ではなくtoolbar自身が
-            # 実際に作った列の数・一番高い列の行数をそのまま渡す。
-            left_info = {
-                "cols": len(tl.column_row_counts),
-                "max_rows": tl.max_column_rows(),
-                "button_count": len(tl.buttons),
-            }
-            right_info = {
-                "cols": len(tr.column_row_counts),
-                "max_rows": tr.max_column_rows(),
-                "button_count": len(tr.buttons),
-            }
+            # グループごとのボタン数が揃わないことがあるため、想定計算では
+            # なくtoolbar自身が実際に作ったグループ数・一番長いグループの
+            # ボタン数をそのまま渡す。
+            def _side_info(tb):
+                return {
+                    "groups": tb.group_count(),
+                    "max_group_len": tb.max_group_length(),
+                    "button_count": len(tb.buttons),
+                    "button_size": tb.button_size,
+                    "orientation": tb.orientation,
+                }
+            left_info = _side_info(tl)
+            right_info = _side_info(tr)
             geom = compute_palette_geometry(jw_rect, screen_width, virtual_screen, left_info, right_info)
 
             if not tl.is_pinned and geom["左"]:
@@ -505,6 +507,11 @@ class JwNavigatorManager:
                     def show_exit_popup(event, target_hwnd=hwnd):
                         menu = tk.Menu(self.root, tearoff=0, font=("Meiryo UI", 9))
                         menu.add_command(
+                            label="⚙️ パレットを編集",
+                            command=self.open_settings_window,
+                        )
+                        menu.add_separator()
+                        menu.add_command(
                             label="⚙️ このパレットだけを閉じる",
                             command=lambda h=target_hwnd: self.close_single_palette(h),
                         )
@@ -536,6 +543,34 @@ class JwNavigatorManager:
                     self.write_system_log(
                         f"❌ パレット動的構築失敗 [HWND:{hwnd}]: {str(e)}"
                     )
+
+    def reload_all_palettes(self):
+        # 設定画面で保存した直後に呼ばれる。既存パレットを全部破棄して、
+        # 「jw_cadが閉じた」時と同じ後始末をした上で、再スキャンして
+        # config.jsonの最新内容から作り直させる。
+        for hwnd in list(self.active_launchers.keys()):
+            pair = self.active_launchers.pop(hwnd, None) or {}
+            for tb in pair.values():
+                try:
+                    tb.destroy()
+                except Exception:
+                    pass
+            self.event_engines.pop(hwnd, None)
+            self.locked_intent.pop(hwnd, None)
+        self.root.after(50, self._rebuild_palettes_now)
+
+    def _rebuild_palettes_now(self):
+        try:
+            self._manage_palette_lifecycle(self.find_all_jw_cad_windows())
+        except Exception as e:
+            self.write_system_log(f"❌ パレット再構築失敗: {str(e)}")
+
+    def open_settings_window(self):
+        if self.settings_window is not None and self.settings_window.winfo_exists():
+            self.settings_window.lift()
+            self.settings_window.focus_force()
+            return
+        self.settings_window = SettingsWindow(self.root, manager_ref=self)
 
     # ===== ✂️ main.py END PART 2 ✂️ =====
     # ===== ✂️ main.py START PART 3 ✂️ =====
