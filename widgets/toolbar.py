@@ -36,7 +36,12 @@ class Toolbar(tk.Toplevel):
         self.create_pin_button()
         self._bind_drag_move(self)
         self.columns_container = tk.Frame(self, bg="#f0f0f0")
-        self.columns_container.pack(side="top", fill="both", expand=True, padx=3, pady=3)
+        # fill/expandを付けると、ウィンドウ幅がボタン列の実サイズより
+        # わずかに大きい場合に余白が右側だけに寄ってしまう（左詰めに見える
+        # 原因）。fill/expandなしでpackすると、Tkinterのデフォルトの
+        # center配置により左右対称に余白が入る。空白部分のドラッグは
+        # self（Toplevel本体）側のバインドでカバーする。
+        self.columns_container.pack(side="top", padx=3, pady=3)
         self._bind_drag_move(self.columns_container)
         self.load_and_build_buttons()
 

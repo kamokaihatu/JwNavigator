@@ -373,19 +373,23 @@ class JwNavigatorManager:
             # ボタン列自体は隙間なく詰めてあり、外周だけcolumns_container側の
             # padx/pady=3で余白を確保している（widgets/toolbar.py参照）。
             # 反映し忘れると右端の列がウィンドウ幅からはみ出す。
+            # 実測値（win32のGetWindowRectで確認済み）：
+            # ボタン1個 = 48x48px（余白なしで詰めた状態）、追従ボタン = 23px。
             OUTER_PAD = 3
+            BUTTON_SIZE = 48
+            PIN_BUTTON_HEIGHT = 23
 
             def columns_and_height(count, max_rows):
                 if count <= 0:
                     return 0, 0
                 rows = min(count, max_rows) if max_rows > 0 else count
                 cols = -(-count // max_rows) if max_rows > 0 else 1
-                return cols, (rows * 52) + 52 + (OUTER_PAD * 2)
+                return cols, (rows * BUTTON_SIZE) + PIN_BUTTON_HEIGHT + (OUTER_PAD * 2)
 
             cols_l, tb_h_l = columns_and_height(num_l, tl.max_rows)
             cols_r, tb_h_r = columns_and_height(num_r, tr.max_rows)
-            tb_w_l = (cols_l * 52) + (OUTER_PAD * 2) if cols_l > 0 else 0
-            tb_w_r = (cols_r * 52) + (OUTER_PAD * 2) if cols_r > 0 else 0
+            tb_w_l = (cols_l * BUTTON_SIZE) + (OUTER_PAD * 2) if cols_l > 0 else 0
+            tb_w_r = (cols_r * BUTTON_SIZE) + (OUTER_PAD * 2) if cols_r > 0 else 0
             is_maximized = (
                 x1 <= 0 and y1 <= 0 and jw_w >= self.root.winfo_screenwidth() - 20
             )
