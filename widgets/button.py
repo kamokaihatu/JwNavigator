@@ -1,5 +1,6 @@
 # ===== ✂️ widgets/button.py START PART 1 ✂️ =====
 import os
+import re
 import tkinter as tk
 
 
@@ -127,6 +128,26 @@ class NavButton(tk.Frame):
         Tooltip(self, self.name)
         Tooltip(self.canvas, self.name)
 
+    @staticmethod
+    def _wrap_label(name):
+        # 「1/4」のような分数表記が行の途中で切れて "1/" のように
+        # みっともなくならないよう、まず分数をひとかたまりのトークンとして
+        # 抜き出し、それ以外は1文字ずつのトークンにする。
+        tokens = re.findall(r"\d+/\d+|.", name)
+        n = len(tokens)
+        if n <= 2:
+            return name, 18
+
+        rows = ["".join(tokens[i:i + 2]) for i in range(0, n, 2)]
+        num_rows = len(rows)
+        if num_rows == 2:
+            f_size = 14
+        elif num_rows == 3:
+            f_size = 11
+        else:
+            f_size = 9
+        return "\n".join(rows), f_size
+
     def load_and_draw(self):
         self.canvas.delete("all")
 
@@ -152,18 +173,12 @@ class NavButton(tk.Frame):
             except Exception:
                 pass
 
-        c_len = len(self.name)
-        if c_len <= 2:
-            f_size = 18
-        elif c_len == 3:
-            f_size = 12
-        else:
-            f_size = 9
+        display_text, f_size = self._wrap_label(self.name)
 
         self.canvas.create_text(
             22,
             22,
-            text=self.name,
+            text=display_text,
             font=("Meiryo UI", f_size, "bold"),
             fill=self.cmd_color,
             justify="center",
