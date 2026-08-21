@@ -30,6 +30,7 @@ from utils import command_master
 from utils.jww_watcher import get_raw_statusbar_text
 from utils.state_parser import parse_statusbar_text
 from utils.state_collection import StateCollectionLogger
+from utils.palette_layout import compute_palette_geometry
 
 WH_MOUSE_LL = 14
 WM_MOUSEMOVE = 0x0200
@@ -365,83 +366,59 @@ class JwNavigatorManager:
         tr = self.active_launchers[hwnd]["右"]
         foreground_hwnd = win32gui.GetForegroundWindow()
         try:
-            x1, y1, x2, y2 = get_jw_window_rect_safe(hwnd)
-            jw_w = x2 - x1
-            num_l = len(tl.buttons)
-            num_r = len(tr.buttons)
-
-            # ボタン列自体は隙間なく詰めてあり、外周だけcolumns_container側の
-            # padx/pady=3で余白を確保している（widgets/toolbar.py参照）。
-            # 反映し忘れると右端の列がウィンドウ幅からはみ出す。
-            # 実測値（win32のGetWindowRectで確認済み）：
-            # ボタン1個 = 48x48px（余白なしで詰めた状態）、追従ボタン = 23px。
-            OUTER_PAD = 3
-            BUTTON_SIZE = 48
-            PIN_BUTTON_HEIGHT = 23
-
-            def columns_and_height(toolbar):
-                # #BREAKディレクティブ（config.csv）を使うと列ごとの行数が
-                # 揃わないことがあるため、想定計算ではなくtoolbar自身が
-                # 実際に作った列の数・一番高い列の行数をそのまま使う。
-                cols = len(toolbar.column_row_counts)
-                if cols <= 0:
-                    return 0, 0
-                rows = toolbar.max_column_rows()
-                return cols, (rows * BUTTON_SIZE) + PIN_BUTTON_HEIGHT + (OUTER_PAD * 2)
-
-            cols_l, tb_h_l = columns_and_height(tl)
-            cols_r, tb_h_r = columns_and_height(tr)
-            tb_w_l = (cols_l * BUTTON_SIZE) + (OUTER_PAD * 2) if cols_l > 0 else 0
-            tb_w_r = (cols_r * BUTTON_SIZE) + (OUTER_PAD * 2) if cols_r > 0 else 0
-            is_maximized = (
-                x1 <= 0 and y1 <= 0 and jw_w >= self.root.winfo_screenwidth() - 20
-            )
-            if is_maximized:
-                left_x = 0
-                right_x = jw_w - tb_w_r - 16
-                top_off = 70
-            else:
-                left_x = x1 - tb_w_l
-                right_x = x2
-                top_off = 0
+            jw_rect = get_jw_window_rect_safe(hwnd)
+            screen_width = self.root.winfo_screenwidth()
             # 最大化時など、jw_cadの実際のウィンドウ矩形は見えない分の
             # リサイズ境界を含んで画面幅を超えることがある（Windowsの仕様）。
             # そのまま使うと右パレットが画面外にはみ出すため、実際の
             # モニター全体（マルチモニター含む仮想スクリーン）の範囲に
-            # 収まるようクランプする。
-            virtual_left = win32api.GetSystemMetrics(76)
-            virtual_top = win32api.GetSystemMetrics(77)
-            virtual_width = win32api.GetSystemMetrics(78)
-            virtual_height = win32api.GetSystemMetrics(79)
-            top_y = y1 + top_off
+            # 収まるようクランプする（計算自体はutils/palette_layout側）。
+            virtual_screen = (
+                win32api.GetSystemMetrics(76),
+                win32api.GetSystemMetrics(77),
+                win32api.GetSystemMetrics(78),
+                win32api.GetSystemMetrics(79),
+            )
+            # #BREAKディレクティブ（config.csv）を使うと列ごとの行数が
+            # 揃わないことがあるため、想定計算ではなくtoolbar自身が
+            # 実際に作った列の数・一番高い列の行数をそのまま渡す。
+            left_info = {
+                "cols": len(tl.column_row_counts),
+                "max_rows": tl.max_column_rows(),
+                "button_count": len(tl.buttons),
+            }
+            right_info = {
+                "cols": len(tr.column_row_counts),
+                "max_rows": tr.max_column_rows(),
+                "button_count": len(tr.buttons),
+            }
+            geom = compute_palette_geometry(jw_rect, screen_width, virtual_screen, left_info, right_info)
 
-            if not tl.is_pinned and num_l > 0:
-                clamped_left_x = max(virtual_left, min(left_x, virtual_left + virtual_width - tb_w_l))
-                clamped_top_y = max(virtual_top, min(top_y, virtual_top + virtual_height - tb_h_l))
-                new_geom_l = (tb_w_l, tb_h_l, clamped_left_x, clamped_top_y)
+            if not tl.is_pinned and geom["左"]:
+                new_geom_l = geom["左"]
                 # 位置が変わっていないのに毎回wm_geometry()を呼ぶと、
                 # Windows側で「位置が更新された」扱いになり、意図せず
                 # 最前面に上がってくることがある（実測で確認）。実際に
                 # 変化があった時だけ呼ぶ。
                 if getattr(tl, "_last_geom", None) != new_geom_l:
-                    tl.wm_geometry(f"{tb_w_l}x{tb_h_l}+{clamped_left_x}+{clamped_top_y}")
+                    w, h, x, y = new_geom_l
+                    tl.wm_geometry(f"{w}x{h}+{x}+{y}")
                     # wm_geometry()だけだと、他の操作（ボタン押下など）で
                     # イベントループが回るまで実際の描画に反映されないことが
                     # あるため、ここで強制的に反映させる。
                     tl.update_idletasks()
                     tl._last_geom = new_geom_l
-            if not tr.is_pinned and num_r > 0:
-                clamped_right_x = max(virtual_left, min(right_x, virtual_left + virtual_width - tb_w_r))
-                clamped_top_y = max(virtual_top, min(top_y, virtual_top + virtual_height - tb_h_r))
-                new_geom_r = (tb_w_r, tb_h_r, clamped_right_x, clamped_top_y)
+            if not tr.is_pinned and geom["右"]:
+                new_geom_r = geom["右"]
                 if getattr(tr, "_last_geom", None) != new_geom_r:
-                    tr.wm_geometry(f"{tb_w_r}x{tb_h_r}+{clamped_right_x}+{clamped_top_y}")
+                    w, h, x, y = new_geom_r
+                    tr.wm_geometry(f"{w}x{h}+{x}+{y}")
                     tr.update_idletasks()
                     tr._last_geom = new_geom_r
             if foreground_hwnd in (hwnd, tl.winfo_id(), tr.winfo_id()):
-                if num_l > 0:
+                if len(tl.buttons) > 0:
                     tl.attributes("-topmost", True)
-                if num_r > 0:
+                if len(tr.buttons) > 0:
                     tr.attributes("-topmost", True)
             else:
                 tl.attributes("-topmost", False)
