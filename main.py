@@ -207,7 +207,7 @@ class JwNavigatorManager:
         self.event_engines = {}  # 👑 ウィンドウ個別の安定判定エンジン管理辞書
         self.locked_intent = (
             {}
-        )  # 👑 コマンド実行中の凹み上書き防止ロック（インテントホールド）
+        )  # 👑 コマンド実行中の凹み上書き防止ロック（インテントホールド、値は(name, timestamp)）
         self.mouse_hook_controller = MouseHookController(self)
         self.keyboard_hook_controller = KeyboardHookController(self)
         # 👑 フックコールバックはここへイベントを積むだけ。実処理はメインスレッドのdrainで行う。
@@ -245,6 +245,20 @@ class JwNavigatorManager:
             print(f"Log Write Error: {e}")
 
     JW_CAD_EXE_NAME = "jw_win.exe"
+    # 👑 送信直後の一瞬のIdle応答を吸収するためだけのロック。これより長く
+    # 残すと、実際の状態と無関係に凹みが固定されたままになる（過去に
+    # このロックを解除するコードが無く、永久に残ってしまうバグがあった）。
+    LOCKED_INTENT_TTL_SEC = 1.5
+
+    def _get_active_locked_intent(self, hwnd):
+        entry = self.locked_intent.get(hwnd)
+        if not entry:
+            return None
+        name, ts = entry
+        if time.time() - ts > self.LOCKED_INTENT_TTL_SEC:
+            del self.locked_intent[hwnd]
+            return None
+        return name
 
     @staticmethod
     def _get_exe_name_for_hwnd(hwnd):
@@ -614,7 +628,7 @@ class JwNavigatorManager:
         if hasattr(tl, "status_label"):
             if current_state == "STATE_IDLE":
                 tl.status_label.configure(text="待機中", fg="#888888")
-                if hwnd in self.locked_intent:
+                if self._get_active_locked_intent(hwnd):
                     # コマンド送信直後は一時的に Idle を返しても、選択状態は維持する
                     if tl.current_selected_button:
                         tl.current_selected_button.set_selected()
@@ -630,8 +644,9 @@ class JwNavigatorManager:
                         tr.current_selected_button = None
             else:
                 # 👑 【2.0仕様：インテントロックが有効な場合は、そのインテントを優先】
-                if hwnd in self.locked_intent:
-                    match_keyword = self.locked_intent[hwnd]
+                locked_name = self._get_active_locked_intent(hwnd)
+                if locked_name:
+                    match_keyword = locked_name
                 else:
                     # 👑 【β仕様：Jww状態の一瞬の切り替わり(TOOLTIP含む)を逃さず一対一ブリッジ】
                     # 後続の「始点を指示〜」の重複状態になっても、Idleに戻るまでは直前の凹みを維持
@@ -713,9 +728,8 @@ class JwNavigatorManager:
                             "戻る",
                             "進む",
                         ]:
-                            self.locked_intent[hwnd] = (
-                                "面取" if btn.name in ["面取", "面取り"] else btn.name
-                            )
+                            name = "面取" if btn.name in ["面取", "面取り"] else btn.name
+                            self.locked_intent[hwnd] = (name, time.time())
                         return
 
     def is_cursor_over_jw_window(self, x, y):
