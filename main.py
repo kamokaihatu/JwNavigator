@@ -26,7 +26,7 @@ except ModuleNotFoundError as exc:
 from widgets.toolbar import Toolbar
 from widgets.settings_window import SettingsWindow
 from utils.send_key import send_key_to_hwnd
-from utils.send_command import send_command_to_hwnd
+from utils.send_command import send_command_to_hwnd, is_command_enabled, get_command_states
 from utils import command_master
 from utils.jww_watcher import get_raw_statusbar_text
 from utils.state_parser import parse_statusbar_text
@@ -586,6 +586,27 @@ class JwNavigatorManager:
             return
         self.settings_window = SettingsWindow(self.root, manager_ref=self)
 
+    def _update_button_enabled_states(self, hwnd, tl, tr):
+        # jw_cad実ツールバーの有効/無効状態をまとめて調べ、対応するパレット
+        # ボタンをグレーアウト/クリック無効化する。無効と判定できたものだけ
+        # 反映し、判定不能（そのコマンドが今のツールバーに出ていない等）
+        # なものは今まで通りクリック可能なままにする。
+        try:
+            id_map = {}
+            for tb in (tl, tr):
+                for btn in tb.buttons:
+                    id_cmd = command_master.get_id_command(btn.command_key)
+                    if id_cmd:
+                        id_map[btn] = id_cmd
+            if not id_map:
+                return
+            states = get_command_states(hwnd, set(id_map.values()))
+            for btn, id_cmd in id_map.items():
+                enabled = states.get(id_cmd)
+                btn.set_enabled(enabled is not False)
+        except Exception as e:
+            self.write_system_log(f"❌ ボタン有効状態更新エラー [HWND:{hwnd}]: {str(e)}")
+
     # ===== ✂️ main.py END PART 2 ✂️ =====
     # ===== ✂️ main.py START PART 3 ✂️ =====
     def _execute_pipeline_tick(self, hwnd, t_loop_start):
@@ -605,6 +626,8 @@ class JwNavigatorManager:
                 tl.deiconify()
             if not tr.winfo_viewable() and len(tr.buttons) > 0:
                 tr.deiconify()
+
+        self._update_button_enabled_states(hwnd, tl, tr)
 
         raw_text = get_raw_statusbar_text(hwnd)
         # 👑 【2.0仕様：ステータスバーテキストのクリーンアップ強化】
@@ -691,6 +714,11 @@ class JwNavigatorManager:
     def logged_execute_command(self, hwnd, command_id):
         id_command = command_master.get_id_command(command_id)
         if id_command:
+            if is_command_enabled(hwnd, id_command) is False:
+                self.write_system_log(
+                    f"⚠️ [送信スキップ] jw_cad側で無効（グレーアウト）のため command_id={command_id} idCommand={id_command} を送信しませんでした。"
+                )
+                return
             self.write_system_log(
                 f"【Jw送信】 source=palette target_hwnd={hwnd} command_id={command_id} idCommand={id_command}"
             )

@@ -139,6 +139,7 @@ class NavButton(tk.Frame):
         self.hwnd = 0
         self.icon_name = "fallback"
         self.selected = False
+        self.is_enabled = True
         self._is_dragging = False
         self._press_x = 0
         self._press_y = 0
@@ -191,6 +192,7 @@ class NavButton(tk.Frame):
 
     def load_and_draw(self):
         self.canvas.delete("all")
+        drawn = False
 
         if self.icon_name:
             png_path = f"png_icons/{self.icon_name}.png"
@@ -198,43 +200,62 @@ class NavButton(tk.Frame):
                 try:
                     self.photo_img = tk.PhotoImage(file=png_path)
                     self.canvas.create_image(self.center, self.center, image=self.photo_img)
-                    return
+                    drawn = True
                 except Exception:
                     pass
 
-            if self.icon_module:
+            if not drawn and self.icon_module:
                 try:
                     if hasattr(self.icon_module, "draw"):
                         scaled = ScaledCanvas(self.canvas, self.icon_scale)
                         self.icon_module.draw(scaled, x=4, y=4)
-                        return
+                        drawn = True
                     elif hasattr(self.icon_module, "draw_icon"):
                         scaled = ScaledCanvas(self.canvas, self.icon_scale)
                         self.icon_module.draw_icon(scaled, x=4, y=4)
-                        return
+                        drawn = True
                 except Exception:
                     pass
 
-        display_text, f_size = self._wrap_label(self.name, self.size)
+        if not drawn:
+            display_text, f_size = self._wrap_label(self.name, self.size)
 
-        self.canvas.create_text(
-            self.center,
-            self.center,
-            text=display_text,
-            font=("Meiryo UI", f_size, "bold"),
-            fill=_contrast_text_color(self.bg_color),
-            justify="center",
-        )
+            self.canvas.create_text(
+                self.center,
+                self.center,
+                text=display_text,
+                font=("Meiryo UI", f_size, "bold"),
+                fill=_contrast_text_color(self.bg_color),
+                justify="center",
+            )
+
+        if not self.is_enabled:
+            # 無効（グレーアウト）表示：内容の上から半透明のグレーを重ねる
+            self.canvas.create_rectangle(
+                0, 0, self.canvas_size, self.canvas_size,
+                fill="#808080", stipple="gray50", outline="",
+            )
+
+    def set_enabled(self, enabled):
+        if enabled == self.is_enabled:
+            return
+        self.is_enabled = enabled
+        self.canvas.configure(cursor="hand2" if enabled else "arrow")
+        self.load_and_draw()
 
     DRAG_THRESHOLD_PX = 8
 
     def press(self, event):
+        if not self.is_enabled:
+            return "break"
         self._is_dragging = False
         self._press_x = event.x
         self._press_y = event.y
         return "break"
 
     def motion(self, event):
+        if not self.is_enabled:
+            return "break"
         dx = event.x - self._press_x
         dy = event.y - self._press_y
         if (dx * dx + dy * dy) ** 0.5 > self.DRAG_THRESHOLD_PX:
@@ -242,6 +263,8 @@ class NavButton(tk.Frame):
         return "break"
 
     def release(self, event):
+        if not self.is_enabled:
+            return "break"
         if self._is_dragging:
             return "break"
 
