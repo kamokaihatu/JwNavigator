@@ -33,6 +33,7 @@ from utils.state_parser import parse_statusbar_text
 from utils.state_patterns import STATES_WITH_WAIT_RULE, is_hover_trustworthy_rule
 from utils.state_collection import StateCollectionLogger
 from utils.event_engine import JwwEventEngine
+from utils.win_event_watcher import WinEventWatcher
 from utils.palette_layout import compute_palette_geometry
 
 WH_MOUSE_LL = 14
@@ -212,6 +213,8 @@ class JwNavigatorManager:
         )  # 👑 コマンド実行中の凹み上書き防止ロック（インテントホールド、値は(name, timestamp)）
         self.mouse_hook_controller = MouseHookController(self)
         self.keyboard_hook_controller = KeyboardHookController(self)
+        self.win_event_watcher = WinEventWatcher()
+        self._win_event_watch_pids = {}  # hwnd -> pid（unwatch時に使う）
         # 👑 フックコールバックはここへイベントを積むだけ。実処理はメインスレッドのdrainで行う。
         self.hook_event_queue = queue.Queue()
 
@@ -514,6 +517,9 @@ class JwNavigatorManager:
                     del self.event_engines[hwnd]
                 if hwnd in self.locked_intent:
                     del self.locked_intent[hwnd]
+                pid = self._win_event_watch_pids.pop(hwnd, None)
+                if pid:
+                    self.win_event_watcher.unwatch_pid(pid)
                 self.write_system_log(
                     f"🧹 閉じられたJww [HWND:{hwnd}] のパレットを道連れ消滅させました。"
                 )
@@ -576,6 +582,13 @@ class JwNavigatorManager:
                     self.root.update_idletasks()
                     toolbar_l.update_idletasks()
                     toolbar_r.update_idletasks()
+                    try:
+                        _, pid = win32process.GetWindowThreadProcessId(hwnd)
+                        if pid:
+                            self._win_event_watch_pids[hwnd] = pid
+                            self.win_event_watcher.watch_pid(pid)
+                    except Exception as e:
+                        self.write_system_log(f"⚠️ WinEvent監視登録失敗 [HWND:{hwnd}]: {str(e)}")
                     self.write_system_log(
                         f"✨ 新規Jww [HWND:{hwnd}] を捕捉。双方向パレットをドッキングしました。"
                     )
@@ -842,6 +855,8 @@ class JwNavigatorManager:
             self.mouse_hook_controller.stop()
         if self.keyboard_hook_controller:
             self.keyboard_hook_controller.stop()
+        if self.win_event_watcher:
+            self.win_event_watcher.stop()
 
         for hwnd in list(self.active_launchers.keys()):
             tl = self.active_launchers[hwnd]["左"]
@@ -868,10 +883,43 @@ class JwNavigatorManager:
         # 状態収集が必要な場合は、原因を突き止めた上で再度有効化すること。
         # self.mouse_hook_controller.start()
         # self.keyboard_hook_controller.start()
+        # 👑 SetWinEventHook（アクセシビリティ通知）は上記の低レベル入力フックとは
+        # 別のAPIで、対象プロセスへのコード注入を伴わないため別途有効化している。
+        # jw_cadのステータスバー更新を即座に検知し、1秒周期のポーリングでは
+        # 取りこぼしがちな短命な文言（矩形の1点目等）を補う。
+        self.win_event_watcher.start()
         self._monitor_job = self.root.after(500, self.monitor_loop)
         self.root.after(500, self._fast_sync_loop)
         self.root.after(30, self._drain_hook_queue)
+        self.root.after(30, self._drain_win_event_queue)
         self.root.mainloop()
+
+    def _drain_win_event_queue(self):
+        # 👑 SetWinEventHookのコールバック（別スレッド）が積んだイベントを、
+        # ここ（Tkinterメインスレッド）でまとめて処理する。1回のドレインで
+        # 同じhwndに複数イベントが積まれていても、_execute_pipeline_tickは
+        # hwndごとに1回だけ呼ぶ（setで重複排除）。
+        hwnds_to_refresh = set()
+        while True:
+            try:
+                hwnd = self.win_event_watcher.event_queue.get_nowait()
+            except queue.Empty:
+                break
+            try:
+                root_hwnd = win32gui.GetAncestor(hwnd, 2)  # GA_ROOT
+            except Exception:
+                continue
+            if root_hwnd in self.active_launchers:
+                hwnds_to_refresh.add(root_hwnd)
+
+        for hwnd in hwnds_to_refresh:
+            try:
+                self._execute_pipeline_tick(hwnd, time.perf_counter())
+            except Exception as e:
+                self.write_system_log(f"❌ WinEvent即時更新エラー [HWND:{hwnd}]: {str(e)}")
+
+        if not self._shutdown_requested:
+            self.root.after(30, self._drain_win_event_queue)
 
 
 if __name__ == "__main__":
