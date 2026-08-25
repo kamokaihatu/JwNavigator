@@ -30,7 +30,9 @@ from utils.send_command import send_command_to_hwnd, is_command_enabled, get_com
 from utils import command_master
 from utils.jww_watcher import get_raw_statusbar_text
 from utils.state_parser import parse_statusbar_text
+from utils.state_patterns import STATES_WITH_WAIT_RULE, is_hover_trustworthy_rule
 from utils.state_collection import StateCollectionLogger
+from utils.event_engine import JwwEventEngine
 from utils.palette_layout import compute_palette_geometry
 
 WH_MOUSE_LL = 14
@@ -454,8 +456,32 @@ class JwNavigatorManager:
                 self.sync_toolbar_position(hwnd)
             except Exception as e:
                 self.write_system_log(f"❌ 高速位置同期エラー [HWND:{hwnd}]: {str(e)}")
+
+        self._check_click_for_immediate_refresh()
+
         if not self._shutdown_requested:
             self.root.after(100, self._fast_sync_loop)
+
+    def _check_click_for_immediate_refresh(self):
+        # 👑 過去にクラッシュしたクリックフック（SetWindowsHookExWでOS側へ
+        # コールバックを差し込む方式）とは別物。GetAsyncKeyStateはこちらから
+        # 「前回確認してからクリックされたか」を聞きに行くだけの軽い呼び出しで、
+        # コールバック注入がないため同種のクラッシュリスクはない。
+        # jw_cadが前面にある時だけ、1秒周期を待たずその場で状態を読み直し、
+        # 矩形の1点目のような短命な文言の取りこぼしを減らす。
+        try:
+            clicked = bool(win32api.GetAsyncKeyState(win32con.VK_LBUTTON) & 0x0001)
+        except Exception:
+            return
+        if not clicked:
+            return
+        try:
+            foreground_hwnd = win32gui.GetForegroundWindow()
+        except Exception:
+            return
+        if foreground_hwnd not in self.active_launchers:
+            return
+        self.root.after(50, lambda h=foreground_hwnd: self._execute_pipeline_tick(h, time.perf_counter()))
 
     def monitor_loop(self):
         if self._shutdown_requested:
@@ -665,20 +691,32 @@ class JwNavigatorManager:
                     if tr.current_selected_button:
                         tr.current_selected_button.clear_selected()
                         tr.current_selected_button = None
+                    # 次にIdle以外へ入った時、直前の状態を引きずらないように
+                    # 安定判定エンジンもリセットしておく。
+                    engine = self.event_engines.get(hwnd)
+                    if engine:
+                        engine.reset()
             else:
                 # 👑 【2.0仕様：インテントロックが有効な場合は、そのインテントを優先】
                 locked_name = self._get_active_locked_intent(hwnd)
                 if locked_name:
                     match_keyword = locked_name
                 else:
-                    # 👑 【β仕様：Jww状態の一瞬の切り替わり(TOOLTIP含む)を逃さず一対一ブリッジ】
-                    # 後続の「始点を指示〜」の重複状態になっても、Idleに戻るまでは直前の凹みを維持
-                    reverse_btn_name = current_state.replace("STATE_", "")
-
+                    # 👑 パレット経由でないjw_cad側の直接操作は、マウスが他の
+                    # ボタン上を通過/滞在した際のツールチップ文言を拾って
+                    # しまうことがある（実測で確認）。追加の問い合わせは増やさず
+                    # 次の2段構えで判定する:
+                    #   ・入力待ち文言（WAIT系ルール）を持つコマンドは、マウスオン
+                    #     だけでは絶対にその文言が出ない＝見えた瞬間に確定情報
+                    #     として即時反映してよい（矩形の1点目のように、次の入力
+                    #     ですぐ別の（未登録の）文言に変わるものもあるため、連続
+                    #     一致を待つと取りこぼす）。ツールチップだけの間は反映しない。
+                    #   ・WAIT文言が元々存在しないコマンド（複写・移動等）だけは、
+                    #     今まで通りツールチップの2回連続一致で安定判定する。
                     jp_match_map = {
                         "LINE": "線",
                         "RECT": "矩形",
-                        "CIRCLE": "円",
+                        "CIRCLE": "円弧",
                         "TEXT": "文字",
                         "DIM": "寸法",
                         "RANGE": "範囲",
@@ -692,7 +730,21 @@ class JwNavigatorManager:
                         "FILE_SAVE": "進む",
                     }
 
-                    match_keyword = jp_match_map.get(reverse_btn_name, None)
+                    if current_state in STATES_WITH_WAIT_RULE:
+                        if is_hover_trustworthy_rule(matched_rule):
+                            reverse_btn_name = current_state.replace("STATE_", "")
+                            match_keyword = jp_match_map.get(reverse_btn_name, None)
+                        else:
+                            match_keyword = None
+                    else:
+                        engine = self.event_engines.get(hwnd)
+                        if engine is None:
+                            engine = JwwEventEngine(required_matches=2)
+                            self.event_engines[hwnd] = engine
+                        engine.process_state(current_state)
+                        stable_state = engine.stable_state
+                        reverse_btn_name = stable_state.replace("STATE_", "")
+                        match_keyword = jp_match_map.get(reverse_btn_name, None)
 
                 if match_keyword:
                     self.write_system_log(

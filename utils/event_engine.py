@@ -7,7 +7,16 @@ class JwwEvent(Enum):
     EVENT_RESET_IDLE = auto()
 
 class JwwEventEngine:
-    def __init__(self):
+    def __init__(self, required_matches: int = 3):
+        # 👑 required_matchesは元々50msループ×3回（150ms）を想定していたが、
+        # 現在は1秒間隔のmonitor_loopから呼ばれるため、呼び出し側の
+        # ポーリング間隔に応じて調整すること（main.pyでは2を指定）。
+        self.required_matches = max(1, required_matches)
+        self.last_state = "STATE_IDLE"
+        self.stable_state = "STATE_IDLE"
+        self.match_counter = 0
+
+    def reset(self):
         self.last_state = "STATE_IDLE"
         self.stable_state = "STATE_IDLE"
         self.match_counter = 0
@@ -19,7 +28,7 @@ class JwwEventEngine:
             self.last_state = current_state
             self.match_counter = 1
 
-        if self.match_counter >= 3:
+        if self.match_counter >= self.required_matches:
             if self.stable_state != current_state:
                 self.stable_state = current_state
                 if current_state == "STATE_IDLE":

@@ -118,7 +118,15 @@ class RuleId(Enum):
 # ===== ✂️ utils/state_patterns.py START PART 2 ✂️ =====
 STATE_DATABASE = {
     "STATE_LINE": [(r"線を書きます", RuleId.LINE_TOOLTIP), (r"始点を指示してください", RuleId.LINE_WAIT)],
-    "STATE_RECT": [(r"矩形を書きます", RuleId.RECT_TOOLTIP), (r"矩形の基準点を指示して下さい", RuleId.RECT_WAIT)],
+    # 👑 RECT_WAIT実測メモ（2026-08-25収集）: ツールバーから矩形を選択した
+    # 直後の文言はSTATE_LINEの「始点を指示してください」と完全に同一
+    # （実測で確認）。旧パターン「矩形の基準点を指示して下さい」がいつ
+    # 出るのかは未確認だが、消さずに残しておく（誤りだった場合も実害はない）。
+    "STATE_RECT": [
+        (r"矩形を書きます", RuleId.RECT_TOOLTIP),
+        (r"矩形の基準点を指示して下さい", RuleId.RECT_WAIT),
+        (r"始点を指示してください", RuleId.RECT_WAIT),
+    ],
     "STATE_CIRCLE": [(r"円を書く", RuleId.CIRCLE_TOOLTIP), (r"中心点を指示してください", RuleId.CIRCLE_WAIT)],
     "STATE_TEXT": [(r"文字を書きます", RuleId.TEXT_TOOLTIP), (r"文字を入力するか", RuleId.TEXT_WAIT)],
     "STATE_DIM": [(r"寸法を記入します", RuleId.DIM_TOOLTIP), (r"\[寸法\]", RuleId.DIM_BRACKET), (r"寸法線の位置を指示して下さい", RuleId.DIM_WAIT)],
@@ -237,4 +245,24 @@ STATE_DATABASE = {
     "STATE_HIKAGEZU": [(r"日影図のデータ入力と日影図を作成します。", RuleId.HIKAGEZU_TOOLTIP)],
     "STATE_TENKUZU": [(r"日影図のデータを使用して天空図を作成します。", RuleId.TENKUZU_TOOLTIP)],
 }
+
+# 👑 マウスを乗せただけ（クリックせず）でもツールチップ文言はステータスバーに
+# 出てしまうため、「実際にコマンドを開始しないと出ない」文言（＝WAIT系ルール）
+# を持つ状態は、そちらが出るまではパレット側への反映を待つ、という判定に使う。
+# ファイル系の一発文言（FILE_OPEN/FILE_SAVE等）とDIM_BRACKETはツールバーの
+# マウスオンでは出ない（ダイアログ操作起点の文言）ため、非ホバー扱いに含める。
+NON_HOVER_ONLY_RULE_NAMES = {"FILE_OPEN", "FILE_SAVE", "FILE_SAVE_AS", "FILE_SAVE_OVER", "FILE_OPEN_EXIST", "FILE_NEW", "DIM_BRACKET"}
+
+STATES_WITH_WAIT_RULE = {
+    state_id
+    for state_id, rule_tuples in STATE_DATABASE.items()
+    if any(
+        rule_enum.name.endswith("_WAIT") or rule_enum.name in NON_HOVER_ONLY_RULE_NAMES
+        for _, rule_enum in rule_tuples
+    )
+}
+
+
+def is_hover_trustworthy_rule(rule_name: str) -> bool:
+    return rule_name.endswith("_WAIT") or rule_name in NON_HOVER_ONLY_RULE_NAMES
 # ===== ✂️ utils/state_patterns.py END PART 2 ✂️ =====
