@@ -46,6 +46,9 @@ class RuleId(Enum):
     REG_SELECT_TOOLTIP = auto()
     LINE_WAIT = auto()
     RECT_WAIT = auto()
+    COPY_WAIT = auto()
+    MOVE_WAIT = auto()
+    POLYGON_WAIT = auto()
     CIRCLE_WAIT = auto()
     TEXT_WAIT = auto()
     DIM_BRACKET = auto()
@@ -153,7 +156,11 @@ STATE_DATABASE = {
         (r"始めの線・弧をﾏｳｽ\(L\)で、閉鎖連続線・円をﾏｳｽ\(R\)で指示してください", RuleId.HATCH_WAIT),
     ],
     "STATE_TATEG": [(r"建具を選択してください", RuleId.TATEG_WAIT), (r"ﾊﾟラメトリックな建具", RuleId.TATEG_TOOLTIP)],
-    "STATE_POLYGON": [(r"多角形（２辺）を作図します", RuleId.POLYGON_TOOLTIP)],
+    # 👑 POLYGON実測メモ（2026-08-26収集）: 多角形も中心点から描き始める
+    # 仕様のため、最初の入力待ち文言がSTATE_CIRCLE（円弧）の
+    # 「中心点を指示してください」と完全に同一（実測確認）。線↔矩形と
+    # 同じ衝突なので、直前に確定していたツールチップで区別する。
+    "STATE_POLYGON": [(r"多角形（２辺）を作図します", RuleId.POLYGON_TOOLTIP), (r"中心点を指示してください", RuleId.POLYGON_WAIT)],
     "STATE_CURVE": [(r"曲線を作図します", RuleId.CURVE_TOOLTIP)],
     "STATE_RANGE": [(r"範囲を指定し", RuleId.RANGE_TOOLTIP), (r"範囲選択の始点を", RuleId.RANGE_WAIT)],
     "STATE_FUKUSEN": [(r"元の線に平行な線をつくります", RuleId.FUKUSEN_TOOLTIP), (r"複線にする図形を選択", RuleId.FUKUSEN_WAIT)],
@@ -169,8 +176,13 @@ STATE_DATABASE = {
     # （半角括弧）と一致しない誤ったパターンだったため削除した。
     "STATE_CHAMFER": [(r"２線を面取りします", RuleId.CHAMFER_TOOLTIP)],
     "STATE_DELETE": [(r"図形を消去します", RuleId.DELETE_TOOLTIP), (r"線・円マウス\(L\)部分消し", RuleId.DELETE_WAIT)],
-    "STATE_COPY": [(r"図形を複写します", RuleId.COPY_TOOLTIP)],
-    "STATE_MOVE": [(r"図形を移動します", RuleId.MOVE_TOOLTIP)],
+    # 👑 COPY/MOVE実測メモ（2026-08-26収集）: 複写・移動はどちらも、対象を
+    # 選ぶ最初のフェーズでSTATE_RANGE（範囲選択）と完全に同一の文言
+    # 「範囲選択の始点を...」を経由する（jw_cad側の仕様として、複写・移動
+    # の対象選択が範囲選択と同じUIフローになっているため）。線↔矩形と
+    # 同じ衝突なので、直前に確定していたツールチップで区別する。
+    "STATE_COPY": [(r"図形を複写します", RuleId.COPY_TOOLTIP), (r"範囲選択の始点を", RuleId.COPY_WAIT)],
+    "STATE_MOVE": [(r"図形を移動します", RuleId.MOVE_TOOLTIP), (r"範囲選択の始点を", RuleId.MOVE_WAIT)],
     "STATE_IMAGE": [(r"画像の挿入、サイズ調整", RuleId.IMAGE_TOOLTIP)],
     "STATE_HOURAKU": [(r"図形の外郭線をつなげて整理します", RuleId.HOURAKU_TOOLTIP), (r"包絡範囲の始点指示", RuleId.HOURAKU_WAIT)],
     "STATE_BUNKATSU": [(r"点や線の間を分割します", RuleId.BUNKATSU_TOOLTIP)],  # BUNKATSU_WAIT: 未実測のため削除（実測後に追加）
@@ -189,7 +201,13 @@ STATE_DATABASE = {
     "STATE_GAIBU": [(r"外部変形を行います", RuleId.GAIBU_TOOLTIP)],
     "STATE_SOKUTEI": [(r"距離・面積・座標・角度を測定", RuleId.SOKUTEI_TOOLTIP)],
     "STATE_HYOU": [(r"表計算を行います", RuleId.HYOU_TOOLTIP)],  # HYOU_WAIT: 未実測のため削除（実測後に追加。旧パターンはSTATE_RANGEの文言の誤コピーだった）
-    "STATE_DIST": [(r"始点からの距離を指定して点", RuleId.DIST_TOOLTIP), (r"始点を指示してください  \(L\)free", RuleId.DIST_WAIT)],
+    # 👑 DIST_WAIT実測メモ（2026-08-26収集）: 旧パターン「始点を指示して
+    # ください  (L)free」は、線・矩形・円弧等と共通の汎用「点を指示」文言
+    # の先頭部分に過ぎず、距離指定点に固有ではなかった（括弧削除処理の
+    # バグで末尾の"(L)free"が常に消えていたため、これまで表面化していな
+    # かった）。距離指定点は現在パレット未設定のため、実害を避けるため
+    # WAITパターンは削除し、固有のツールチップのみ残す。
+    "STATE_DIST": [(r"始点からの距離を指定して点", RuleId.DIST_TOOLTIP)],
     "STATE_SHIKI": [(r"式計算を行います", RuleId.SHIKI_TOOLTIP), (r"□□　　　項目を選択してください", RuleId.SHIKI_WAIT)],
     "STATE_PARA": [(r"図形のﾊﾟラメトリック変形を行います", RuleId.PARA_TOOLTIP)],  # PARA_WAIT: 未実測のため削除（旧パターンはSTATE_RANGEの文言の誤コピーだった）
     "STATE_REG": [(r"図形登録\(JWK\)を行います", RuleId.REG_TOOLTIP)],
@@ -251,7 +269,13 @@ STATE_DATABASE = {
 # を持つ状態は、そちらが出るまではパレット側への反映を待つ、という判定に使う。
 # ファイル系の一発文言（FILE_OPEN/FILE_SAVE等）とDIM_BRACKETはツールバーの
 # マウスオンでは出ない（ダイアログ操作起点の文言）ため、非ホバー扱いに含める。
-NON_HOVER_ONLY_RULE_NAMES = {"FILE_OPEN", "FILE_SAVE", "FILE_SAVE_AS", "FILE_SAVE_OVER", "FILE_OPEN_EXIST", "FILE_NEW", "DIM_BRACKET"}
+# 👑 SETSUEN_WAIT_3RDは名前が「_WAIT」で終わっていない（「_3RD」で終わる）
+# ため、is_hover_trustworthy_ruleの素朴な終端チェックだけでは拾えず、接円
+# だけホバー扱いされてしまうバグがあった（実測で発覚）。ここに明示追加する。
+NON_HOVER_ONLY_RULE_NAMES = {
+    "FILE_OPEN", "FILE_SAVE", "FILE_SAVE_AS", "FILE_SAVE_OVER", "FILE_OPEN_EXIST", "FILE_NEW",
+    "DIM_BRACKET", "SETSUEN_WAIT_3RD",
+}
 
 STATES_WITH_WAIT_RULE = {
     state_id

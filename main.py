@@ -44,6 +44,55 @@ WH_KEYBOARD_LL = 13
 WM_KEYDOWN = 0x0100
 VK_ESCAPE = 0x1B
 
+# 👑 jw_cad直接操作 → パレット反映のための、state_id(STATE_*からSTATE_を
+# 除いたもの)からボタン表示名への対応表。以前はここに左パレットの14個分
+# しか登録されておらず、右パレットの22個は最初から一つも反映されていな
+# かった（2026-08-26発覚）。utils/state_patterns.pyのSTATE_DATABASEに
+# 実測データがある範囲で、config.jsonに現在設定されている全ボタン分を
+# 網羅している。ソリッド（C018）だけは対応する状態が未実測のため未対応。
+# 戻る/進むは以前「FILE_OPEN」「FILE_SAVE」という無関係な状態にひもづく
+# 場当たり的な対応になっていたため、本来のMODORU/SUSUMUに訂正した。
+JP_MATCH_MAP = {
+    "LINE": "線",
+    "RECT": "矩形",
+    "CIRCLE": "円弧",
+    "TEXT": "文字",
+    "DIM": "寸法",
+    "RANGE": "範囲",
+    "COPY": "複写",
+    "MOVE": "移動",
+    "DELETE": "消去",
+    "EXTEND": "伸縮",
+    "CORNER": "コーナー",
+    "CHAMFER": "面取",
+    "MODORU": "戻る",
+    "SUSUMU": "進む",
+    "BLOCK_KA": "Blk化",
+    "BLOCK_KAI": "Blk解",
+    "BLOCK_HEN": "Blk編",
+    "POINT": "点",
+    "CENTER": "中心線",
+    "RENTENT": "連続線",
+    "SESSEN": "接線",
+    "SETSUEN": "接円",
+    "HATCH": "ハッチ",
+    "POLYGON": "多角形",
+    "CURVE": "曲線",
+    "FUKUSEN": "複線",
+    "BUNKATSU": "分割",
+    "CLEANUP": "整理",
+    "FILE_SAVE_OVER": "上書",
+    "PRINT": "印刷",
+    "FILE_SAVE_AS": "保存",
+    "CLIP_COPY": "コピー",
+    "HARITSUKE": "貼付",
+    "CHUSHIN_TEN": "中心点",
+    "ENSHU_4TEN": "円周1/4点",
+    "SOKUTEI": "測定",
+    "ZOKUSEI_SHUTOKU": "属性取得",
+    "NITEN_CHO": "2点長",
+}
+
 
 def get_jw_window_rect_safe(hwnd):
     try:
@@ -670,8 +719,13 @@ class JwNavigatorManager:
 
         raw_text = get_raw_statusbar_text(hwnd)
         # 👑 【2.0仕様：ステータスバーテキストのクリーンアップ強化】
-        # コマンド名に続く「（例：線）」のような情報を削除し、より厳密にコマンド名だけを抽出
-        clean_raw_text = re.sub(r"[\s　]*[\(（][^）\)]*[\)）].*$", "", raw_text).strip()
+        # コマンド名に続く「（例：線）」のような注釈だけを削除する。
+        # 以前は「(」以降を丸ごと削る広すぎる正規表現になっており、
+        # 「線・円マウス(L)部分消し」のような、括弧が文言の本体に含まれる
+        # WAIT文言（消去・ハッチ・AUTO・距離点・図形登録等）まで巻き込んで
+        # 破壊し、それらのコマンドが永久にWAIT状態を検知できなくなっていた
+        # （実測で発覚）。「例」という文字を含む括弧だけに絞る。
+        clean_raw_text = re.sub(r"[\s　]*[\(（]\s*例\s*[:：][^）\)]*[\)）]\s*$", "", raw_text).strip()
 
         current_state, matched_rule = parse_statusbar_text(clean_raw_text)
         self.write_system_log(
@@ -726,43 +780,27 @@ class JwNavigatorManager:
                     #     一致を待つと取りこぼす）。ツールチップだけの間は反映しない。
                     #   ・WAIT文言が元々存在しないコマンド（複写・移動等）だけは、
                     #     今まで通りツールチップの2回連続一致で安定判定する。
-                    jp_match_map = {
-                        "LINE": "線",
-                        "RECT": "矩形",
-                        "CIRCLE": "円弧",
-                        "TEXT": "文字",
-                        "DIM": "寸法",
-                        "RANGE": "範囲",
-                        "COPY": "複写",
-                        "MOVE": "移動",
-                        "DELETE": "消去",
-                        "EXTEND": "伸縮",
-                        "CORNER": "コーナー",
-                        "CHAMFER": "面取",
-                        "FILE_OPEN": "戻る",
-                        "FILE_SAVE": "進む",
-                    }
-
                     if current_state in STATES_WITH_WAIT_RULE:
                         if is_hover_trustworthy_rule(matched_rule):
                             reverse_btn_name = current_state.replace("STATE_", "")
-                            match_keyword = jp_match_map.get(reverse_btn_name, None)
+                            match_keyword = JP_MATCH_MAP.get(reverse_btn_name, None)
                         else:
                             match_keyword = None
                     else:
                         engine = self.event_engines.get(hwnd)
                         if engine is None:
-                            engine = JwwEventEngine(required_matches=2)
+                            engine = JwwEventEngine(required_duration_sec=1.0)
                             self.event_engines[hwnd] = engine
                         engine.process_state(current_state)
                         stable_state = engine.stable_state
                         reverse_btn_name = stable_state.replace("STATE_", "")
-                        match_keyword = jp_match_map.get(reverse_btn_name, None)
+                        match_keyword = JP_MATCH_MAP.get(reverse_btn_name, None)
 
                 if match_keyword:
                     self.write_system_log(
                         f"[ボタン反映] 反映候補={match_keyword} state={current_state}"
                     )
+                    matched_side = None
                     for side_key in ["左", "右"]:
                         tb = self.active_launchers[hwnd][side_key]
                         for btn in tb.buttons:
@@ -770,11 +808,35 @@ class JwNavigatorManager:
                             if btn.name == match_keyword or (
                                 match_keyword == "面取" and btn.name == "面取り"
                             ):
+                                # 👑 サブコマンド・ワンショットコマンドは凹み表示の
+                                # 対象外（commands_master.csvのcommand_kind列で判定）。
+                                # 対象を「メイン」コマンドだけに絞ることで、文言衝突の
+                                # 調査対象そのものを減らす（ユーザー指示）。
+                                row = command_master.get_by_command_id(btn.command_key)
+                                kind = (row.get("command_kind") or "").strip() if row else ""
+                                if kind != "メイン":
+                                    continue
                                 self.write_system_log(
                                     f"[ボタン反映] 選択ボタン={btn.name} side={side_key}"
                                 )
                                 tb.select_button(btn)
+                                matched_side = side_key
                                 break
+                        if matched_side:
+                            break
+
+                    # 👑 左右のToolbarは選択状態を別々に持っているため、
+                    # 一致した側だけ更新すると、もう片方に古い選択が
+                    # 残ったままになる（実測で確認: 円弧選択後に多角形を
+                    # 選ぶと両方光って見えた）。jw_cadは同時に1つのコマンド
+                    # しかアクティブにならないので、一致しなかった側は
+                    # 明示的にクリアする。
+                    if matched_side:
+                        other_side = "右" if matched_side == "左" else "左"
+                        other_tb = self.active_launchers[hwnd][other_side]
+                        if other_tb.current_selected_button:
+                            other_tb.current_selected_button.clear_selected()
+                            other_tb.current_selected_button = None
 
     def logged_execute_command(self, hwnd, command_id):
         id_command = command_master.get_id_command(command_id)
