@@ -537,7 +537,10 @@ class JwNavigatorManager:
             return
         if foreground_hwnd not in self.active_launchers:
             return
-        self.root.after(50, lambda h=foreground_hwnd: self._execute_pipeline_tick(h, time.perf_counter()))
+        self.root.after(
+            50,
+            lambda h=foreground_hwnd: self._execute_pipeline_tick(h, time.perf_counter(), click_confirmed=True),
+        )
 
     def monitor_loop(self):
         if self._shutdown_requested:
@@ -701,7 +704,7 @@ class JwNavigatorManager:
 
     # ===== ✂️ main.py END PART 2 ✂️ =====
     # ===== ✂️ main.py START PART 3 ✂️ =====
-    def _execute_pipeline_tick(self, hwnd, t_loop_start):
+    def _execute_pipeline_tick(self, hwnd, t_loop_start, click_confirmed=False):
         tl = self.active_launchers[hwnd]["左"]
         tr = self.active_launchers[hwnd]["右"]
         if hasattr(tl, "user_hidden") and tl.user_hidden:
@@ -779,7 +782,15 @@ class JwNavigatorManager:
                     # で2系統に分けて後者を安定判定エンジンで処理していたが、
                     # INFERRED_WAITの導入によりどのコマンドも同じ扱いにできる
                     # ようになったため、その分岐は撤廃した。
-                    if is_hover_trustworthy_rule(matched_rule):
+                    # 👑 ただし例外として、GetAsyncKeyStateで実際のクリックを
+                    # 検知した直後の読み直し（click_confirmed=True）に限っては、
+                    # ツールチップ文言単体でも信用してよい。ホバーだけでは
+                    # 絶対に発生しない「クリックされた」という独立した証拠が
+                    # あるため（ユーザー指摘：「ツールチップ判別してその確定を
+                    # クリックで行うんじゃないの？」に対応）。
+                    if is_hover_trustworthy_rule(matched_rule) or (
+                        click_confirmed and matched_rule.endswith("_TOOLTIP")
+                    ):
                         reverse_btn_name = current_state.replace("STATE_", "")
                         match_keyword = JP_MATCH_MAP.get(reverse_btn_name, None)
                     else:

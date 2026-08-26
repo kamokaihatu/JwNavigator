@@ -10,15 +10,23 @@ from utils.parse_result import CompiledRule, ParseResult
 AMBIGUOUS_GROUPS = [
     frozenset({"STATE_CORNER", "STATE_CHAMFER"}),
     frozenset({"STATE_COORD", "STATE_SHIKI"}),
-    frozenset({"STATE_LINE", "STATE_RECT"}),
-    frozenset({"STATE_RANGE", "STATE_COPY", "STATE_MOVE"}),
-    frozenset({"STATE_CIRCLE", "STATE_POLYGON"}),
+    # 👑 線・矩形・曲線・ソリッド・連続線・範囲・複写・移動・円弧・多角形は、
+    # お互いに「始点を指示してください」「範囲選択の始点を…」「中心点を
+    # 指示してください」といった汎用の点/対象指示文言を経由しあうことが
+    # 実測で判明（2026-08-26）。1つの状態が複数の衝突文言に関わりうる
+    # ため、無理に文言ごとにグループを分けず、1つの大きなグループに
+    # まとめて「直前に確定していた作図系コマンド」を共通で覚える。
+    frozenset({
+        "STATE_LINE", "STATE_RECT", "STATE_CURVE", "STATE_SOLID", "STATE_RENTENT",
+        "STATE_RANGE", "STATE_COPY", "STATE_MOVE", "STATE_CIRCLE", "STATE_POLYGON",
+    }),
 ]
 # 上記の衝突文言側にマッチした時だけ発動するルール名（各コマンド固有の
 # ツールチップ文言側は衝突していないので対象外）。
 AMBIGUOUS_RULES = {
     "CORNER_WAIT", "SHIKI_WAIT", "LINE_WAIT", "RECT_WAIT",
     "RANGE_WAIT", "COPY_WAIT", "MOVE_WAIT", "CIRCLE_WAIT", "POLYGON_WAIT",
+    "CURVE_WAIT", "SOLID_WAIT", "RENTENT_WAIT",
 }
 
 

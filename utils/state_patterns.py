@@ -51,6 +51,9 @@ class RuleId(Enum):
     COPY_WAIT = auto()
     MOVE_WAIT = auto()
     POLYGON_WAIT = auto()
+    SOLID_WAIT = auto()
+    CURVE_WAIT = auto()
+    RENTENT_WAIT = auto()
     CIRCLE_WAIT = auto()
     TEXT_WAIT = auto()
     DIM_BRACKET = auto()
@@ -142,7 +145,12 @@ STATE_DATABASE = {
     # 誤判定を避けるためあえて登録しない。区別できるのはSTATE_SETSUEN側の
     # 「３番目」の文言が出た場合のみ（接円は3つ必要、中心線は2つで確定するため）。
     "STATE_CENTER": [(r"中心線を作図します", RuleId.CENTER_TOOLTIP)],
-    "STATE_RENTENT": [(r"連続線・連続円弧を作図します", RuleId.RENTENT_TOOLTIP)],
+    # 👑 RENTENT実測メモ（2026-08-26収集）: 線・矩形と同じ汎用「始点を
+    # 指示してください」文言を経由する（実測で確認）。
+    "STATE_RENTENT": [
+        (r"連続線・連続円弧を作図します", RuleId.RENTENT_TOOLTIP),
+        (r"始点を指示してください", RuleId.RENTENT_WAIT),
+    ],
     "STATE_AUTO": [(r"AUTOモードを実行します", RuleId.AUTO_TOOLTIP), (r"AUTOモード   \(L\)free", RuleId.AUTO_WAIT)],
     "STATE_POINT": [(r"点を書きます", RuleId.POINT_TOOLTIP), (r"点位置を指示してください", RuleId.POINT_WAIT)],
     "STATE_SESSEN": [(r"接線を作図します", RuleId.SESSEN_TOOLTIP), (r"円を指示してください", RuleId.SESSEN_WAIT)],
@@ -163,11 +171,22 @@ STATE_DATABASE = {
     # 「中心点を指示してください」と完全に同一（実測確認）。線↔矩形と
     # 同じ衝突なので、直前に確定していたツールチップで区別する。
     "STATE_POLYGON": [(r"多角形（２辺）を作図します", RuleId.POLYGON_TOOLTIP), (r"中心点を指示してください", RuleId.POLYGON_WAIT)],
-    "STATE_CURVE": [(r"曲線を作図します", RuleId.CURVE_TOOLTIP)],
+    # 👑 CURVE実測メモ（2026-08-26収集）: 線・矩形と同じ汎用「始点を
+    # 指示してください」文言を経由する（実測で確認）。
+    "STATE_CURVE": [
+        (r"曲線を作図します", RuleId.CURVE_TOOLTIP),
+        (r"始点を指示してください", RuleId.CURVE_WAIT),
+    ],
     # 👑 SOLID実測メモ（2026-08-26収集）: 対応する状態が一つも登録されて
     # おらず、多角形など直前のツールチップに誤って推定されていた
     # （INFERRED_WAIT機構の実測で発覚）。ツールチップを登録して解決。
-    "STATE_SOLID": [(r"ソリッドを作図します", RuleId.SOLID_TOOLTIP)],
+    # 👑 SOLID_WAIT実測メモ（2026-08-26収集）: 線・矩形と同じ汎用「始点を
+    # 指示してください」文言を経由する（実測で確認：クリック直後は正しく
+    # 反映されるが、離すとこの共通文言に化けて矩形に誤判定されていた）。
+    "STATE_SOLID": [
+        (r"ソリッドを作図します", RuleId.SOLID_TOOLTIP),
+        (r"始点を指示してください", RuleId.SOLID_WAIT),
+    ],
     "STATE_RANGE": [(r"範囲を指定し", RuleId.RANGE_TOOLTIP), (r"範囲選択の始点を", RuleId.RANGE_WAIT)],
     "STATE_FUKUSEN": [(r"元の線に平行な線をつくります", RuleId.FUKUSEN_TOOLTIP), (r"複線にする図形を選択", RuleId.FUKUSEN_WAIT)],
     # 👑 このWAIT文言「線（Ａ）指示(L)　　　　線切断(R)」はSTATE_CHAMFER（面取）と
