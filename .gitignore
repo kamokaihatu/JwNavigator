@@ -40,6 +40,7 @@ pip-delete-this-directory.txt
 JwNavigator_Log.txt
 JwNavigator_StateCollection_Log.txt
 data/_collector_control.txt
+config/window_state.json
 
 # Unit test / coverage reports
 htmlcov/

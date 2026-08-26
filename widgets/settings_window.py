@@ -24,20 +24,34 @@ class CommandPickerDialog(tk.Toplevel):
         self.transient(master)
 
         self.query_var = tk.StringVar()
-        self.cat_var = tk.StringVar(value="すべて")
 
-        filter_bar = ttk.Frame(self)
-        filter_bar.pack(side="top", fill="x", padx=8, pady=6)
-        ttk.Label(filter_bar, text="検索:").pack(side="left")
-        entry = ttk.Entry(filter_bar, textvariable=self.query_var, width=24)
-        entry.pack(side="left", padx=(4, 12))
-        ttk.Label(filter_bar, text="分類:").pack(side="left")
-        categories = ["すべて"] + command_master.list_categories()
-        combo = ttk.Combobox(filter_bar, textvariable=self.cat_var, values=categories, state="readonly", width=10)
-        combo.pack(side="left", padx=4)
-
+        search_bar = ttk.Frame(self)
+        search_bar.pack(side="top", fill="x", padx=8, pady=(6, 2))
+        ttk.Label(search_bar, text="検索:").pack(side="left")
+        entry = ttk.Entry(search_bar, textvariable=self.query_var, width=30)
+        entry.pack(side="left", padx=(4, 0), fill="x", expand=True)
         self.query_var.trace_add("write", self._apply_filter)
-        self.cat_var.trace_add("write", self._apply_filter)
+
+        # 👑 プルダウン(単一選択)より、複数の種別/分類を同時にON/OFFできる
+        # チェックボックスの方が絞り込みとして使いやすいという要望のため、
+        # StringVar1本のComboboxではなく値ごとにBooleanVarを持たせる方式にした。
+        kind_bar = ttk.Frame(self)
+        kind_bar.pack(side="top", fill="x", padx=8, pady=2)
+        ttk.Label(kind_bar, text="種別:").pack(side="left", padx=(0, 4))
+        self.kind_vars = {}
+        for kind in command_master.list_command_kinds():
+            var = tk.BooleanVar(value=True)
+            self.kind_vars[kind] = var
+            ttk.Checkbutton(kind_bar, text=kind, variable=var, command=self._apply_filter).pack(side="left", padx=4)
+
+        cat_bar = ttk.Frame(self)
+        cat_bar.pack(side="top", fill="x", padx=8, pady=(2, 6))
+        ttk.Label(cat_bar, text="分類:").pack(side="left", padx=(0, 4))
+        self.cat_vars = {}
+        for cat in command_master.list_categories():
+            var = tk.BooleanVar(value=True)
+            self.cat_vars[cat] = var
+            ttk.Checkbutton(cat_bar, text=cat, variable=var, command=self._apply_filter).pack(side="left", padx=4)
 
         list_frame = ttk.Frame(self)
         list_frame.pack(side="top", fill="both", expand=True, padx=8)
@@ -61,10 +75,13 @@ class CommandPickerDialog(tk.Toplevel):
 
     def _apply_filter(self, *args):
         query = self.query_var.get().strip().lower()
-        cat = self.cat_var.get()
         self.filtered = []
         for row in self._all_rows:
-            if cat != "すべて" and row["category"] != cat:
+            kind_var = self.kind_vars.get(row["command_kind"])
+            if kind_var is not None and not kind_var.get():
+                continue
+            cat_var = self.cat_vars.get(row["category"])
+            if cat_var is not None and not cat_var.get():
                 continue
             if query and query not in row["command_id"].lower() and query not in row["toolbar_name"].lower():
                 continue
@@ -73,7 +90,7 @@ class CommandPickerDialog(tk.Toplevel):
         self.listbox.delete(0, tk.END)
         for row in self.filtered:
             suffix = " ※配置済" if row["command_id"] in self._existing_ids else ""
-            text = f"{row['command_id']}  {row['toolbar_name']}  ({row['category']}){suffix}"
+            text = f"{row['command_id']}  {row['toolbar_name']}  ({row['command_kind']}/{row['category']}){suffix}"
             self.listbox.insert(tk.END, text)
 
     def _on_ok(self, event=None):

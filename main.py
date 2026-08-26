@@ -34,6 +34,7 @@ from utils.state_patterns import is_hover_trustworthy_rule
 from utils.state_collection import StateCollectionLogger
 from utils.win_event_watcher import WinEventWatcher
 from utils.palette_layout import compute_palette_geometry
+from utils import window_state
 
 WH_MOUSE_LL = 14
 WM_MOUSEMOVE = 0x0200
@@ -286,6 +287,7 @@ class JwNavigatorManager:
         self._monitor_scheduled = False
         self._safe_mode = False
         self._auto_create_palettes = True
+        self.window_state = window_state.load_state()
         self.root.withdraw()
         self.write_system_log("--- JwNavigator Ver2.0 メインシステム始動 ---")
         self.write_system_log("🧪 状態収集モードを有効化しました。")
@@ -655,6 +657,14 @@ class JwNavigatorManager:
                             label="⚙️ パレットを編集",
                             command=self.open_settings_window,
                         )
+                        remember_var = tk.BooleanVar(
+                            value=self.window_state.get("remember_on_exit", False)
+                        )
+                        menu.add_checkbutton(
+                            label="📌 終了時の配置を記憶する（自由配置中の側のみ）",
+                            variable=remember_var,
+                            command=lambda v=remember_var: self._toggle_remember_position(v.get()),
+                        )
                         menu.add_separator()
                         menu.add_command(
                             label="⚙️ このパレットだけを閉じる",
@@ -681,6 +691,8 @@ class JwNavigatorManager:
                     self.root.update_idletasks()
                     toolbar_l.update_idletasks()
                     toolbar_r.update_idletasks()
+                    self._restore_pinned_position(toolbar_l, "左")
+                    self._restore_pinned_position(toolbar_r, "右")
                     try:
                         _, pid = win32process.GetWindowThreadProcessId(hwnd)
                         if pid:
@@ -942,6 +954,48 @@ class JwNavigatorManager:
                 logging.exception("is_cursor_over_jw_window error")
         return False
 
+    def _toggle_remember_position(self, enabled):
+        # 👑 トグル自体は即座にディスクへ保存する（正常終了しなかった場合でも
+        # 設定自体は次回起動時に残るように）。実際の座標保存はshutdown_manager
+        # 側で行う。
+        self.window_state["remember_on_exit"] = bool(enabled)
+        try:
+            window_state.save_state(self.window_state)
+        except Exception as e:
+            self.write_system_log(f"⚠️ 設定保存エラー: {str(e)}")
+
+    def _restore_pinned_position(self, tb, side_key):
+        # 👑 「終了時の配置を記憶する」設定がONの時だけ、自由配置（ピン留め）
+        # だった側の位置を復元する。保存位置が画面外（モニター構成が変わった
+        # 等）だと二度と手の届かない場所に固定される事故になるため、必ず
+        # 画面内かを検証してから復元し、ダメなら通常の追従モードのまま
+        # 何もしない（ユーザーからの明示的な懸念指摘を受けての安全策）。
+        if not self.window_state.get("remember_on_exit"):
+            return
+        pos = self.window_state.get(side_key)
+        if not pos or len(tb.buttons) == 0:
+            return
+        try:
+            w = tb.winfo_reqwidth()
+            h = tb.winfo_reqheight()
+            virtual_screen = (
+                win32api.GetSystemMetrics(76),
+                win32api.GetSystemMetrics(77),
+                win32api.GetSystemMetrics(78),
+                win32api.GetSystemMetrics(79),
+            )
+            if not window_state.is_on_screen(pos["x"], pos["y"], w, h, virtual_screen):
+                self.write_system_log(
+                    f"⚠️ {side_key}パレットの保存位置が画面外のため復元をスキップしました。"
+                )
+                return
+            tb.is_pinned = True
+            tb.pin_btn.configure(text="自由", bg="#e1e1e1", relief="raised")
+            tb.wm_geometry(f"+{pos['x']}+{pos['y']}")
+            tb._last_geom = None
+        except Exception as e:
+            self.write_system_log(f"⚠️ {side_key}パレット位置復元エラー: {str(e)}")
+
     def close_single_palette(self, hwnd):
         if hwnd in self.active_launchers:
             tl = self.active_launchers[hwnd]["左"]
@@ -962,6 +1016,21 @@ class JwNavigatorManager:
             self.keyboard_hook_controller.stop()
         if self.win_event_watcher:
             self.win_event_watcher.stop()
+
+        if self.window_state.get("remember_on_exit"):
+            try:
+                for hwnd in list(self.active_launchers.keys()):
+                    tl = self.active_launchers[hwnd]["左"]
+                    tr = self.active_launchers[hwnd]["右"]
+                    self.window_state["左"] = (
+                        {"x": tl.winfo_x(), "y": tl.winfo_y()} if tl.is_pinned else None
+                    )
+                    self.window_state["右"] = (
+                        {"x": tr.winfo_x(), "y": tr.winfo_y()} if tr.is_pinned else None
+                    )
+                window_state.save_state(self.window_state)
+            except Exception as e:
+                self.write_system_log(f"⚠️ パレット位置保存エラー: {str(e)}")
 
         for hwnd in list(self.active_launchers.keys()):
             tl = self.active_launchers[hwnd]["左"]

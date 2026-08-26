@@ -69,6 +69,7 @@ def list_available_commands():
                 "command_id": command_id,
                 "toolbar_name": (row.get("toolbar_name") or "").strip() or command_id,
                 "category": (row.get("category") or "").strip() or "その他",
+                "command_kind": (row.get("command_kind") or "").strip() or "その他",
                 "shortcut_key": shortcut,
                 "id_command": int(id_cmd) if id_cmd.isdigit() else None,
             }
@@ -79,4 +80,14 @@ def list_available_commands():
 
 def list_categories():
     return sorted({r["category"] for r in list_available_commands()})
+
+
+def list_command_kinds():
+    # 👑 メイン/サブ/ファイル操作/ブロックの並び順を固定したいので、実データ
+    # からの集合ソートではなく既知の順序を優先し、未知の値だけ末尾に追加する。
+    known_order = ["メイン", "サブ", "ファイル操作", "ブロック"]
+    present = {r["command_kind"] for r in list_available_commands()}
+    ordered = [k for k in known_order if k in present]
+    ordered += sorted(present - set(known_order))
+    return ordered
 # ===== ✂️ utils/command_master.py END ✂️ =====
