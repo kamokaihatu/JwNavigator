@@ -466,14 +466,20 @@ class SidePanel(ttk.Frame):
             self._loading_detail = False
 
     def _select(self, group_index, item_index):
-        self.selected = (group_index, item_index)
+        self._select_multi(group_index, [item_index])
+
+    def _select_multi(self, group_index, item_indices):
+        item_indices = sorted(item_indices)
+        self.selected = (group_index, item_indices[0]) if len(item_indices) == 1 else None
         self._selected_group = group_index
-        self._selected_indices = [item_index]
+        self._selected_indices = item_indices
         for i, lb in enumerate(self.list_widgets):
             lb.selection_clear(0, tk.END)
         if group_index < len(self.list_widgets):
-            self.list_widgets[group_index].selection_set(item_index)
-            self.list_widgets[group_index].activate(item_index)
+            lb = self.list_widgets[group_index]
+            for ii in item_indices:
+                lb.selection_set(ii)
+            lb.activate(item_indices[-1])
         self._load_detail()
 
     def _on_select(self, group_index):
@@ -515,12 +521,15 @@ class SidePanel(ttk.Frame):
             lb.bind("<<ListboxSelect>>", lambda e, gi=i: self._on_select(gi))
             self.list_widgets.append(lb)
 
-        if self.selected is not None:
-            gi, ii = self.selected
-            if gi < len(self.list_widgets) and ii < len(groups[gi]["buttons"]):
-                self._select(gi, ii)
+        if self._selected_group is not None and self._selected_indices:
+            gi = self._selected_group
+            valid = [ii for ii in self._selected_indices if gi < len(self.list_widgets) and ii < len(groups[gi]["buttons"])]
+            if valid:
+                self._select_multi(gi, valid)
             else:
                 self.selected = None
+                self._selected_group = None
+                self._selected_indices = []
                 self._load_detail()
         else:
             self._load_detail()
@@ -589,53 +598,67 @@ class SidePanel(ttk.Frame):
     # ---- 並べ替え ----
 
     def _move_up(self):
-        if self.selected is None:
+        # 👑 複数選択時は、選ばれた全ボタンをまとめて1つ上へ移動する
+        # （昇順に処理すると、隣接した選択でも正しく塊のまま繰り上がる）。
+        if self._selected_group is None or not self._selected_indices:
             return
-        gi, ii = self.selected
+        gi = self._selected_group
         buttons = self.side_cfg["groups"][gi]["buttons"]
-        if ii <= 0:
+        indices = sorted(self._selected_indices)
+        if indices[0] <= 0:
             return
-        buttons[ii - 1], buttons[ii] = buttons[ii], buttons[ii - 1]
-        self.selected = (gi, ii - 1)
+        for ii in indices:
+            buttons[ii - 1], buttons[ii] = buttons[ii], buttons[ii - 1]
+        self._selected_indices = [ii - 1 for ii in indices]
         self._rebuild_groups()
 
     def _move_down(self):
-        if self.selected is None:
+        if self._selected_group is None or not self._selected_indices:
             return
-        gi, ii = self.selected
+        gi = self._selected_group
         buttons = self.side_cfg["groups"][gi]["buttons"]
-        if ii >= len(buttons) - 1:
+        indices = sorted(self._selected_indices, reverse=True)
+        if indices[0] >= len(buttons) - 1:
             return
-        buttons[ii + 1], buttons[ii] = buttons[ii], buttons[ii + 1]
-        self.selected = (gi, ii + 1)
+        for ii in indices:
+            buttons[ii + 1], buttons[ii] = buttons[ii], buttons[ii + 1]
+        self._selected_indices = [ii + 1 for ii in indices]
         self._rebuild_groups()
 
     def _move_prev_group(self):
-        if self.selected is None:
+        if self._selected_group is None or not self._selected_indices:
             return
-        gi, ii = self.selected
+        gi = self._selected_group
         if gi <= 0:
             return
         groups = self.side_cfg["groups"]
-        btn = groups[gi]["buttons"].pop(ii)
+        indices = sorted(self._selected_indices)
+        moved = [groups[gi]["buttons"][ii] for ii in indices]
+        for ii in reversed(indices):
+            groups[gi]["buttons"].pop(ii)
         target = groups[gi - 1]["buttons"]
-        new_index = min(ii, len(target))
-        target.insert(new_index, btn)
-        self.selected = (gi - 1, new_index)
+        insert_at = len(target)
+        target[insert_at:insert_at] = moved
+        self._selected_group = gi - 1
+        self._selected_indices = list(range(insert_at, insert_at + len(moved)))
         self._rebuild_groups()
 
     def _move_next_group(self):
-        if self.selected is None:
+        if self._selected_group is None or not self._selected_indices:
             return
-        gi, ii = self.selected
+        gi = self._selected_group
         groups = self.side_cfg["groups"]
         if gi >= len(groups) - 1:
             return
-        btn = groups[gi]["buttons"].pop(ii)
+        indices = sorted(self._selected_indices)
+        moved = [groups[gi]["buttons"][ii] for ii in indices]
+        for ii in reversed(indices):
+            groups[gi]["buttons"].pop(ii)
         target = groups[gi + 1]["buttons"]
-        new_index = min(ii, len(target))
-        target.insert(new_index, btn)
-        self.selected = (gi + 1, new_index)
+        insert_at = len(target)
+        target[insert_at:insert_at] = moved
+        self._selected_group = gi + 1
+        self._selected_indices = list(range(insert_at, insert_at + len(moved)))
         self._rebuild_groups()
 
     # ---- 追加・削除 ----
@@ -672,17 +695,25 @@ class SidePanel(ttk.Frame):
         self._rebuild_groups()
 
     def _on_remove(self):
-        if self.selected is None:
+        if self._selected_group is None or not self._selected_indices:
             return
-        gi, ii = self.selected
-        groups = self.side_cfg["groups"]
-        buttons = groups[gi]["buttons"]
-        if ii >= len(buttons):
+        gi = self._selected_group
+        buttons = self.side_cfg["groups"][gi]["buttons"]
+        indices = sorted(i for i in self._selected_indices if i < len(buttons))
+        if not indices:
             return
-        if not messagebox.askyesno("確認", f"「{buttons[ii]['name']}」を削除しますか?", parent=self.winfo_toplevel()):
+        if len(indices) == 1:
+            msg = f"「{buttons[indices[0]]['name']}」を削除しますか?"
+        else:
+            names = "、".join(buttons[i]["name"] for i in indices)
+            msg = f"{len(indices)}個({names})を削除しますか?"
+        if not messagebox.askyesno("確認", msg, parent=self.winfo_toplevel()):
             return
-        buttons.pop(ii)
+        for i in reversed(indices):
+            buttons.pop(i)
         self.selected = None
+        self._selected_group = None
+        self._selected_indices = []
         self._rebuild_groups()
 
     def _on_add_group(self):

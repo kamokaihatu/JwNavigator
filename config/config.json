@@ -94,20 +94,20 @@
             {
               "command_id": "C034",
               "name": "Blk化",
-              "icon": "bl_make",
-              "color": "#c2f0c2"
+              "icon": "",
+              "color": "#f0f0f0"
             },
             {
               "command_id": "C035",
               "name": "Blk解",
-              "icon": "bl_break",
-              "color": "#c2f0c2"
+              "icon": "",
+              "color": "#f0f0f0"
             },
             {
               "command_id": "C037",
               "name": "Blk編",
-              "icon": "bl_edit",
-              "color": "#c2f0c2"
+              "icon": "",
+              "color": "#f0f0f0"
             }
           ]
         }
