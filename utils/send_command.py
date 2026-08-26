@@ -9,6 +9,7 @@ from utils.send_key import force_foreground_window
 
 WM_COMMAND = 0x0111
 TB_GETSTATE = 0x0412
+TBSTATE_CHECKED = 0x01
 TBSTATE_ENABLED = 0x04
 
 
@@ -96,6 +97,38 @@ def get_command_states(hwnd: int, id_commands):
             break
         if state is None:
             state = _get_menu_state(hwnd, id_command)
+        result[id_command] = state
+    return result
+
+
+def get_command_checked_states(hwnd: int, id_commands):
+    # 👑 【CHECKEDビット方式】ステータスバー文言の解析(state_parser.py)に
+    # 頼らず、jw_cad自身のツールバーボタンが持つTBSTATE_CHECKEDビットを
+    # 直接読む。実測で「線」を作図中はCHECKED、「矩形」はCHECKEDでない、
+    # という形で衝突文言のあった線/矩形/円弧/複写/移動等もjw_cad自身の
+    # 内部状態としては最初から正確に区別できていることが確認できた
+    # （2026-08-26）。
+    # 戻り値: {id_command: True(CHECKED中)/False(見つかったがCHECKEDでない)
+    # /None(どの表示中ツールバーにも見つからない)}。
+    # 👑 Noneは「今CHECKEDでない」ではなく「そもそも判定不能」を意味する
+    # （ソリッド等、ボタンが今表示中でないツールバーページにある場合に
+    # 発生することが実測で判明）。呼び出し側はNoneのコマンドだけ旧システム
+    # （状態文言解析）にフォールバックできる。
+    result = {}
+    if not hwnd:
+        return {i: None for i in id_commands}
+    toolbars = _find_toolbar_windows(hwnd)
+    for id_command in id_commands:
+        state = None
+        for tb_hwnd in toolbars:
+            try:
+                raw = win32gui.SendMessage(tb_hwnd, TB_GETSTATE, id_command, 0)
+            except Exception:
+                continue
+            if _is_not_found_state(raw):
+                continue
+            state = bool(raw & TBSTATE_CHECKED)
+            break
         result[id_command] = state
     return result
 

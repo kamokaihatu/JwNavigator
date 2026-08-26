@@ -26,7 +26,7 @@ except ModuleNotFoundError as exc:
 from widgets.toolbar import Toolbar
 from widgets.settings_window import SettingsWindow
 from utils.send_key import send_key_to_hwnd
-from utils.send_command import send_command_to_hwnd, is_command_enabled, get_command_states
+from utils.send_command import send_command_to_hwnd, is_command_enabled, get_command_states, get_command_checked_states
 from utils import command_master
 from utils.jww_watcher import get_raw_statusbar_text
 from utils.state_parser import parse_statusbar_text
@@ -757,6 +757,73 @@ class JwNavigatorManager:
         except Exception as e:
             self.write_system_log(f"❌ ボタン有効状態更新エラー [HWND:{hwnd}]: {str(e)}")
 
+    def _update_checked_highlight(self, hwnd, tl, tr, current_state, matched_rule, click_confirmed):
+        # 👑 【CHECKEDビット方式】jw_cad自身のツールバーのTBSTATE_CHECKED
+        # ビットを直接読み、その場でパレットの凹み表示に反映する。
+        # ステータスバー文言の解析やAMBIGUOUS_GROUPS等の衝突解決は不要
+        # （jw_cad自身が最初から正確に区別している）。
+        # 👑 ただし「ソリッド」等、今表示中でないツールバーページにボタンが
+        # あるコマンドはTB_GETSTATEで判定不能（None）になる（実測で発覚）。
+        # その場合だけ旧ステータスバー方式（JP_MATCH_MAP）にフォールバック
+        # する。
+        try:
+            sides = (("左", tl), ("右", tr))
+            locked_name = self._get_active_locked_intent(hwnd)
+            matched_side, matched_btn = None, None
+            if locked_name:
+                # 👑 送信直後の一瞬、jw_cad側のCHECKED反映がまだ間に合って
+                # いない場合があるため、ロック中はそちらを優先する。
+                for side_key, tb in sides:
+                    for btn in tb.buttons:
+                        if btn.name == locked_name or (locked_name == "面取" and btn.name == "面取り"):
+                            matched_side, matched_btn = side_key, btn
+                            break
+                    if matched_btn:
+                        break
+            else:
+                id_map = {}
+                for side_key, tb in sides:
+                    for btn in tb.buttons:
+                        id_cmd = command_master.get_id_command(btn.command_key)
+                        if id_cmd:
+                            id_map[id_cmd] = (side_key, btn)
+                if id_map:
+                    checked_states = get_command_checked_states(hwnd, id_map.keys())
+                    checked_id = next((i for i, v in checked_states.items() if v is True), None)
+                    if checked_id is not None:
+                        matched_side, matched_btn = id_map[checked_id]
+                    else:
+                        undetermined_ids = {i for i, v in checked_states.items() if v is None}
+                        if undetermined_ids and (
+                            is_hover_trustworthy_rule(matched_rule)
+                            or (click_confirmed and matched_rule.endswith("_TOOLTIP"))
+                        ):
+                            reverse_btn_name = current_state.replace("STATE_", "")
+                            match_keyword = JP_MATCH_MAP.get(reverse_btn_name, None)
+                            if match_keyword:
+                                for idc in undetermined_ids:
+                                    side_key, btn = id_map[idc]
+                                    if btn.name == match_keyword or (
+                                        match_keyword == "面取" and btn.name == "面取り"
+                                    ):
+                                        matched_side, matched_btn = side_key, btn
+                                        break
+
+            for side_key, tb in sides:
+                if tb.current_selected_button and tb.current_selected_button is not matched_btn:
+                    tb.current_selected_button.clear_selected()
+                    tb.current_selected_button = None
+
+            if matched_btn:
+                target_tb = tl if matched_side == "左" else tr
+                if target_tb.current_selected_button is not matched_btn:
+                    self.write_system_log(
+                        f"[ボタン反映/CHECKED] 選択ボタン={matched_btn.name} side={matched_side}"
+                    )
+                    target_tb.select_button(matched_btn)
+        except Exception as e:
+            self.write_system_log(f"❌ CHECKEDハイライト更新エラー [HWND:{hwnd}]: {str(e)}")
+
     # ===== ✂️ main.py END PART 2 ✂️ =====
     # ===== ✂️ main.py START PART 3 ✂️ =====
     def _execute_pipeline_tick(self, hwnd, t_loop_start, click_confirmed=False):
@@ -806,92 +873,19 @@ class JwNavigatorManager:
         if hasattr(tl, "status_label"):
             if current_state == "STATE_IDLE":
                 tl.status_label.configure(text="待機中", fg="#888888")
-                if self._get_active_locked_intent(hwnd):
-                    # コマンド送信直後は一時的に Idle を返しても、選択状態は維持する
-                    if tl.current_selected_button:
-                        tl.current_selected_button.set_selected()
-                    if tr.current_selected_button:
-                        tr.current_selected_button.set_selected()
-                else:
-                    # 実際に Idle に戻った時だけ、前回の選択状態を解除する
-                    if tl.current_selected_button:
-                        tl.current_selected_button.clear_selected()
-                        tl.current_selected_button = None
-                    if tr.current_selected_button:
-                        tr.current_selected_button.clear_selected()
-                        tr.current_selected_button = None
-            else:
-                # 👑 【2.0仕様：インテントロックが有効な場合は、そのインテントを優先】
-                locked_name = self._get_active_locked_intent(hwnd)
-                if locked_name:
-                    match_keyword = locked_name
-                else:
-                    # 👑 パレット経由でないjw_cad側の直接操作は、マウスが他の
-                    # ボタン上を通過/滞在した際のツールチップ文言を拾って
-                    # しまうことがある（実測で確認）。ツールチップ文言
-                    # （is_hover_trustworthy_rule=False）だけの間は反映せず、
-                    # 実際にコマンドが開始されたと確認できる文言（WAIT系ルール、
-                    # または未登録文言をツールチップからの遷移で推定した
-                    # INFERRED_WAIT。utils/state_parser.py参照）が見えた瞬間
-                    # だけ即時反映する。以前は「WAIT文言を持つコマンドかどうか」
-                    # で2系統に分けて後者を安定判定エンジンで処理していたが、
-                    # INFERRED_WAITの導入によりどのコマンドも同じ扱いにできる
-                    # ようになったため、その分岐は撤廃した。
-                    # 👑 ただし例外として、GetAsyncKeyStateで実際のクリックを
-                    # 検知した直後の読み直し（click_confirmed=True）に限っては、
-                    # ツールチップ文言単体でも信用してよい。ホバーだけでは
-                    # 絶対に発生しない「クリックされた」という独立した証拠が
-                    # あるため（ユーザー指摘：「ツールチップ判別してその確定を
-                    # クリックで行うんじゃないの？」に対応）。
-                    if is_hover_trustworthy_rule(matched_rule) or (
-                        click_confirmed and matched_rule.endswith("_TOOLTIP")
-                    ):
-                        reverse_btn_name = current_state.replace("STATE_", "")
-                        match_keyword = JP_MATCH_MAP.get(reverse_btn_name, None)
-                    else:
-                        match_keyword = None
 
-                if match_keyword:
-                    self.write_system_log(
-                        f"[ボタン反映] 反映候補={match_keyword} state={current_state}"
-                    )
-                    matched_side = None
-                    for side_key in ["左", "右"]:
-                        tb = self.active_launchers[hwnd][side_key]
-                        for btn in tb.buttons:
-                            # 👑 表記揺れを許容した厳密な完全一致判定
-                            if btn.name == match_keyword or (
-                                match_keyword == "面取" and btn.name == "面取り"
-                            ):
-                                # 👑 サブコマンド・ワンショットコマンドは凹み表示の
-                                # 対象外（commands_master.csvのcommand_kind列で判定）。
-                                # 対象を「メイン」コマンドだけに絞ることで、文言衝突の
-                                # 調査対象そのものを減らす（ユーザー指示）。
-                                row = command_master.get_by_command_id(btn.command_key)
-                                kind = (row.get("command_kind") or "").strip() if row else ""
-                                if kind != "メイン":
-                                    continue
-                                self.write_system_log(
-                                    f"[ボタン反映] 選択ボタン={btn.name} side={side_key}"
-                                )
-                                tb.select_button(btn)
-                                matched_side = side_key
-                                break
-                        if matched_side:
-                            break
-
-                    # 👑 左右のToolbarは選択状態を別々に持っているため、
-                    # 一致した側だけ更新すると、もう片方に古い選択が
-                    # 残ったままになる（実測で確認: 円弧選択後に多角形を
-                    # 選ぶと両方光って見えた）。jw_cadは同時に1つのコマンド
-                    # しかアクティブにならないので、一致しなかった側は
-                    # 明示的にクリアする。
-                    if matched_side:
-                        other_side = "右" if matched_side == "左" else "左"
-                        other_tb = self.active_launchers[hwnd][other_side]
-                        if other_tb.current_selected_button:
-                            other_tb.current_selected_button.clear_selected()
-                            other_tb.current_selected_button = None
+        # 👑 【CHECKEDビット方式・experiment/checked-bit-highlight】
+        # 旧方式（ステータスバー文言をstate_parser.pyで解析し、JP_MATCH_MAPで
+        # ボタン名へ変換）は、jw_cadが同じ文言を複数コマンドで使い回すため
+        # AMBIGUOUS_GROUPS/INFERRED_WAIT等の複雑な衝突解決が必要だった。
+        # jw_cad自身のツールバーボタンはTB_GETSTATEのTBSTATE_CHECKEDビットで
+        # 「今アクティブなコマンドはどれか」を最初から正確に区別して持って
+        # いることが実測で判明したため（線=CHECKED中に矩形=CHECKEDでない、
+        # を確認）、これを直接読む方式に切り替えた。旧方式のコード
+        # （state_parser.py・JP_MATCH_MAP・is_hover_trustworthy_rule等）は
+        # ツールバーボタンを持たないコマンドへのフォールバックとして温存
+        # してあるが、現状この経路からは呼んでいない。
+        self._update_checked_highlight(hwnd, tl, tr, current_state, matched_rule, click_confirmed)
 
     def logged_execute_command(self, hwnd, command_id):
         id_command = command_master.get_id_command(command_id)
