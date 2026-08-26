@@ -1,10 +1,203 @@
 # ===== ✂️ widgets/settings_window.py START ✂️ =====
+import colorsys
+import re
 import tkinter as tk
-from tkinter import ttk, colorchooser, messagebox
+from tkinter import ttk, messagebox
 
 from utils import palette_config, command_master
 
 ICON_NONE_LABEL = "アイコンなし"
+_HEX_COLOR_RE = re.compile(r"^#[0-9a-fA-F]{6}$")
+
+
+def _is_valid_hex_color(value):
+    return bool(_HEX_COLOR_RE.match(value or ""))
+
+
+def _hex_to_rgb(value):
+    return tuple(int(value[i:i + 2], 16) for i in (1, 3, 5))
+
+
+def _rgb_to_hex(r, g, b):
+    return f"#{r:02x}{g:02x}{b:02x}"
+
+
+class ColorPickerDialog(tk.Toplevel):
+    """自前の色選択ダイアログ。tkinter標準のcolorchooser.askcolor()は
+    Windows高DPI環境でダイアログのサイズが崩れ、OK/キャンセルボタンが
+    ほとんど見えなくなる既知の不具合があり（実測で確認）、アプリ側からの
+    確実な修正が困難なため、プリセットスウォッチ+HSVグラデーション
+    ピッカー+カスタム16進入力の自前ウィンドウに置き換えた。選択結果は
+    self.resultに#RRGGBBで残る（キャンセル時はNone）。PILは使わず、
+    tk.PhotoImage.put()の行単位一括書き込みでグラデーションを生成する
+    （依存追加を避けるため）。"""
+
+    PRESETS = [
+        "#ffffff", "#f0f0f0", "#d9d9d9", "#bfbfbf", "#808080", "#4d4d4d", "#262626", "#000000",
+        "#ffb3b3", "#ffd9b3", "#fff2b3", "#c2f0c2", "#b3d9ff", "#d1b3ff", "#ffb3e6", "#b3fff0",
+        "#ff4d4d", "#ff9933", "#ffe14d", "#4dbb4d", "#4d94ff", "#a366ff", "#ff4dc4", "#33e6c2",
+    ]
+
+    SV_W, SV_H = 160, 120
+    HUE_W, HUE_H = 160, 18
+
+    def __init__(self, master, initial_color=None):
+        super().__init__(master)
+        self.result = None
+        self.title("色を選ぶ")
+        self.configure(bg="#f0f0f0")
+        self.resizable(False, False)
+        self.attributes("-topmost", True)
+        self.transient(master)
+
+        self._syncing = False
+        start_color = initial_color if _is_valid_hex_color(initial_color) else palette_config.DEFAULT_COLOR
+        r, g, b = _hex_to_rgb(start_color)
+        self.hue, self.sat, self.val = colorsys.rgb_to_hsv(r / 255, g / 255, b / 255)
+        self.hex_var = tk.StringVar(value=start_color)
+
+        # ---- プリセット ----
+        grid = tk.Frame(self, bg="#f0f0f0")
+        grid.pack(padx=10, pady=(10, 4))
+        cols = 8
+        for i, color in enumerate(self.PRESETS):
+            r_, c_ = divmod(i, cols)
+            sw = tk.Label(grid, bg=color, width=3, height=1, relief="raised", bd=2, cursor="hand2")
+            sw.grid(row=r_, column=c_, padx=2, pady=2)
+            sw.bind("<Button-1>", lambda e, col=color: self._set_from_hex(col))
+
+        # ---- HSVグラデーションピッカー ----
+        hsv_frame = tk.Frame(self, bg="#f0f0f0")
+        hsv_frame.pack(padx=10, pady=(4, 4))
+
+        self.sv_image = tk.PhotoImage(width=self.SV_W, height=self.SV_H)
+        self.sv_canvas = tk.Canvas(hsv_frame, width=self.SV_W, height=self.SV_H,
+                                    highlightthickness=1, highlightbackground="#999999", cursor="crosshair")
+        self.sv_canvas.pack(side="top")
+        self.sv_canvas.create_image(0, 0, anchor="nw", image=self.sv_image, tags="bg")
+        self.sv_cursor = self.sv_canvas.create_oval(0, 0, 8, 8, outline="#ffffff", width=2)
+        self.sv_canvas.bind("<Button-1>", self._on_sv_click)
+        self.sv_canvas.bind("<B1-Motion>", self._on_sv_click)
+
+        self.hue_image = tk.PhotoImage(width=self.HUE_W, height=self.HUE_H)
+        self._draw_hue_bar()
+        self.hue_canvas = tk.Canvas(hsv_frame, width=self.HUE_W, height=self.HUE_H,
+                                     highlightthickness=1, highlightbackground="#999999", cursor="sb_h_double_arrow")
+        self.hue_canvas.pack(side="top", pady=(4, 0))
+        self.hue_canvas.create_image(0, 0, anchor="nw", image=self.hue_image, tags="bg")
+        self.hue_cursor = self.hue_canvas.create_line(0, 0, 0, self.HUE_H, fill="#ffffff", width=2)
+        self.hue_canvas.bind("<Button-1>", self._on_hue_click)
+        self.hue_canvas.bind("<B1-Motion>", self._on_hue_click)
+
+        # ---- カスタム16進入力 + プレビュー ----
+        custom = ttk.Frame(self)
+        custom.pack(fill="x", padx=10, pady=(6, 8))
+        ttk.Label(custom, text="カスタム(#RRGGBB):").pack(side="left")
+        entry = ttk.Entry(custom, textvariable=self.hex_var, width=10)
+        entry.pack(side="left", padx=6)
+        self.preview = tk.Label(custom, width=3, relief="solid", bd=1)
+        self.preview.pack(side="left", padx=4)
+        self.hex_var.trace_add("write", self._on_hex_typed)
+
+        footer = ttk.Frame(self)
+        footer.pack(fill="x", padx=10, pady=(0, 10))
+        ttk.Button(footer, text="OK", command=self._on_ok, width=10).pack(side="right")
+        ttk.Button(footer, text="キャンセル", command=self._on_cancel, width=10).pack(side="right", padx=(0, 6))
+
+        self.protocol("WM_DELETE_WINDOW", self._on_cancel)
+        self._draw_sv_square()
+        self._update_cursors()
+        self._sync_preview()
+        entry.focus_set()
+        self.grab_set()
+
+    # ---- グラデーション描画 ----
+
+    def _draw_hue_bar(self):
+        row = []
+        for x in range(self.HUE_W):
+            r, g, b = colorsys.hsv_to_rgb(x / (self.HUE_W - 1), 1.0, 1.0)
+            row.append(_rgb_to_hex(int(r * 255), int(g * 255), int(b * 255)))
+        self.hue_image.put([row] * self.HUE_H)
+
+    def _draw_sv_square(self):
+        # 現在の色相(hue)固定で、X=彩度・Y=明度のグラデーションを生成する
+        rows = []
+        for y in range(self.SV_H):
+            value = 1.0 - (y / (self.SV_H - 1))
+            row = []
+            for x in range(self.SV_W):
+                sat = x / (self.SV_W - 1)
+                r, g, b = colorsys.hsv_to_rgb(self.hue, sat, value)
+                row.append(_rgb_to_hex(int(r * 255), int(g * 255), int(b * 255)))
+            rows.append(row)
+        self.sv_image.put(rows)
+
+    def _update_cursors(self):
+        x = self.sat * (self.SV_W - 1)
+        y = (1.0 - self.val) * (self.SV_H - 1)
+        self.sv_canvas.coords(self.sv_cursor, x - 4, y - 4, x + 4, y + 4)
+        hx = self.hue * (self.HUE_W - 1)
+        self.hue_canvas.coords(self.hue_cursor, hx, 0, hx, self.HUE_H)
+
+    # ---- 入力ハンドラ ----
+
+    def _on_sv_click(self, event):
+        x = min(max(event.x, 0), self.SV_W - 1)
+        y = min(max(event.y, 0), self.SV_H - 1)
+        self.sat = x / (self.SV_W - 1)
+        self.val = 1.0 - (y / (self.SV_H - 1))
+        self._update_cursors()
+        self._sync_from_hsv()
+
+    def _on_hue_click(self, event):
+        x = min(max(event.x, 0), self.HUE_W - 1)
+        self.hue = x / (self.HUE_W - 1)
+        self._draw_sv_square()
+        self._update_cursors()
+        self._sync_from_hsv()
+
+    def _sync_from_hsv(self):
+        self._syncing = True
+        try:
+            r, g, b = colorsys.hsv_to_rgb(self.hue, self.sat, self.val)
+            hex_color = _rgb_to_hex(int(r * 255), int(g * 255), int(b * 255))
+            self.hex_var.set(hex_color)
+            self.preview.configure(bg=hex_color)
+        finally:
+            self._syncing = False
+
+    def _sync_preview(self):
+        self.preview.configure(bg=self.hex_var.get())
+
+    def _set_from_hex(self, hex_color):
+        # プリセットクリック時: HSVピッカー側の状態(色相バー・SV正方形の
+        # カーソル位置)も合わせて更新する。
+        self.hex_var.set(hex_color)
+
+    def _on_hex_typed(self, *args):
+        if self._syncing:
+            return
+        val = self.hex_var.get()
+        if not _is_valid_hex_color(val):
+            return
+        self.preview.configure(bg=val)
+        r, g, b = _hex_to_rgb(val)
+        self.hue, self.sat, self.val = colorsys.rgb_to_hsv(r / 255, g / 255, b / 255)
+        self._draw_sv_square()
+        self._update_cursors()
+
+    def _on_ok(self):
+        val = self.hex_var.get()
+        if not _is_valid_hex_color(val):
+            messagebox.showwarning("入力エラー", "#RRGGBB形式で入力してください。", parent=self)
+            return
+        self.result = val
+        self.destroy()
+
+    def _on_cancel(self):
+        self.result = None
+        self.destroy()
 
 
 class CommandPickerDialog(tk.Toplevel):
@@ -109,6 +302,8 @@ class SidePanel(ttk.Frame):
         self.side = side
         self.side_cfg = side_cfg
         self.selected = None
+        self._selected_group = None
+        self._selected_indices = []
         self.list_widgets = []
         self._loading_detail = False
 
@@ -197,10 +392,14 @@ class SidePanel(ttk.Frame):
         color_frame.grid(row=3, column=1, sticky="w", padx=6, pady=4)
         self.color_swatch = tk.Label(color_frame, width=4, relief="solid", bd=1, bg=palette_config.DEFAULT_COLOR)
         self.color_swatch.pack(side="left")
-        ttk.Button(color_frame, text="色を選ぶ…", command=self._on_pick_color).pack(side="left", padx=6)
-        ttk.Button(color_frame, text="既定に戻す", command=self._on_reset_color).pack(side="left")
+        self.pick_color_btn = ttk.Button(color_frame, text="色を選ぶ…", command=self._on_pick_color)
+        self.pick_color_btn.pack(side="left", padx=6)
+        self.reset_color_btn = ttk.Button(color_frame, text="既定に戻す", command=self._on_reset_color)
+        self.reset_color_btn.pack(side="left")
+        ttk.Label(lf, text="(リストでCtrl/Shiftクリックすると複数選択してまとめて色変更できます)",
+                  foreground="#888888").grid(row=4, column=0, columnspan=2, sticky="w", padx=6, pady=(0, 4))
 
-        self._set_detail_enabled(False)
+        self._set_detail_enabled(False, False)
 
     # ---- 選択・表示 ----
 
@@ -216,34 +415,60 @@ class SidePanel(ttk.Frame):
             return None
         return buttons[ii]
 
-    def _set_detail_enabled(self, enabled):
-        state = "readonly" if enabled else "disabled"
-        self.name_entry.configure(state=("normal" if enabled else "disabled"))
+    def _selected_buttons(self):
+        # 👑 色のまとめ変更のため、複数選択(extended)の全ボタンを返す。
+        # 名前/アイコン編集は単一選択時のみ意味があるので_selected_button()
+        # (単一)は引き続き使う。
+        if self._selected_group is None or not self._selected_indices:
+            return []
+        groups = self.side_cfg["groups"]
+        if self._selected_group >= len(groups):
+            return []
+        buttons = groups[self._selected_group]["buttons"]
+        return [buttons[i] for i in self._selected_indices if i < len(buttons)]
+
+    def _set_detail_enabled(self, name_icon_enabled, color_enabled):
+        state = "readonly" if name_icon_enabled else "disabled"
+        self.name_entry.configure(state=("normal" if name_icon_enabled else "disabled"))
         self.icon_combo.configure(state=state)
+        color_state = "normal" if color_enabled else "disabled"
+        self.pick_color_btn.configure(state=color_state)
+        self.reset_color_btn.configure(state=color_state)
 
     def _load_detail(self):
         self._loading_detail = True
         try:
+            multi = self._selected_buttons()
             btn = self._selected_button()
-            if btn is None:
+            if btn is None and len(multi) <= 1:
                 self.cmd_var.set("")
                 self.name_var.set("")
                 self.icon_var.set("")
                 self.color_swatch.configure(bg=palette_config.DEFAULT_COLOR)
-                self._set_detail_enabled(False)
+                self._set_detail_enabled(False, False)
                 return
-            row = command_master.get_by_command_id(btn["command_id"]) or {}
-            category = (row.get("category") or "").strip()
-            self.cmd_var.set(f"{btn['command_id']} ({category})" if category else btn["command_id"])
-            self.name_var.set(btn["name"])
-            self.icon_var.set(self.icon_label_map.get(btn["icon"], ICON_NONE_LABEL))
-            self.color_swatch.configure(bg=btn["color"])
-            self._set_detail_enabled(True)
+            if btn is not None:
+                row = command_master.get_by_command_id(btn["command_id"]) or {}
+                category = (row.get("category") or "").strip()
+                self.cmd_var.set(f"{btn['command_id']} ({category})" if category else btn["command_id"])
+                self.name_var.set(btn["name"])
+                self.icon_var.set(self.icon_label_map.get(btn["icon"], ICON_NONE_LABEL))
+                self.color_swatch.configure(bg=btn["color"])
+                self._set_detail_enabled(True, True)
+            else:
+                # 複数選択中: 名前・アイコンは編集不可、色だけまとめて変更可能
+                self.cmd_var.set(f"{len(multi)}個選択中")
+                self.name_var.set("")
+                self.icon_var.set("")
+                self.color_swatch.configure(bg=multi[0]["color"])
+                self._set_detail_enabled(False, True)
         finally:
             self._loading_detail = False
 
     def _select(self, group_index, item_index):
         self.selected = (group_index, item_index)
+        self._selected_group = group_index
+        self._selected_indices = [item_index]
         for i, lb in enumerate(self.list_widgets):
             lb.selection_clear(0, tk.END)
         if group_index < len(self.list_widgets):
@@ -259,7 +484,9 @@ class SidePanel(ttk.Frame):
         for i, other in enumerate(self.list_widgets):
             if i != group_index:
                 other.selection_clear(0, tk.END)
-        self.selected = (group_index, sel[0])
+        self._selected_group = group_index
+        self._selected_indices = list(sel)
+        self.selected = (group_index, sel[0]) if len(sel) == 1 else None
         self._load_detail()
 
     # ---- グループ・リスト再構築 ----
@@ -277,7 +504,7 @@ class SidePanel(ttk.Frame):
         for i, group in enumerate(groups):
             gf = ttk.LabelFrame(self.groups_host, text=f"{noun} {i + 1}")
             gf.pack(side="left", fill="both", expand=True, padx=3)
-            lb = tk.Listbox(gf, exportselection=0, height=18, width=14,
+            lb = tk.Listbox(gf, exportselection=0, height=18, width=14, selectmode="extended",
                              font=("Meiryo UI", 9), activestyle="none")
             scroll = ttk.Scrollbar(gf, orient="vertical", command=lb.yview)
             lb.configure(yscrollcommand=scroll.set)
@@ -331,20 +558,22 @@ class SidePanel(ttk.Frame):
         btn["icon"] = self.icon_value_map.get(self.icon_var.get(), palette_config.NO_ICON)
 
     def _on_pick_color(self):
-        btn = self._selected_button()
-        if btn is None:
+        buttons = self._selected_buttons()
+        if not buttons:
             return
-        result = colorchooser.askcolor(color=btn.get("color", palette_config.DEFAULT_COLOR),
-                                        parent=self.winfo_toplevel())
-        if result and result[1]:
-            btn["color"] = result[1]
-            self.color_swatch.configure(bg=result[1])
+        dlg = ColorPickerDialog(self.winfo_toplevel(), initial_color=buttons[0].get("color"))
+        self.winfo_toplevel().wait_window(dlg)
+        if dlg.result:
+            for btn in buttons:
+                btn["color"] = dlg.result
+            self.color_swatch.configure(bg=dlg.result)
 
     def _on_reset_color(self):
-        btn = self._selected_button()
-        if btn is None:
+        buttons = self._selected_buttons()
+        if not buttons:
             return
-        btn["color"] = palette_config.DEFAULT_COLOR
+        for btn in buttons:
+            btn["color"] = palette_config.DEFAULT_COLOR
         self.color_swatch.configure(bg=palette_config.DEFAULT_COLOR)
 
     def _on_orientation(self):
@@ -488,8 +717,8 @@ class SettingsWindow(tk.Toplevel):
         super().__init__(master)
         self.manager_ref = manager_ref
         self.title("⚙️ JwNavigator パレット設定")
-        self.geometry("800x640")
-        self.minsize(720, 560)
+        self.geometry("800x700")
+        self.minsize(720, 620)
         self.configure(bg="#f0f0f0")
         self.attributes("-topmost", True)
 

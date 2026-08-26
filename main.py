@@ -23,6 +23,20 @@ except ModuleNotFoundError as exc:
         f"{sys.executable} -m pip install pywin32"
     ) from exc
 
+# 👑 DPI非対応のままだとWindowsがアプリ全体をビットマップ拡大表示する
+# （DPI仮想化）。tkinterの自前描画ウィジェットはあまり目立たないが、
+# ネイティブの共通ダイアログ（色選択等）はこの仮想化の影響をもろに受け、
+# ウィンドウが極端に小さく・ボタンがほぼ見えない形で表示される（実測で
+# 発覚：色選択ダイアログの「決定」ボタンがほぼ見えない）。tk.Tk()を
+# 作る前にプロセスをDPI対応（Per-Monitor V2）にすることで解消する。
+try:
+    ctypes.windll.shcore.SetProcessDpiAwareness(2)
+except Exception:
+    try:
+        ctypes.windll.user32.SetProcessDPIAware()
+    except Exception:
+        pass
+
 from widgets.toolbar import Toolbar
 from widgets.settings_window import SettingsWindow
 from utils.send_key import send_key_to_hwnd
