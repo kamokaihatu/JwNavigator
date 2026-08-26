@@ -490,12 +490,34 @@ class JwNavigatorManager:
             # SetWindowPos(HWND_NOTOPMOST)が通常ウィンドウの最上位へ毎回
             # 押し戻してしまい、他アプリ（VSCode等）が前面に出てもすぐ
             # 上書きされて見えてしまう不具合があった（実測で確認）。
+            # さらに、-topmostをFalseにするだけでは「最前面グループから
+            # 外れる」だけで、通常ウィンドウ群の中では元々いた位置（＝
+            # 最前面から降りた直後の一番上）に留まり続ける。他アプリが
+            # 自分からクリックされて最前面に上がってくれば追い越されるが、
+            # 実機でVSCodeだけそれが起きないことを確認したため、非topmost
+            # にする時は明示的にHWND_BOTTOM（最背面）へ送る。
             want_topmost = foreground_hwnd in (hwnd, tl.winfo_id(), tr.winfo_id())
             if len(tl.buttons) > 0 and getattr(tl, "_last_topmost", None) != want_topmost:
                 tl.attributes("-topmost", want_topmost)
+                if not want_topmost:
+                    try:
+                        win32gui.SetWindowPos(
+                            tl.winfo_id(), win32con.HWND_BOTTOM, 0, 0, 0, 0,
+                            win32con.SWP_NOMOVE | win32con.SWP_NOSIZE | win32con.SWP_NOACTIVATE,
+                        )
+                    except Exception as e:
+                        self.write_system_log(f"⚠️ 左パレット背面送りエラー: {str(e)}")
                 tl._last_topmost = want_topmost
             if len(tr.buttons) > 0 and getattr(tr, "_last_topmost", None) != want_topmost:
                 tr.attributes("-topmost", want_topmost)
+                if not want_topmost:
+                    try:
+                        win32gui.SetWindowPos(
+                            tr.winfo_id(), win32con.HWND_BOTTOM, 0, 0, 0, 0,
+                            win32con.SWP_NOMOVE | win32con.SWP_NOSIZE | win32con.SWP_NOACTIVATE,
+                        )
+                    except Exception as e:
+                        self.write_system_log(f"⚠️ 右パレット背面送りエラー: {str(e)}")
                 tr._last_topmost = want_topmost
         except Exception as e:
             self.write_system_log(f"❌ ウィンドウ同期エラー [HWND:{hwnd}]: {str(e)}")
