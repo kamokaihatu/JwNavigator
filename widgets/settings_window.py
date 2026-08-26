@@ -1,10 +1,13 @@
 # ===== ✂️ widgets/settings_window.py START ✂️ =====
 import colorsys
+import importlib
+import os
 import re
 import tkinter as tk
 from tkinter import ttk, messagebox
 
 from utils import palette_config, command_master
+from widgets.button import ScaledCanvas
 
 ICON_NONE_LABEL = "アイコンなし"
 _HEX_COLOR_RE = re.compile(r"^#[0-9a-fA-F]{6}$")
@@ -12,6 +15,35 @@ _HEX_COLOR_RE = re.compile(r"^#[0-9a-fA-F]{6}$")
 
 def _is_valid_hex_color(value):
     return bool(_HEX_COLOR_RE.match(value or ""))
+
+
+def draw_icon_thumbnail(canvas, icon_name, image_refs, size=40):
+    # 👑 IconPickerDialogのサムネイル一覧とSidePanelのプレビューの両方から
+    # 使う共通描画ロジック。widgets/button.pyのNavButton.load_and_draw()と
+    # 同じ優先順位（png_icons/優先、無ければ.pyモジュール描画）で描く。
+    # image_refsはPhotoImageの参照保持用リスト（呼び出し側が保持し続ける
+    # こと。参照が切れるとTkinterが自動でガベージコレクトして表示が消える）。
+    if not icon_name:
+        canvas.create_text(size / 2, size / 2, text="✕", fill="#aaaaaa", font=("Meiryo UI", 12))
+        return
+    png_path = palette_config.png_icon_path(icon_name)
+    try:
+        if os.path.exists(png_path):
+            img = tk.PhotoImage(file=png_path)
+            image_refs.append(img)
+            canvas.create_image(size / 2, size / 2, image=img)
+            return
+    except Exception:
+        pass
+    try:
+        module = importlib.import_module(f"icons.{icon_name}")
+        scaled = ScaledCanvas(canvas, 1.5 * size / 44.0)
+        if hasattr(module, "draw"):
+            module.draw(scaled, x=4, y=4)
+        elif hasattr(module, "draw_icon"):
+            module.draw_icon(scaled, x=4, y=4)
+    except Exception:
+        canvas.create_text(size / 2, size / 2, text="?", fill="#cc0000")
 
 
 def _hex_to_rgb(value):
@@ -200,6 +232,114 @@ class ColorPickerDialog(tk.Toplevel):
         self.destroy()
 
 
+class IconPickerDialog(tk.Toplevel):
+    """アイコン選択ダイアログ。サムネイル一覧から選ぶ。プルダウンの
+    テキスト一覧だと、png_icons/が増えてくると選びにくいという指摘を
+    受けて、実際の見た目をグリッド表示するダイアログに置き換えた。
+    選択結果はself.resultにアイコン名（NO_ICON=""含む）で残る
+    （キャンセル時はNone、"アイコンなし"を選んだ場合はNOT None）。"""
+
+    THUMB_SIZE = 40
+    COLS = 6
+
+    def __init__(self, master, current_icon=None):
+        super().__init__(master)
+        self.result = None
+        self._selected = current_icon or palette_config.NO_ICON
+        self._image_refs = []
+        self.title("アイコンを選ぶ")
+        self.geometry("420x480")
+        self.configure(bg="#f0f0f0")
+        self.attributes("-topmost", True)
+        self.transient(master)
+
+        search_bar = ttk.Frame(self)
+        search_bar.pack(side="top", fill="x", padx=8, pady=6)
+        ttk.Label(search_bar, text="検索:").pack(side="left")
+        self.query_var = tk.StringVar()
+        entry = ttk.Entry(search_bar, textvariable=self.query_var, width=20)
+        entry.pack(side="left", padx=4, fill="x", expand=True)
+        self.query_var.trace_add("write", lambda *a: self._rebuild_grid())
+
+        container = ttk.Frame(self)
+        container.pack(side="top", fill="both", expand=True, padx=8)
+        canvas = tk.Canvas(container, bg="#f0f0f0", highlightthickness=0)
+        vscroll = ttk.Scrollbar(container, orient="vertical", command=canvas.yview)
+        canvas.configure(yscrollcommand=vscroll.set)
+        canvas.pack(side="left", fill="both", expand=True)
+        vscroll.pack(side="right", fill="y")
+        self.grid_frame = tk.Frame(canvas, bg="#f0f0f0")
+        grid_window = canvas.create_window((0, 0), window=self.grid_frame, anchor="nw")
+        self.grid_frame.bind("<Configure>", lambda e: canvas.configure(scrollregion=canvas.bbox("all")))
+        canvas.bind("<Configure>", lambda e: canvas.itemconfigure(grid_window, width=e.width))
+        self._mousewheel_bind_id = canvas.bind_all(
+            "<MouseWheel>", lambda e: canvas.yview_scroll(int(-e.delta / 120), "units")
+        )
+        self._mousewheel_canvas = canvas
+
+        footer = ttk.Frame(self)
+        footer.pack(side="top", fill="x", padx=8, pady=8)
+        ttk.Button(footer, text="OK", command=self._on_ok, width=10).pack(side="right")
+        ttk.Button(footer, text="キャンセル", command=self._on_cancel, width=10).pack(side="right", padx=(0, 6))
+
+        self.protocol("WM_DELETE_WINDOW", self._on_cancel)
+        self._cell_widgets = []
+        self._rebuild_grid()
+        entry.focus_set()
+        self.grab_set()
+
+    def _rebuild_grid(self):
+        for child in self.grid_frame.winfo_children():
+            child.destroy()
+        self._cell_widgets = []
+        self._image_refs = []
+
+        query = self.query_var.get().strip().lower()
+        names = [n for n in palette_config.list_all_icon_names() if query in n.lower()]
+        entries = [(palette_config.NO_ICON, ICON_NONE_LABEL)] + [(n, n) for n in names]
+
+        for i, (icon_name, label) in enumerate(entries):
+            r, c = divmod(i, self.COLS)
+            is_sel = icon_name == self._selected
+            cell = tk.Frame(self.grid_frame, bg="#f0f0f0", cursor="hand2",
+                             highlightthickness=2, highlightbackground=("#4d94ff" if is_sel else "#f0f0f0"))
+            cell.grid(row=r, column=c, padx=3, pady=3)
+            thumb = tk.Canvas(cell, width=self.THUMB_SIZE, height=self.THUMB_SIZE,
+                               bg="#ffffff", highlightthickness=1, highlightbackground="#cccccc")
+            thumb.pack(padx=4, pady=(4, 0))
+            self._draw_thumb(thumb, icon_name)
+            short = label if len(label) <= 8 else label[:7] + "…"
+            lbl = tk.Label(cell, text=short, bg="#f0f0f0", font=("Meiryo UI", 7))
+            lbl.pack(pady=(0, 4))
+            for w in (cell, thumb, lbl):
+                w.bind("<Button-1>", lambda e, n=icon_name: self._select(n))
+            self._cell_widgets.append((icon_name, cell))
+
+    def _draw_thumb(self, canvas, icon_name):
+        draw_icon_thumbnail(canvas, icon_name, self._image_refs, self.THUMB_SIZE)
+
+    def _select(self, icon_name):
+        self._selected = icon_name
+        for name, cell in self._cell_widgets:
+            cell.configure(highlightbackground=("#4d94ff" if name == icon_name else "#f0f0f0"))
+
+    def _cleanup_mousewheel(self):
+        try:
+            self._mousewheel_canvas.unbind_all("<MouseWheel>")
+        except Exception:
+            pass
+
+    def _on_ok(self):
+        self.result = self._selected
+        self._cleanup_mousewheel()
+        self.destroy()
+
+    def _on_cancel(self):
+        self.result = None
+        self._cleanup_mousewheel()
+        self.destroy()
+
+
 class CommandPickerDialog(tk.Toplevel):
     """コマンド追加ダイアログ。選択されたコマンド一覧をself.resultに残す。"""
 
@@ -306,24 +446,18 @@ class SidePanel(ttk.Frame):
         self._selected_indices = []
         self.list_widgets = []
         self._loading_detail = False
-
-        self.icon_choices = [ICON_NONE_LABEL] + palette_config.list_icon_modules()
-        self.icon_value_map = {ICON_NONE_LABEL: palette_config.NO_ICON}
-        self.icon_value_map.update({m: m for m in palette_config.list_icon_modules()})
-        self.icon_label_map = {v: k for k, v in self.icon_value_map.items()}
+        self._icon_preview_refs = []
 
         self.orient_var = tk.StringVar(value=side_cfg["orientation"])
         self.size_var = tk.IntVar(value=side_cfg["button_size"])
         self.cmd_var = tk.StringVar()
         self.name_var = tk.StringVar()
-        self.icon_var = tk.StringVar()
 
         self._build_shape_bar()
         self._build_layout_area()
         self._build_detail_form()
 
         self.name_var.trace_add("write", self._on_name_changed)
-        self.icon_var.trace_add("write", self._on_icon_changed)
 
         self._rebuild_groups()
 
@@ -383,9 +517,15 @@ class SidePanel(ttk.Frame):
         self.name_entry.grid(row=1, column=1, sticky="w", padx=6, pady=4)
 
         ttk.Label(lf, text="アイコン:").grid(row=2, column=0, sticky="e", padx=6, pady=4)
-        self.icon_combo = ttk.Combobox(lf, textvariable=self.icon_var, values=self.icon_choices,
-                                        state="readonly", width=18)
-        self.icon_combo.grid(row=2, column=1, sticky="w", padx=6, pady=4)
+        icon_frame = ttk.Frame(lf)
+        icon_frame.grid(row=2, column=1, sticky="w", padx=6, pady=4)
+        self.icon_preview = tk.Canvas(icon_frame, width=28, height=28, bg="#ffffff",
+                                       highlightthickness=1, highlightbackground="#cccccc")
+        self.icon_preview.pack(side="left")
+        self.icon_name_label = ttk.Label(icon_frame, text="", width=12)
+        self.icon_name_label.pack(side="left", padx=(4, 6))
+        self.pick_icon_btn = ttk.Button(icon_frame, text="アイコンを選ぶ…", command=self._on_pick_icon)
+        self.pick_icon_btn.pack(side="left")
 
         ttk.Label(lf, text="背景色:").grid(row=3, column=0, sticky="e", padx=6, pady=4)
         color_frame = ttk.Frame(lf)
@@ -396,7 +536,7 @@ class SidePanel(ttk.Frame):
         self.pick_color_btn.pack(side="left", padx=6)
         self.reset_color_btn = ttk.Button(color_frame, text="既定に戻す", command=self._on_reset_color)
         self.reset_color_btn.pack(side="left")
-        ttk.Label(lf, text="(リストでCtrl/Shiftクリックすると複数選択してまとめて色変更できます)",
+        ttk.Label(lf, text="(リストでCtrl/Shiftクリックすると複数選択してまとめて色・アイコン変更できます)",
                   foreground="#888888").grid(row=4, column=0, columnspan=2, sticky="w", padx=6, pady=(0, 4))
 
         self._set_detail_enabled(False, False)
@@ -416,9 +556,9 @@ class SidePanel(ttk.Frame):
         return buttons[ii]
 
     def _selected_buttons(self):
-        # 👑 色のまとめ変更のため、複数選択(extended)の全ボタンを返す。
-        # 名前/アイコン編集は単一選択時のみ意味があるので_selected_button()
-        # (単一)は引き続き使う。
+        # 👑 色・アイコンのまとめ変更のため、複数選択(extended)の全ボタンを
+        # 返す。名前編集だけは単一選択時のみ意味があるので_selected_button()
+        # (単一)を引き続き使う。
         if self._selected_group is None or not self._selected_indices:
             return []
         groups = self.side_cfg["groups"]
@@ -427,13 +567,19 @@ class SidePanel(ttk.Frame):
         buttons = groups[self._selected_group]["buttons"]
         return [buttons[i] for i in self._selected_indices if i < len(buttons)]
 
-    def _set_detail_enabled(self, name_icon_enabled, color_enabled):
-        state = "readonly" if name_icon_enabled else "disabled"
-        self.name_entry.configure(state=("normal" if name_icon_enabled else "disabled"))
-        self.icon_combo.configure(state=state)
-        color_state = "normal" if color_enabled else "disabled"
-        self.pick_color_btn.configure(state=color_state)
-        self.reset_color_btn.configure(state=color_state)
+    def _set_detail_enabled(self, name_enabled, batch_enabled):
+        self.name_entry.configure(state=("normal" if name_enabled else "disabled"))
+        batch_state = "normal" if batch_enabled else "disabled"
+        self.pick_icon_btn.configure(state=batch_state)
+        self.pick_color_btn.configure(state=batch_state)
+        self.reset_color_btn.configure(state=batch_state)
+
+    def _update_icon_preview(self, icon_name):
+        self.icon_preview.delete("all")
+        self._icon_preview_refs = []
+        if icon_name:
+            draw_icon_thumbnail(self.icon_preview, icon_name, self._icon_preview_refs, size=28)
+        self.icon_name_label.configure(text=icon_name if icon_name else ICON_NONE_LABEL)
 
     def _load_detail(self):
         self._loading_detail = True
@@ -443,7 +589,7 @@ class SidePanel(ttk.Frame):
             if btn is None and len(multi) <= 1:
                 self.cmd_var.set("")
                 self.name_var.set("")
-                self.icon_var.set("")
+                self._update_icon_preview("")
                 self.color_swatch.configure(bg=palette_config.DEFAULT_COLOR)
                 self._set_detail_enabled(False, False)
                 return
@@ -452,14 +598,14 @@ class SidePanel(ttk.Frame):
                 category = (row.get("category") or "").strip()
                 self.cmd_var.set(f"{btn['command_id']} ({category})" if category else btn["command_id"])
                 self.name_var.set(btn["name"])
-                self.icon_var.set(self.icon_label_map.get(btn["icon"], ICON_NONE_LABEL))
+                self._update_icon_preview(btn["icon"])
                 self.color_swatch.configure(bg=btn["color"])
                 self._set_detail_enabled(True, True)
             else:
-                # 複数選択中: 名前・アイコンは編集不可、色だけまとめて変更可能
+                # 複数選択中: 名前は編集不可、色・アイコンはまとめて変更可能
                 self.cmd_var.set(f"{len(multi)}個選択中")
                 self.name_var.set("")
-                self.icon_var.set("")
+                self._update_icon_preview(multi[0]["icon"])
                 self.color_swatch.configure(bg=multi[0]["color"])
                 self._set_detail_enabled(False, True)
         finally:
@@ -558,13 +704,16 @@ class SidePanel(ttk.Frame):
         btn["name"] = self.name_var.get()
         self._refresh_current_group_labels()
 
-    def _on_icon_changed(self, *args):
-        if self._loading_detail:
+    def _on_pick_icon(self):
+        buttons = self._selected_buttons()
+        if not buttons:
             return
-        btn = self._selected_button()
-        if btn is None:
-            return
-        btn["icon"] = self.icon_value_map.get(self.icon_var.get(), palette_config.NO_ICON)
+        dlg = IconPickerDialog(self.winfo_toplevel(), current_icon=buttons[0].get("icon"))
+        self.winfo_toplevel().wait_window(dlg)
+        if dlg.result is not None:
+            for btn in buttons:
+                btn["icon"] = dlg.result
+            self._update_icon_preview(dlg.result)
 
     def _on_pick_color(self):
         buttons = self._selected_buttons()

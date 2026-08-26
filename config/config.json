@@ -22,7 +22,7 @@
             {
               "command_id": "C003",
               "name": "円弧",
-              "icon": "",
+              "icon": "circle",
               "color": "#c2f0c2"
             },
             {
@@ -94,19 +94,19 @@
             {
               "command_id": "C034",
               "name": "Blk化",
-              "icon": "",
+              "icon": "bl_make",
               "color": "#f0f0f0"
             },
             {
               "command_id": "C035",
               "name": "Blk解",
-              "icon": "",
+              "icon": "bl_break",
               "color": "#f0f0f0"
             },
             {
               "command_id": "C037",
               "name": "Blk編",
-              "icon": "",
+              "icon": "bl_edit",
               "color": "#f0f0f0"
             }
           ]

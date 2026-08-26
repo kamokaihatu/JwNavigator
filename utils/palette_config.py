@@ -46,6 +46,10 @@ def _icons_dir():
     return os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "icons")
 
 
+def _png_icons_dir():
+    return os.path.join(_resolve_base_dir(), "png_icons")
+
+
 def list_icon_modules():
     try:
         paths = glob.glob(os.path.join(_icons_dir(), "*.py"))
@@ -58,6 +62,25 @@ def list_icon_modules():
             continue
         names.append(stem)
     return sorted(names)
+
+
+def png_icon_path(name):
+    return os.path.join(_png_icons_dir(), f"{name}.png")
+
+
+def list_png_icons():
+    try:
+        paths = glob.glob(os.path.join(_png_icons_dir(), "*.png"))
+    except Exception:
+        return []
+    return sorted(os.path.splitext(os.path.basename(p))[0] for p in paths)
+
+
+def list_all_icon_names():
+    # 👑 widgets/button.pyのload_and_draw()は、同名のpng_icons/*.pngが
+    # あればそちらを.pyモジュールより優先して使う。アイコン選択UIでは
+    # 両方の由来を区別せず、存在するアイコン名を一覧として扱う。
+    return sorted(set(list_icon_modules()) | set(list_png_icons()))
 
 
 def new_button(command_id, name, icon=NO_ICON, color=DEFAULT_COLOR):
@@ -167,7 +190,7 @@ def normalize_config(raw):
     if not isinstance(raw, dict):
         return default_config()
 
-    known_icons = set(list_icon_modules())
+    known_icons = set(list_all_icon_names())
 
     try:
         version = int(raw.get("version", CONFIG_VERSION))
