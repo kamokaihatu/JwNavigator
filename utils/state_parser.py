@@ -32,6 +32,21 @@ class JwwStateParser:
         # 不安定になる（実測で確認：連続テスト中に無関係なボタンを挟むと
         # ふらついた）。グループ単位にすることで、無関係な状態は影響しない。
         self._last_group_member = {}
+        # 👑 マウスオンだけでは絶対に出ない「入力待ち文言」を、コマンドごとに
+        # 手作業で登録・収集していくのは際限がない（衝突が見つかるたびに
+        # 個別対応してきたが、未収集のコマンドはいつまでも反映できない）。
+        # そこで「直前に確認できた固有のツールチップ」を覚えておき、その後
+        # 未登録の文言（STATE_UNKNOWN相当）に変わったら、それを「そのコマンドの
+        # 実際の入力待ちフェーズに入った証拠」とみなして推定する。ツールチップ
+        # 文言はマウスがそのボタン上にある間ずっと同じままなので、そこから
+        # 別の（IDLEでも他の既知ツールチップでもない）文言に変わるという
+        # 遷移自体が、クリックが起きたことの十分な根拠になる。
+        self._last_tooltip_state = None
+        # 👑 未登録文言は、マウスがボタン間を移動する一瞬だけ通過する
+        # ノイズ的な文言でも発生しうる。1回見ただけで確定させず、
+        # 「同じ未登録文言が2回連続で観測できた」場合だけ確定する
+        # （実測で誤反映を確認したため追加）。(text, state_id)を保持。
+        self._pending_unknown = None
         self._load_and_compile_database()
 
     def _load_and_compile_database(self):
@@ -54,6 +69,8 @@ class JwwStateParser:
             # 本当にIdleに戻った＝どのコマンドもアクティブでないので、
             # グループごとの記憶も全部リセットしてよい。
             self._last_group_member = {}
+            self._last_tooltip_state = None
+            self._pending_unknown = None
             return ParseResult(
                 raw_text=raw_text or "(Empty)",
                 state_id="STATE_IDLE",
@@ -81,6 +98,13 @@ class JwwStateParser:
                 # （固有のツールチップ文言もここで記録され、次の衝突判定に使われる）。
                 if group:
                     self._last_group_member[group] = state_id
+                # 👑 「直前に確定できたコマンド」は、ツールチップに限らずマッチ
+                # するたびに常に最新へ更新する。ツールチップの時だけ更新すると、
+                # そのコマンドの後半（複写・移動の「移動先の点を指示して下さい」
+                # のような、まだ未登録の後続フェーズ）に来た時、もっと古い・
+                # 無関係なコマンドのツールチップが復活してしまう（実測で確認）。
+                self._last_tooltip_state = state_id
+                self._pending_unknown = None
                 return ParseResult(
                     raw_text=raw_text,
                     state_id=state_id,
@@ -88,9 +112,25 @@ class JwwStateParser:
                     pattern=rule.pattern_str
                 )
 
-        # 👑 未一致（STATE_UNKNOWN）はマウス移動中の一時的な文言などで頻発する。
-        # ここでグループ記憶を上書きすると、直後に衝突文言へ戻った時の
-        # 判定材料を失ってしまうため、あえて更新しない。
+        # 👑 未一致（STATE_UNKNOWN）はマウス移動中の一時的な文言などで頻発するが、
+        # 直前に固有のツールチップを確認できていた場合は、それが実際に
+        # クリックされて未収集の入力待ちフェーズに入ったと推定する
+        # （INFERRED_WAIT。is_hover_trustworthy_ruleは"_WAIT"終わりのルール名を
+        # 信頼するので、この名前のままmain.py側で正しく即時反映扱いになる）。
+        # ただし1回だけの観測だとマウス移動中のノイズと区別できないため、
+        # 同じ未登録文言が2回連続で観測できてから確定する。
+        if self._last_tooltip_state:
+            if self._pending_unknown and self._pending_unknown[0] == raw_text:
+                return ParseResult(
+                    raw_text=raw_text,
+                    state_id=self._pending_unknown[1],
+                    rule_name="INFERRED_WAIT",
+                    pattern="(inferred: unregistered text after known tooltip)"
+                )
+            self._pending_unknown = (raw_text, self._last_tooltip_state)
+        else:
+            self._pending_unknown = None
+
         return ParseResult(
             raw_text=raw_text,
             state_id="STATE_UNKNOWN",

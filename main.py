@@ -30,9 +30,8 @@ from utils.send_command import send_command_to_hwnd, is_command_enabled, get_com
 from utils import command_master
 from utils.jww_watcher import get_raw_statusbar_text
 from utils.state_parser import parse_statusbar_text
-from utils.state_patterns import STATES_WITH_WAIT_RULE, is_hover_trustworthy_rule
+from utils.state_patterns import is_hover_trustworthy_rule
 from utils.state_collection import StateCollectionLogger
-from utils.event_engine import JwwEventEngine
 from utils.win_event_watcher import WinEventWatcher
 from utils.palette_layout import compute_palette_geometry
 
@@ -78,6 +77,7 @@ JP_MATCH_MAP = {
     "HATCH": "ハッチ",
     "POLYGON": "多角形",
     "CURVE": "曲線",
+    "SOLID": "ソリッド",
     "FUKUSEN": "複線",
     "BUNKATSU": "分割",
     "CLEANUP": "整理",
@@ -485,14 +485,18 @@ class JwNavigatorManager:
                     tr.wm_geometry(f"{w}x{h}+{x}+{y}")
                     tr.update_idletasks()
                     tr._last_geom = new_geom_r
-            if foreground_hwnd in (hwnd, tl.winfo_id(), tr.winfo_id()):
-                if len(tl.buttons) > 0:
-                    tl.attributes("-topmost", True)
-                if len(tr.buttons) > 0:
-                    tr.attributes("-topmost", True)
-            else:
-                tl.attributes("-topmost", False)
-                tr.attributes("-topmost", False)
+            # 👑 wm_geometry()と同じ理由で、-topmostも「変化した時だけ」呼ぶ。
+            # 無条件に毎回（100ms毎）呼ぶと、Falseにしたつもりでも
+            # SetWindowPos(HWND_NOTOPMOST)が通常ウィンドウの最上位へ毎回
+            # 押し戻してしまい、他アプリ（VSCode等）が前面に出てもすぐ
+            # 上書きされて見えてしまう不具合があった（実測で確認）。
+            want_topmost = foreground_hwnd in (hwnd, tl.winfo_id(), tr.winfo_id())
+            if len(tl.buttons) > 0 and getattr(tl, "_last_topmost", None) != want_topmost:
+                tl.attributes("-topmost", want_topmost)
+                tl._last_topmost = want_topmost
+            if len(tr.buttons) > 0 and getattr(tr, "_last_topmost", None) != want_topmost:
+                tr.attributes("-topmost", want_topmost)
+                tr._last_topmost = want_topmost
         except Exception as e:
             self.write_system_log(f"❌ ウィンドウ同期エラー [HWND:{hwnd}]: {str(e)}")
 
@@ -758,11 +762,6 @@ class JwNavigatorManager:
                     if tr.current_selected_button:
                         tr.current_selected_button.clear_selected()
                         tr.current_selected_button = None
-                    # 次にIdle以外へ入った時、直前の状態を引きずらないように
-                    # 安定判定エンジンもリセットしておく。
-                    engine = self.event_engines.get(hwnd)
-                    if engine:
-                        engine.reset()
             else:
                 # 👑 【2.0仕様：インテントロックが有効な場合は、そのインテントを優先】
                 locked_name = self._get_active_locked_intent(hwnd)
@@ -771,30 +770,20 @@ class JwNavigatorManager:
                 else:
                     # 👑 パレット経由でないjw_cad側の直接操作は、マウスが他の
                     # ボタン上を通過/滞在した際のツールチップ文言を拾って
-                    # しまうことがある（実測で確認）。追加の問い合わせは増やさず
-                    # 次の2段構えで判定する:
-                    #   ・入力待ち文言（WAIT系ルール）を持つコマンドは、マウスオン
-                    #     だけでは絶対にその文言が出ない＝見えた瞬間に確定情報
-                    #     として即時反映してよい（矩形の1点目のように、次の入力
-                    #     ですぐ別の（未登録の）文言に変わるものもあるため、連続
-                    #     一致を待つと取りこぼす）。ツールチップだけの間は反映しない。
-                    #   ・WAIT文言が元々存在しないコマンド（複写・移動等）だけは、
-                    #     今まで通りツールチップの2回連続一致で安定判定する。
-                    if current_state in STATES_WITH_WAIT_RULE:
-                        if is_hover_trustworthy_rule(matched_rule):
-                            reverse_btn_name = current_state.replace("STATE_", "")
-                            match_keyword = JP_MATCH_MAP.get(reverse_btn_name, None)
-                        else:
-                            match_keyword = None
-                    else:
-                        engine = self.event_engines.get(hwnd)
-                        if engine is None:
-                            engine = JwwEventEngine(required_duration_sec=1.0)
-                            self.event_engines[hwnd] = engine
-                        engine.process_state(current_state)
-                        stable_state = engine.stable_state
-                        reverse_btn_name = stable_state.replace("STATE_", "")
+                    # しまうことがある（実測で確認）。ツールチップ文言
+                    # （is_hover_trustworthy_rule=False）だけの間は反映せず、
+                    # 実際にコマンドが開始されたと確認できる文言（WAIT系ルール、
+                    # または未登録文言をツールチップからの遷移で推定した
+                    # INFERRED_WAIT。utils/state_parser.py参照）が見えた瞬間
+                    # だけ即時反映する。以前は「WAIT文言を持つコマンドかどうか」
+                    # で2系統に分けて後者を安定判定エンジンで処理していたが、
+                    # INFERRED_WAITの導入によりどのコマンドも同じ扱いにできる
+                    # ようになったため、その分岐は撤廃した。
+                    if is_hover_trustworthy_rule(matched_rule):
+                        reverse_btn_name = current_state.replace("STATE_", "")
                         match_keyword = JP_MATCH_MAP.get(reverse_btn_name, None)
+                    else:
+                        match_keyword = None
 
                 if match_keyword:
                     self.write_system_log(

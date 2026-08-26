@@ -18,6 +18,8 @@ class RuleId(Enum):
     TATEG_TOOLTIP = auto()
     POLYGON_TOOLTIP = auto()
     CURVE_TOOLTIP = auto()
+    SOLID_TOOLTIP = auto()
+    TWO_FIVE_D_TOOLTIP = auto()
     RANGE_TOOLTIP = auto()
     FUKUSEN_TOOLTIP = auto()
     CORNER_TOOLTIP = auto()
@@ -162,6 +164,10 @@ STATE_DATABASE = {
     # 同じ衝突なので、直前に確定していたツールチップで区別する。
     "STATE_POLYGON": [(r"多角形（２辺）を作図します", RuleId.POLYGON_TOOLTIP), (r"中心点を指示してください", RuleId.POLYGON_WAIT)],
     "STATE_CURVE": [(r"曲線を作図します", RuleId.CURVE_TOOLTIP)],
+    # 👑 SOLID実測メモ（2026-08-26収集）: 対応する状態が一つも登録されて
+    # おらず、多角形など直前のツールチップに誤って推定されていた
+    # （INFERRED_WAIT機構の実測で発覚）。ツールチップを登録して解決。
+    "STATE_SOLID": [(r"ソリッドを作図します", RuleId.SOLID_TOOLTIP)],
     "STATE_RANGE": [(r"範囲を指定し", RuleId.RANGE_TOOLTIP), (r"範囲選択の始点を", RuleId.RANGE_WAIT)],
     "STATE_FUKUSEN": [(r"元の線に平行な線をつくります", RuleId.FUKUSEN_TOOLTIP), (r"複線にする図形を選択", RuleId.FUKUSEN_WAIT)],
     # 👑 このWAIT文言「線（Ａ）指示(L)　　　　線切断(R)」はSTATE_CHAMFER（面取）と
@@ -185,7 +191,12 @@ STATE_DATABASE = {
     "STATE_MOVE": [(r"図形を移動します", RuleId.MOVE_TOOLTIP), (r"範囲選択の始点を", RuleId.MOVE_WAIT)],
     "STATE_IMAGE": [(r"画像の挿入、サイズ調整", RuleId.IMAGE_TOOLTIP)],
     "STATE_HOURAKU": [(r"図形の外郭線をつなげて整理します", RuleId.HOURAKU_TOOLTIP), (r"包絡範囲の始点指示", RuleId.HOURAKU_WAIT)],
-    "STATE_BUNKATSU": [(r"点や線の間を分割します", RuleId.BUNKATSU_TOOLTIP)],  # BUNKATSU_WAIT: 未実測のため削除（実測後に追加）
+    # 👑 BUNKATSU_WAIT実測メモ（2026-08-26収集）: 「線・円（Ａ）指示 ﾏｳｽ(L)
+    # 　分割始点指示 ﾏｳｽ(R)　連続点分割 (RR)」が実際のWAIT文言。
+    "STATE_BUNKATSU": [
+        (r"点や線の間を分割します", RuleId.BUNKATSU_TOOLTIP),
+        (r"分割始点指示", RuleId.BUNKATSU_WAIT),
+    ],
     "STATE_CLEANUP": [(r"データの整理をします", RuleId.CLEANUP_TOOLTIP)],
     "STATE_ATTRIB": [(r"データの属性を変更します", RuleId.ATTRIB_TOOLTIP), (r"変更するデータを指示してください", RuleId.ATTRIB_WAIT)],
     "STATE_ZUGEI": [(r"図形ファイルを読み込みます", RuleId.ZUGEI_TOOLTIP)],
@@ -209,7 +220,11 @@ STATE_DATABASE = {
     # WAITパターンは削除し、固有のツールチップのみ残す。
     "STATE_DIST": [(r"始点からの距離を指定して点", RuleId.DIST_TOOLTIP)],
     "STATE_SHIKI": [(r"式計算を行います", RuleId.SHIKI_TOOLTIP), (r"□□　　　項目を選択してください", RuleId.SHIKI_WAIT)],
-    "STATE_PARA": [(r"図形のﾊﾟラメトリック変形を行います", RuleId.PARA_TOOLTIP)],  # PARA_WAIT: 未実測のため削除（旧パターンはSTATE_RANGEの文言の誤コピーだった）
+    # 👑 PARA実測メモ（2026-08-26収集）: 旧パターンは全角カタカナ「ラ」を
+    # 含んでいたが、実際の文言は半角カタカナ「ﾊﾟﾗﾒﾄﾘｯｸ」だったため一度も
+    # 一致していなかった（INFERRED_WAIT機構の実測で発覚。直前のツールチップ
+    # に誤って推定され続けていた）。実測値に修正。
+    "STATE_PARA": [(r"図形のﾊﾟﾗﾒﾄﾘｯｸ変形を行います", RuleId.PARA_TOOLTIP)],  # PARA_WAIT: 未実測のため削除（旧パターンはSTATE_RANGEの文言の誤コピーだった）
     "STATE_REG": [(r"図形登録\(JWK\)を行います", RuleId.REG_TOOLTIP)],
     "STATE_DIM_ZUGEI": [(r"寸法図形にします", RuleId.DIM_ZUGEI_TOOLTIP), (r"寸法図形にする  ［寸法線］", RuleId.DIM_ZUGEI_WAIT)],
     "STATE_DIM_ZUGEI_BREAK": [(r"寸法図形を解除します", RuleId.DIM_BREAK_TOOLTIP), (r"解除する寸法図形を指示してください", RuleId.DIM_BREAK_BREAK_WAIT if hasattr(RuleId, "DIM_BREAK_BREAK_WAIT") else RuleId.DIM_BREAK_WAIT)],
@@ -229,7 +244,12 @@ STATE_DATABASE = {
     # にとどめる。日影図/天空図を区別したくなったら、2段階目の固有文言
     # （天空図: 「正射影　測定点を指示してください。」「天空図の作図位置（円中心）
     # を指示してください。」）を使うこと。
-    "STATE_TWO_FIVE_D_MODE": [(r"高さ・奥行を設定する線端部または円を指示", RuleId.TWO_FIVE_D_WAIT)],
+    # 👑 2.5Dのツールチップ実測メモ（2026-08-26収集）:
+    # 「２．５Dのデータ入力と作図をします。」。
+    "STATE_TWO_FIVE_D_MODE": [
+        (r"２．５Dのデータ入力と作図をします", RuleId.TWO_FIVE_D_TOOLTIP),
+        (r"高さ・奥行を設定する線端部または円を指示", RuleId.TWO_FIVE_D_WAIT),
+    ],
     # 👑 2026-08-19実測追加分（全85コマンドのマウスオン走査で判明。
     # ツールチップのみ、実測されたWAIT文言のみを採用）。
     "STATE_MODORU": [(r"直前に行った動作を元に戻す", RuleId.MODORU_TOOLTIP)],
