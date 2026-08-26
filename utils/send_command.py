@@ -40,6 +40,25 @@ def _is_not_found_state(raw):
     return raw is None or raw in (-1, 0xFFFFFFFF)
 
 
+def _get_menu_state(hwnd: int, id_command: int):
+    # 👑 「進む」等、ツールバーボタンを持たずメニュー項目としてしか
+    # 存在しないコマンドがある（TB_GETSTATEでは常に「見つからない」扱いに
+    # なり、グレーアウト判定不能→常にクリック可能のまま、という実測での
+    # 発覚バグの原因だった）。GetMenuState はMF_BYCOMMAND指定だとメイン
+    # メニューから対象IDのサブメニューまで自動的に探してくれるため、
+    # ツールバーに出ていないコマンドのフォールバックとして使える。
+    try:
+        menu = win32gui.GetMenu(hwnd)
+        if not menu:
+            return None
+        state = win32gui.GetMenuState(menu, id_command, win32con.MF_BYCOMMAND)
+        if state == -1 or state == 0xFFFFFFFF:
+            return None
+        return not bool(state & win32con.MF_GRAYED)
+    except Exception:
+        return None
+
+
 def is_command_enabled(hwnd: int, id_command: int):
     # jw_cad内の実際のツールバーボタンからidCommandの有効/無効状態を調べる。
     # 戻り値: True=有効, False=無効（グレーアウト）, None=どのツールバーにも
@@ -54,7 +73,7 @@ def is_command_enabled(hwnd: int, id_command: int):
         if _is_not_found_state(state):
             continue
         return bool(state & TBSTATE_ENABLED)
-    return None
+    return _get_menu_state(hwnd, id_command)
 
 
 def get_command_states(hwnd: int, id_commands):
@@ -75,6 +94,8 @@ def get_command_states(hwnd: int, id_commands):
                 continue
             state = bool(raw & TBSTATE_ENABLED)
             break
+        if state is None:
+            state = _get_menu_state(hwnd, id_command)
         result[id_command] = state
     return result
 

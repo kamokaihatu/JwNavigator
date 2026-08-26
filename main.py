@@ -434,7 +434,6 @@ class JwNavigatorManager:
             return
         tl = self.active_launchers[hwnd]["左"]
         tr = self.active_launchers[hwnd]["右"]
-        foreground_hwnd = win32gui.GetForegroundWindow()
         try:
             jw_rect = get_jw_window_rect_safe(hwnd)
             screen_width = self.root.winfo_screenwidth()
@@ -485,40 +484,62 @@ class JwNavigatorManager:
                     tr.wm_geometry(f"{w}x{h}+{x}+{y}")
                     tr.update_idletasks()
                     tr._last_geom = new_geom_r
-            # 👑 wm_geometry()と同じ理由で、-topmostも「変化した時だけ」呼ぶ。
-            # 無条件に毎回（100ms毎）呼ぶと、Falseにしたつもりでも
-            # SetWindowPos(HWND_NOTOPMOST)が通常ウィンドウの最上位へ毎回
-            # 押し戻してしまい、他アプリ（VSCode等）が前面に出てもすぐ
-            # 上書きされて見えてしまう不具合があった（実測で確認）。
-            # さらに、-topmostをFalseにするだけでは「最前面グループから
-            # 外れる」だけで、通常ウィンドウ群の中では元々いた位置（＝
-            # 最前面から降りた直後の一番上）に留まり続ける。他アプリが
-            # 自分からクリックされて最前面に上がってくれば追い越されるが、
-            # 実機でVSCodeだけそれが起きないことを確認したため、非topmost
-            # にする時は明示的にHWND_BOTTOM（最背面）へ送る。
-            want_topmost = foreground_hwnd in (hwnd, tl.winfo_id(), tr.winfo_id())
-            if len(tl.buttons) > 0 and getattr(tl, "_last_topmost", None) != want_topmost:
-                tl.attributes("-topmost", want_topmost)
-                if not want_topmost:
-                    try:
-                        win32gui.SetWindowPos(
-                            tl.winfo_id(), win32con.HWND_BOTTOM, 0, 0, 0, 0,
-                            win32con.SWP_NOMOVE | win32con.SWP_NOSIZE | win32con.SWP_NOACTIVATE,
-                        )
-                    except Exception as e:
-                        self.write_system_log(f"⚠️ 左パレット背面送りエラー: {str(e)}")
-                tl._last_topmost = want_topmost
-            if len(tr.buttons) > 0 and getattr(tr, "_last_topmost", None) != want_topmost:
-                tr.attributes("-topmost", want_topmost)
-                if not want_topmost:
-                    try:
-                        win32gui.SetWindowPos(
-                            tr.winfo_id(), win32con.HWND_BOTTOM, 0, 0, 0, 0,
-                            win32con.SWP_NOMOVE | win32con.SWP_NOSIZE | win32con.SWP_NOACTIVATE,
-                        )
-                    except Exception as e:
-                        self.write_system_log(f"⚠️ 右パレット背面送りエラー: {str(e)}")
-                tr._last_topmost = want_topmost
+            # 👑 【重大発覚】tl.winfo_id()/tr.winfo_id()は実は「本当の
+            # トップレベルウィンドウ」ではなく、その内側の子ウィンドウの
+            # hwndを返していた（実測でGetParent()!=0を確認、実際の
+            # TkTopLevelはさらにその親）。今日一日SetWindowPosの結果が
+            # 左右非対称・不安定だったのはこれが原因で、子ウィンドウの
+            # 兄弟内Z順をいじっていただけで、jw_cad等の他トップレベル
+            # ウィンドウとの前後関係には実質影響していなかった。実際に
+            # Z順操作すべきは GetParent(winfo_id()) で辿れる本当の
+            # トップレベルhwnd（一度だけ取得してキャッシュする）。
+            #
+            # 「常にjw_cad本体の一個だけ前面」に固定する方式。
+            # SetWindowPos(hWndInsertAfter=X)は「Xの直後＝Xより後ろ（背面側）」
+            # に置く動きだと実測で確定した（hWndInsertAfter=hwndを試したところ
+            # 常にjw_cad本体より背面になった）。そこで逆に、「今現在jw_cad
+            # 本体の直前（１つ前面）にいるウィンドウ」をGW_HWNDPREVで探し、
+            # その一つ後ろにパレットを割り込ませることで「本体の直前」を作る。
+            # 自分自身（左右パレット）が既にそこにいる場合は無視して更に
+            # 上を探す（毎tick呼ぶ想定で、既に自分が挟まっている状態を
+            # 誤って自分の後ろに付けようとする自己参照を避けるため）。
+            # jw_cad自身が出すダイアログ（文字ツールバー等）は新規作成時に
+            # 通常Z順の最前面へ自動挿入される仕様なので、この「本体の直前」
+            # より必ず前に来る。他アプリ（VSCode等）がアクティブになれば
+            # jw_cad本体ごと後ろへ下がるのでパレットも一緒に下がる。
+            def _real_top_level_hwnd(tb):
+                cached = getattr(tb, "_real_hwnd", None)
+                if cached:
+                    return cached
+                inner = tb.winfo_id()
+                parent = win32gui.GetParent(inner)
+                real = parent if parent else inner
+                tb._real_hwnd = real
+                return real
+
+            def _neighbor_above(target_hwnd, exclude_ids):
+                cur = win32gui.GetWindow(target_hwnd, win32con.GW_HWNDPREV)
+                while cur and cur in exclude_ids:
+                    cur = win32gui.GetWindow(cur, win32con.GW_HWNDPREV)
+                return cur
+
+            palette_real_ids = {_real_top_level_hwnd(tl), _real_top_level_hwnd(tr)}
+            for tb, side_label in ((tl, "左"), (tr, "右")):
+                if len(tb.buttons) == 0:
+                    continue
+                if not getattr(tb, "_topmost_cleared", False):
+                    tb.attributes("-topmost", False)
+                    tb._topmost_cleared = True
+                try:
+                    real_hwnd = _real_top_level_hwnd(tb)
+                    neighbor = _neighbor_above(hwnd, palette_real_ids)
+                    insert_after = neighbor if neighbor else win32con.HWND_TOP
+                    win32gui.SetWindowPos(
+                        real_hwnd, insert_after, 0, 0, 0, 0,
+                        win32con.SWP_NOMOVE | win32con.SWP_NOSIZE | win32con.SWP_NOACTIVATE,
+                    )
+                except Exception as e:
+                    self.write_system_log(f"⚠️ {side_label}パレットZ順変更エラー: {str(e)}")
         except Exception as e:
             self.write_system_log(f"❌ ウィンドウ同期エラー [HWND:{hwnd}]: {str(e)}")
 
