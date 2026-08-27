@@ -72,6 +72,7 @@ def list_available_commands():
                 "command_kind": (row.get("command_kind") or "").strip() or "その他",
                 "shortcut_key": shortcut,
                 "id_command": int(id_cmd) if id_cmd.isdigit() else None,
+                "default_icon": (row.get("default_icon") or "").strip(),
             }
         )
     rows.sort(key=lambda r: (r["category"], r["command_id"]))

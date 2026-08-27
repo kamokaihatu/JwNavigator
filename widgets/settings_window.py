@@ -834,13 +834,19 @@ class SidePanel(ttk.Frame):
         insert_at = self.selected[1] + 1 if self.selected is not None and self.selected[0] == gi else len(groups[gi]["buttons"])
 
         last_index = insert_at
+        known_icons = set(palette_config.list_all_icon_names())
         for row in rows:
             default_color = (
                 palette_config.SUB_COMMAND_DEFAULT_COLOR
                 if row.get("command_kind") == "サブ"
                 else palette_config.DEFAULT_COLOR
             )
-            new_btn = palette_config.new_button(row["command_id"], row["toolbar_name"], color=default_color)
+            default_icon = row.get("default_icon") or palette_config.NO_ICON
+            if default_icon not in known_icons:
+                default_icon = palette_config.NO_ICON
+            new_btn = palette_config.new_button(
+                row["command_id"], row["toolbar_name"], icon=default_icon, color=default_color
+            )
             groups[gi]["buttons"].insert(insert_at, new_btn)
             insert_at += 1
             last_index = insert_at - 1
