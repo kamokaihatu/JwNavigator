@@ -41,29 +41,18 @@ def _is_not_found_state(raw):
     return raw is None or raw in (-1, 0xFFFFFFFF)
 
 
-def _get_menu_state(hwnd: int, id_command: int):
-    # 👑 「進む」等、ツールバーボタンを持たずメニュー項目としてしか
-    # 存在しないコマンドがある（TB_GETSTATEでは常に「見つからない」扱いに
-    # なり、グレーアウト判定不能→常にクリック可能のまま、という実測での
-    # 発覚バグの原因だった）。GetMenuState はMF_BYCOMMAND指定だとメイン
-    # メニューから対象IDのサブメニューまで自動的に探してくれるため、
-    # ツールバーに出ていないコマンドのフォールバックとして使える。
-    try:
-        menu = win32gui.GetMenu(hwnd)
-        if not menu:
-            return None
-        state = win32gui.GetMenuState(menu, id_command, win32con.MF_BYCOMMAND)
-        if state == -1 or state == 0xFFFFFFFF:
-            return None
-        return not bool(state & win32con.MF_GRAYED)
-    except Exception:
-        return None
-
-
 def is_command_enabled(hwnd: int, id_command: int):
     # jw_cad内の実際のツールバーボタンからidCommandの有効/無効状態を調べる。
     # 戻り値: True=有効, False=無効（グレーアウト）, None=どのツールバーにも
     # 見つからず判定不能（この場合は呼び出し側で「送信して構わない」扱いにする）。
+    # 👑 メニュー(GetMenuState)によるフォールバックは一時的に実装したが
+    # 撤回した。「進む」で実測したところ、jw_cadのメニュー項目の有効/
+    # 無効ビットは「メニューを実際に開く直前」にだけ更新される典型的な
+    # MFCの遅延更新方式で、開かずに問い合わせると古い値を返すことが
+    # 判明（メニューを開いた時の見た目はグレーアウトなのに、
+    # GetMenuStateは「有効」を返す食い違いを確認）。メニューを実際に
+    # 開かせて更新させる手段は画面へのちらつき等の副作用が大きいため
+    # 採用せず、判定不能な場合は元通り「送信して構わない」扱いに戻す。
     if not hwnd or not id_command:
         return None
     for tb_hwnd in _find_toolbar_windows(hwnd):
@@ -74,7 +63,7 @@ def is_command_enabled(hwnd: int, id_command: int):
         if _is_not_found_state(state):
             continue
         return bool(state & TBSTATE_ENABLED)
-    return _get_menu_state(hwnd, id_command)
+    return None
 
 
 def get_command_states(hwnd: int, id_commands):
@@ -95,8 +84,6 @@ def get_command_states(hwnd: int, id_commands):
                 continue
             state = bool(raw & TBSTATE_ENABLED)
             break
-        if state is None:
-            state = _get_menu_state(hwnd, id_command)
         result[id_command] = state
     return result
 

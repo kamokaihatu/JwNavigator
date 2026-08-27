@@ -18,6 +18,10 @@ DEFAULT_BUTTON_SIZE = 48
 MIN_BUTTON_SIZE = 32
 MAX_BUTTON_SIZE = 96
 DEFAULT_COLOR = "#f0f0f0"
+# 👑 サブコマンド(command_kind=="サブ")は、jw_cad自身のボタン文字色が
+# 紺/青である慣習に合わせ、追加時のデフォルト背景色を薄い青系にして
+# 見分けやすくする（ユーザー要望）。追加後に個別に色変更するのは自由。
+SUB_COMMAND_DEFAULT_COLOR = "#cfe0f5"
 MAX_GROUP_LEN = 30
 CONFIG_VERSION = 2
 

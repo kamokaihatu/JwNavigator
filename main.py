@@ -302,6 +302,7 @@ class JwNavigatorManager:
         self._safe_mode = False
         self._auto_create_palettes = True
         self.window_state = window_state.load_state()
+        self._pending_pin_restore = {}
         self.root.withdraw()
         self.write_system_log("--- JwNavigator Ver2.0 メインシステム始動 ---")
         self.write_system_log("🧪 状態収集モードを有効化しました。")
@@ -665,11 +666,11 @@ class JwNavigatorManager:
                     )
                     toolbar_l.status_label.pack(side="top", fill="x", pady=(0, 2))
 
-                    def show_exit_popup(event, target_hwnd=hwnd):
+                    def show_exit_popup(event, target_hwnd=hwnd, side_key="左"):
                         menu = tk.Menu(self.root, tearoff=0, font=("Meiryo UI", 9))
                         menu.add_command(
                             label="⚙️ パレットを編集",
-                            command=self.open_settings_window,
+                            command=lambda sk=side_key: self.open_settings_window(initial_side=sk),
                         )
                         remember_var = tk.BooleanVar(
                             value=self.window_state.get("remember_on_exit", False)
@@ -690,8 +691,8 @@ class JwNavigatorManager:
                         )
                         menu.post(event.x_root, event.y_root)
 
-                    toolbar_l.bind("<Button-3>", show_exit_popup)
-                    toolbar_r.bind("<Button-3>", show_exit_popup)
+                    toolbar_l.bind("<Button-3>", lambda e: show_exit_popup(e, side_key="左"))
+                    toolbar_r.bind("<Button-3>", lambda e: show_exit_popup(e, side_key="右"))
                     if len(toolbar_l.buttons) > 0:
                         toolbar_l.deiconify()
                     else:
@@ -705,8 +706,16 @@ class JwNavigatorManager:
                     self.root.update_idletasks()
                     toolbar_l.update_idletasks()
                     toolbar_r.update_idletasks()
-                    self._restore_pinned_position(toolbar_l, "左")
-                    self._restore_pinned_position(toolbar_r, "右")
+                    pending_pins = self._pending_pin_restore.pop(hwnd, {})
+                    for side_key, tb in (("左", toolbar_l), ("右", toolbar_r)):
+                        if side_key in pending_pins:
+                            x, y = pending_pins[side_key]
+                            tb.is_pinned = True
+                            tb.pin_btn.configure(text="自由", bg="#e1e1e1", relief="raised")
+                            tb.wm_geometry(f"+{x}+{y}")
+                            tb._last_geom = None
+                        else:
+                            self._restore_pinned_position(tb, side_key)
                     try:
                         _, pid = win32process.GetWindowThreadProcessId(hwnd)
                         if pid:
@@ -726,15 +735,26 @@ class JwNavigatorManager:
         # 設定画面で保存した直後に呼ばれる。既存パレットを全部破棄して、
         # 「jw_cadが閉じた」時と同じ後始末をした上で、再スキャンして
         # config.jsonの最新内容から作り直させる。
+        # 👑 破棄すると新しいToolbarはis_pinned=Falseから始まってしまい、
+        # 自由配置していたパレットが保存のたびに追従モードへ戻ってしまう
+        # 不具合があった（ユーザー指摘）。破棄前に自由配置中だった側の
+        # 位置を覚えておき、作り直した直後に再適用する。
+        pending_pins = {}
         for hwnd in list(self.active_launchers.keys()):
             pair = self.active_launchers.pop(hwnd, None) or {}
-            for tb in pair.values():
+            pins = {}
+            for side_key, tb in pair.items():
+                if tb.is_pinned:
+                    pins[side_key] = (tb.winfo_x(), tb.winfo_y())
                 try:
                     tb.destroy()
                 except Exception:
                     pass
+            if pins:
+                pending_pins[hwnd] = pins
             self.event_engines.pop(hwnd, None)
             self.locked_intent.pop(hwnd, None)
+        self._pending_pin_restore = pending_pins
         self.root.after(50, self._rebuild_palettes_now)
 
     def _rebuild_palettes_now(self):
@@ -743,12 +763,13 @@ class JwNavigatorManager:
         except Exception as e:
             self.write_system_log(f"❌ パレット再構築失敗: {str(e)}")
 
-    def open_settings_window(self):
+    def open_settings_window(self, initial_side="左"):
         if self.settings_window is not None and self.settings_window.winfo_exists():
             self.settings_window.lift()
             self.settings_window.focus_force()
+            self.settings_window.select_tab(initial_side)
             return
-        self.settings_window = SettingsWindow(self.root, manager_ref=self)
+        self.settings_window = SettingsWindow(self.root, manager_ref=self, initial_side=initial_side)
 
     def _update_button_enabled_states(self, hwnd, tl, tr):
         # jw_cad実ツールバーの有効/無効状態をまとめて調べ、対応するパレット

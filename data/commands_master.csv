@@ -32,11 +32,11 @@ C030,30,包絡,25,包絡,編集,Q,FALSE,TRUE,TRUE,TRUE,,TRUE,TRUE,,,メニュー
 C031,31,分割,26,分割,編集,,FALSE,TRUE,TRUE,TRUE,,TRUE,TRUE,,,,メイン,32867
 C032,32,整理,36,ﾃﾞｰﾀ整理,編集,,FALSE,TRUE,TRUE,TRUE,,TRUE,TRUE,,,メニュー名はデータ整理、チェックあり,メイン,32910
 C033,33,属変,42,属性変更,編集,,FALSE,TRUE,TRUE,TRUE,,TRUE,TRUE,,,メニュー名は属性変更,メイン,32952
-C034,34,Blk化,,ブロック化,編集,,FALSE,TRUE,TRUE,TRUE,,TRUE,TRUE,,,shortcut_noなし,ブロック,32853
-C035,35,Blk解,,ブロック解除,編集,,FALSE,TRUE,TRUE,TRUE,,TRUE,TRUE,,,shortcut_noなし,ブロック,32909
-C036,36,Blk属,,ブロック属性,編集,,FALSE,TRUE,TRUE,TRUE,,TRUE,TRUE,,,shortcut_noなし,ブロック,32970
-C037,37,Blk編,,ブロック編集,編集,,FALSE,TRUE,TRUE,TRUE,,TRUE,TRUE,,,shortcut_noなし,ブロック,32986
-C038,38,Blk終,,ブロック編集終了,編集,,FALSE,TRUE,TRUE,TRUE,,TRUE,TRUE,,,グレーアウト、shortcut_noなし,ブロック,32985
+C034,34,Bk化,,ブロック化,編集,,FALSE,TRUE,TRUE,TRUE,,TRUE,TRUE,,,shortcut_noなし,ブロック,32853
+C035,35,Bk解,,ブロック解除,編集,,FALSE,TRUE,TRUE,TRUE,,TRUE,TRUE,,,shortcut_noなし,ブロック,32909
+C036,36,Bk属,,ブロック属性,編集,,FALSE,TRUE,TRUE,TRUE,,TRUE,TRUE,,,shortcut_noなし,ブロック,32970
+C037,37,Bk編,,ブロック編集,編集,,FALSE,TRUE,TRUE,TRUE,,TRUE,TRUE,,,shortcut_noなし,ブロック,32986
+C038,38,Bk終,,ブロック編集終了,編集,,FALSE,TRUE,TRUE,TRUE,,TRUE,TRUE,,,グレーアウト、shortcut_noなし,ブロック,32985
 C039,39,新規,,新規作成,ファイル,,FALSE,TRUE,TRUE,TRUE,,TRUE,TRUE,,,shortcut_noなし（Ctrl+N表記あり）,ファイル操作,57600
 C040,40,開く,98,開く,ファイル,,FALSE,TRUE,TRUE,TRUE,,TRUE,TRUE,,,メニュー名は開く（Ctrl+O表記あり）,ファイル操作,57601
 C041,41,上書,,上書き保存,ファイル,,FALSE,TRUE,TRUE,TRUE,,TRUE,TRUE,,,グレーアウト、shortcut_noなし（Ctrl+S表記あり）,ファイル操作,57603
@@ -64,7 +64,7 @@ C058_5,58,図登録,105,登録,その他,,FALSE,TRUE,TRUE,TRUE,,TRUE,TRUE,,,範�
 C058_6,58,図登録,106,登録,その他,,FALSE,TRUE,TRUE,TRUE,,TRUE,TRUE,,,範囲(101〜108)を分解、メニュー名図形登録,メイン,
 C058_7,58,図登録,107,登録,その他,,FALSE,TRUE,TRUE,TRUE,,TRUE,TRUE,,,範囲(101〜108)を分解、メニュー名図形登録,メイン,
 C058_8,58,図登録,108,登録,その他,,FALSE,TRUE,TRUE,TRUE,,TRUE,TRUE,,,範囲(101〜108)を分解、メニュー名図形登録,メイン,
-C059,59,線記変,59,記号,その他,,FALSE,TRUE,TRUE,TRUE,,TRUE,TRUE,,,メニュー名線記号変形、リスト内は28記号,ファイル操作,32869
+C059,59,線記変形,59,記号,その他,,FALSE,TRUE,TRUE,TRUE,,TRUE,TRUE,,,メニュー名線記号変形、リスト内は28記号,ファイル操作,32869
 C060,60,座標,37,座標ファイル,その他,U,FALSE,TRUE,TRUE,TRUE,,TRUE,TRUE,,,メニュー名座標ファイル,メイン,32895
 C061,61,外変,30,外部,その他,G,FALSE,TRUE,TRUE,TRUE,,TRUE,TRUE,,,メニュー名外部変形,ファイル操作,32913
 C062,62,測定,31,測定,その他,,FALSE,TRUE,TRUE,TRUE,,TRUE,TRUE,,,,メイン,32897
@@ -72,15 +72,15 @@ C063,63,表計算,39,表計算,その他,,FALSE,TRUE,TRUE,TRUE,,TRUE,TRUE,,,,メ
 C064,64,距離点,40,距離指定点,その他,,FALSE,TRUE,TRUE,TRUE,,TRUE,TRUE,,,メニュー名距離指定点,メイン,32930
 C065,65,式計算,41,式計算,その他,,FALSE,TRUE,TRUE,TRUE,,TRUE,TRUE,,,,メイン,32947
 C066,66,パラメ,29,ﾊﾟﾗﾒﾄﾘｯｸ,その他,P,FALSE,TRUE,TRUE,TRUE,,TRUE,TRUE,,,メニュー名パラメトリック変形,メイン,32898
-C067,67,寸図化,,寸法図形化,その他,,FALSE,TRUE,TRUE,TRUE,,TRUE,TRUE,,,shortcut_noなし,メイン,32928
-C068,68,寸図解,,寸法図形解除,その他,,FALSE,TRUE,TRUE,TRUE,,TRUE,TRUE,,,shortcut_noなし,メイン,32929
-C069,69,選択図,32,登録選択図、登録選択図形,その他,,FALSE,TRUE,TRUE,TRUE,,TRUE,TRUE,,,グレーアウト、メニュー名登録選択図形,未確認,
+C067,67,寸法図化,,寸法図形化,その他,,FALSE,TRUE,TRUE,TRUE,,TRUE,TRUE,,,shortcut_noなし,メイン,32928
+C068,68,寸法図解,,寸法図形解除,その他,,FALSE,TRUE,TRUE,TRUE,,TRUE,TRUE,,,shortcut_noなし,メイン,32929
+C069,69,選択図形,32,登録選択図、登録選択図形,その他,,FALSE,TRUE,TRUE,TRUE,,TRUE,TRUE,,,グレーアウト、メニュー名登録選択図形,未確認,
 C070,70,2.5D,,2．5D,その他,,FALSE,TRUE,TRUE,TRUE,,TRUE,TRUE,,,shortcut_noなし,メイン,32937
 C071,71,日影図,,日影図,その他,,FALSE,TRUE,TRUE,TRUE,,TRUE,TRUE,,,shortcut_noなし,メイン,32943
 C072,72,天空図,,天空図,その他,,FALSE,TRUE,TRUE,TRUE,,TRUE,TRUE,,,shortcut_noなし,メイン,32971
-C073,73,タグジャンプ,73,ﾀｸﾞｼﾞｬﾝﾌﾟ,ファイル,,FALSE,TRUE,TRUE,TRUE,,TRUE,TRUE,,,グレーアウト、メニュー名タグジャンプ,ワンショット,
+C073,73,タグ,73,ﾀｸﾞｼﾞｬﾝﾌﾟ,ファイル,,FALSE,TRUE,TRUE,TRUE,,TRUE,TRUE,,,グレーアウト、メニュー名タグジャンプ,ワンショット,
 C074,74,画像編集,,画像編集,編集,,FALSE,TRUE,TRUE,TRUE,,TRUE,TRUE,,,shortcut_noなし,ファイル操作,33013
 C075,75,中心点,,中心点取得,設定,,TRUE,TRUE,TRUE,TRUE,,TRUE,TRUE,,,ツールバー実測によりサブコマンド（紺色）,サブ,33016
 C076,76,線上点,,線上点・交点取得,設定,,TRUE,TRUE,TRUE,TRUE,,TRUE,TRUE,,,ツールバー実測によりサブコマンド（紺色）,サブ,33017
-C077,77,円周1/4点,,円周1/4点取得,設定,,TRUE,TRUE,TRUE,TRUE,,TRUE,TRUE,,,ツールバー実測によりサブコマンド（紺色）,サブ,33028
+C077,77,円周1/4,,円周1/4点取得,設定,,TRUE,TRUE,TRUE,TRUE,,TRUE,TRUE,,,ツールバー実測によりサブコマンド（紺色）,サブ,33028
 C078,78,SPEED,,SPEED Data入力,その他,,FALSE,TRUE,TRUE,TRUE,,TRUE,TRUE,,,グレーアウト、shortcut_noなし,未確認,

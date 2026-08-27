@@ -1,7 +1,7 @@
 """
 JwNavigator Icon Library
 
-Icon : ブロック編集
+Icon : 保存
 Size : 24x24
 """
 
@@ -10,22 +10,17 @@ import tkinter as tk
 def draw(canvas, x=0, y=0):
 
     canvas.create_rectangle(
-        x+2, y+2, x+17, y+17,
-        outline="black", width=1.7, dash=(3,2)
-    )
-
-    canvas.create_rectangle(
-        x+4.5, y+10.35, x+8.25, y+14.1,
+        x+2.5, y+2, x+15, y+16,
         outline="black", width=1.7
     )
 
-    canvas.create_rectangle(
-        x+10.35, y+10.35, x+14.1, y+14.1,
-        outline="black", width=1.7
+    canvas.create_line(
+        x+5,y+2, x+5,y+6, x+12.5,y+6, x+12.5,y+2,
+        width=1.7, capstyle=tk.ROUND, joinstyle=tk.ROUND
     )
 
     canvas.create_rectangle(
-        x+7.4, y+4.5, x+11.15, y+8.25,
+        x+5.5, y+9, x+12, y+13.5,
         outline="black", width=1.7
     )
 

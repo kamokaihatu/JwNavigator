@@ -1,31 +1,30 @@
 """
 JwNavigator Icon Library
-Icon : Stretch (高視認性 伸縮・width=2適正化版)
-Size : 24×24
+
+Icon : 伸縮
+Size : 24x24
 """
+
 import tkinter as tk
 
 def draw(canvas, x=0, y=0):
-    # 1. 右側のターゲット基準線を3から2へ適正化
+
     canvas.create_line(
-        x+18, y+3,
-        x+18, y+21,
-        width=2,
-        capstyle=tk.ROUND
+        x+4,y+12, x+12,y+12,
+        width=1.7, capstyle=tk.ROUND, joinstyle=tk.ROUND
     )
-    
-    # 2. 左から伸びる伸縮線
+
     canvas.create_line(
-        x+3, y+12,
-        x+14, y+12,
-        width=1,
-        capstyle=tk.ROUND
+        x+12,y+12, x+21,y+12,
+        width=1, capstyle=tk.ROUND, dash=(1,2)
     )
-    
-    # 3. 基準線に突き刺さる矢印頭
-    canvas.create_polygon(
-        x+11, y+8,
-        x+16, y+12,
-        x+11, y+16,
-        fill="black"
+
+    canvas.create_line(
+        x+13,y+4, x+21,y+4,
+        width=1.3, capstyle=tk.ROUND
+    )
+
+    canvas.create_line(
+        x+16,y+1, x+21,y+4, x+16,y+7,
+        width=1.3, capstyle=tk.ROUND, joinstyle=tk.ROUND
     )

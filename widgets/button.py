@@ -167,22 +167,43 @@ class NavButton(tk.Frame):
 
     @staticmethod
     def _wrap_label(name, size=48):
-        # 「1/4」のような分数表記が行の途中で切れて "1/" のように
-        # みっともなくならないよう、まず分数をひとかたまりのトークンとして
-        # 抜き出し、それ以外は1文字ずつのトークンにする。
-        tokens = re.findall(r"\d+/\d+|.", name)
+        # 「1/4」のような分数表記や、半角ｶﾀｶﾅの濁点/半濁点(前の文字と
+        # 離れて改行されると読めなくなる)が行の途中で切れないよう、
+        # それぞれひとかたまりのトークンとして抜き出し、それ以外は
+        # 1文字ずつのトークンにする。
+        tokens = re.findall(r"\d+/\d+|[ｦ-ﾝ][ﾞﾟ]?|.", name)
         n = len(tokens)
         scale = size / 48.0
 
         def _f(base):
             return max(6, int(round(base * scale)))
 
-        if n <= 2:
+        if n <= 1:
             return name, _f(18)
+
+        # 👑 半角ｶﾀｶﾅ等、文字幅が細いものは3文字以上でも1行に収まる
+        # ことがある。「2トークンごとに固定改行」という決め打ちをやめ、
+        # 実際のフォントでの描画幅を測って1行に入るかどうかを判定する
+        # （ユーザー要望：「ハッチ」「コピー」を半角にした時に改行なしで
+        # 表示できないか、から着手）。
+        try:
+            import tkinter.font as tkfont
+            f_one_line = tkfont.Font(family="Meiryo UI", size=_f(18), weight="bold")
+            max_width = size - 8
+            if f_one_line.measure(name) <= max_width:
+                return name, _f(18)
+        except Exception:
+            if n <= 2:
+                return name, _f(18)
 
         rows = ["".join(tokens[i:i + 2]) for i in range(0, n, 2)]
         num_rows = len(rows)
-        if num_rows == 2:
+        if num_rows == 1:
+            # 👑 n<=2のトークンが1行測定で収まらなかったケース（幅の広い
+            # 全角2文字等）。ここに来てもrows自体は1行のままなので、
+            # 最小フォント(9)へ落とさず、1行用の大きめサイズを使う。
+            base = 18
+        elif num_rows == 2:
             base = 14
         elif num_rows == 3:
             base = 11

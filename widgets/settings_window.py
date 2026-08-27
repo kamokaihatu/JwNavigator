@@ -835,7 +835,12 @@ class SidePanel(ttk.Frame):
 
         last_index = insert_at
         for row in rows:
-            new_btn = palette_config.new_button(row["command_id"], row["toolbar_name"])
+            default_color = (
+                palette_config.SUB_COMMAND_DEFAULT_COLOR
+                if row.get("command_kind") == "サブ"
+                else palette_config.DEFAULT_COLOR
+            )
+            new_btn = palette_config.new_button(row["command_id"], row["toolbar_name"], color=default_color)
             groups[gi]["buttons"].insert(insert_at, new_btn)
             insert_at += 1
             last_index = insert_at - 1
@@ -893,7 +898,7 @@ class SidePanel(ttk.Frame):
 
 
 class SettingsWindow(tk.Toplevel):
-    def __init__(self, master, manager_ref=None):
+    def __init__(self, master, manager_ref=None, initial_side="左"):
         super().__init__(master)
         self.manager_ref = manager_ref
         self.title("⚙️ JwNavigator パレット設定")
@@ -905,13 +910,13 @@ class SettingsWindow(tk.Toplevel):
         self.config_data = palette_config.clone_config(palette_config.load_config())
         self.panels = {}
 
-        notebook = ttk.Notebook(self)
-        notebook.pack(side="top", fill="both", expand=True, padx=8, pady=(8, 0))
+        self.notebook = ttk.Notebook(self)
+        self.notebook.pack(side="top", fill="both", expand=True, padx=8, pady=(8, 0))
 
         for side in palette_config.SIDES:
             side_cfg = palette_config.side_config(self.config_data, side)
-            panel = SidePanel(notebook, side, side_cfg)
-            notebook.add(panel, text=f"{side}パレット")
+            panel = SidePanel(self.notebook, side, side_cfg)
+            self.notebook.add(panel, text=f"{side}パレット")
             self.panels[side] = panel
 
         footer = ttk.Frame(self)
@@ -920,6 +925,15 @@ class SettingsWindow(tk.Toplevel):
         ttk.Button(footer, text="キャンセル", command=self._on_cancel, width=14).pack(side="right", padx=(0, 8), ipady=4)
 
         self.protocol("WM_DELETE_WINDOW", self._on_cancel)
+        self.select_tab(initial_side)
+
+    def select_tab(self, side):
+        # 👑 右パレットの右クリックから開いた時は右パレットのタブから
+        # 始まってほしい、というユーザー要望に対応（既存ウィンドウを
+        # 再利用する場合も同様に切り替える）。
+        panel = self.panels.get(side)
+        if panel is not None:
+            self.notebook.select(panel)
 
     def _on_cancel(self):
         self.destroy()

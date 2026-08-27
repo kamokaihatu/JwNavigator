@@ -3,7 +3,7 @@
   "sides": {
     "左": {
       "orientation": "portrait",
-      "button_size": 48,
+      "button_size": 40,
       "groups": [
         {
           "buttons": [
@@ -11,101 +11,101 @@
               "command_id": "C001",
               "name": "線",
               "icon": "line",
-              "color": "#c2f0c2"
+              "color": "#f0f0f0"
             },
             {
               "command_id": "C002",
               "name": "矩形",
               "icon": "rect",
-              "color": "#c2f0c2"
+              "color": "#f0f0f0"
             },
             {
               "command_id": "C003",
               "name": "円弧",
               "icon": "circle",
-              "color": "#c2f0c2"
+              "color": "#f0f0f0"
             },
             {
               "command_id": "C004",
               "name": "文字",
               "icon": "text",
-              "color": "#c2f0c2"
+              "color": "#f0f0f0"
             },
             {
               "command_id": "C005",
               "name": "寸法",
               "icon": "dimension",
-              "color": "#c2f0c2"
+              "color": "#f0f0f0"
             },
             {
               "command_id": "C020",
               "name": "範囲",
               "icon": "range",
-              "color": "#c2f0c2"
+              "color": "#f0f0f0"
             },
             {
               "command_id": "C026",
               "name": "複写",
               "icon": "copy",
-              "color": "#c2f0c2"
+              "color": "#f0f0f0"
             },
             {
               "command_id": "C027",
               "name": "移動",
               "icon": "move",
-              "color": "#c2f0c2"
+              "color": "#f0f0f0"
             },
             {
               "command_id": "C025",
               "name": "消去",
               "icon": "delete",
-              "color": "#c2f0c2"
+              "color": "#f0f0f0"
             },
             {
               "command_id": "C028",
               "name": "戻る",
               "icon": "undo",
-              "color": "#c2f0c2"
+              "color": "#cfe0f5"
             },
             {
               "command_id": "C029",
               "name": "進む",
               "icon": "redo",
-              "color": "#c2f0c2"
+              "color": "#cfe0f5"
             },
             {
               "command_id": "C023",
               "name": "伸縮",
               "icon": "stretch",
-              "color": "#c2f0c2"
+              "color": "#f0f0f0"
             },
             {
               "command_id": "C024",
               "name": "面取",
               "icon": "chamfer",
-              "color": "#c2f0c2"
+              "color": "#f0f0f0"
             },
             {
               "command_id": "C022",
               "name": "コーナー",
               "icon": "corner",
-              "color": "#c2f0c2"
+              "color": "#f0f0f0"
             },
             {
               "command_id": "C034",
-              "name": "Blk化",
+              "name": "Bk化",
               "icon": "bl_make",
               "color": "#f0f0f0"
             },
             {
               "command_id": "C035",
-              "name": "Blk解",
+              "name": "Bk解",
               "icon": "bl_break",
               "color": "#f0f0f0"
             },
             {
               "command_id": "C037",
-              "name": "Blk編",
+              "name": "Bk編",
               "icon": "bl_edit",
               "color": "#f0f0f0"
             }
@@ -115,7 +115,7 @@
     },
     "右": {
       "orientation": "portrait",
-      "button_size": 48,
+      "button_size": 40,
       "groups": [
         {
           "buttons": [
@@ -140,37 +140,37 @@
             {
               "command_id": "C011",
               "name": "接線",
-              "icon": "tangent",
+              "icon": "",
               "color": "#f0f0f0"
             },
             {
               "command_id": "C012",
               "name": "接円",
-              "icon": "tangent_circle",
+              "icon": "",
               "color": "#f0f0f0"
             },
             {
               "command_id": "C013",
-              "name": "ハッチ",
-              "icon": "",
+              "name": "ﾊｯﾁ",
+              "icon": "hatch",
               "color": "#f0f0f0"
             },
             {
               "command_id": "C017",
               "name": "多角形",
-              "icon": "",
+              "icon": "polygon",
               "color": "#f0f0f0"
             },
             {
               "command_id": "C018",
               "name": "ソリッド",
-              "icon": "",
+              "icon": "solid",
               "color": "#f0f0f0"
             },
             {
               "command_id": "C019",
               "name": "曲線",
-              "icon": "",
+              "icon": "curve",
               "color": "#f0f0f0"
             },
             {
@@ -182,13 +182,13 @@
             {
               "command_id": "C031",
               "name": "分割",
-              "icon": "",
+              "icon": "divide_line",
               "color": "#f0f0f0"
             },
             {
               "command_id": "C032",
               "name": "整理",
-              "icon": "",
+              "icon": "cleanup",
               "color": "#f0f0f0"
             }
           ]
@@ -198,62 +198,62 @@
             {
               "command_id": "C041",
               "name": "上書",
-              "icon": "",
+              "icon": "file_overwrite",
               "color": "#f0f0f0"
             },
             {
               "command_id": "C043",
               "name": "印刷",
-              "icon": "",
+              "icon": "print_out",
               "color": "#f0f0f0"
             },
             {
               "command_id": "C042",
               "name": "保存",
-              "icon": "",
+              "icon": "file_save",
               "color": "#f0f0f0"
             },
             {
               "command_id": "C045",
               "name": "コピー",
-              "icon": "",
+              "icon": "clip_copy",
               "color": "#f0f0f0"
             },
             {
               "command_id": "C046",
               "name": "貼付",
-              "icon": "",
+              "icon": "paste",
               "color": "#f0f0f0"
             },
             {
               "command_id": "C075",
               "name": "中心点",
-              "icon": "",
-              "color": "#f0f0f0"
+              "icon": "center_point",
+              "color": "#cfe0f5"
             },
             {
               "command_id": "C077",
-              "name": "円周1/4点",
-              "icon": "",
-              "color": "#f0f0f0"
+              "name": "円周1/4",
+              "icon": "quarter_circle_point",
+              "color": "#cfe0f5"
             },
             {
               "command_id": "C062",
               "name": "測定",
-              "icon": "",
+              "icon": "measure",
               "color": "#f0f0f0"
             },
             {
               "command_id": "C048",
               "name": "属性取得",
-              "icon": "",
-              "color": "#f0f0f0"
+              "icon": "get_attribute",
+              "color": "#cfe0f5"
             },
             {
               "command_id": "C054",
               "name": "2点長",
               "icon": "",
-              "color": "#f0f0f0"
+              "color": "#cfe0f5"
             }
           ]
         }

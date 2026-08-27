@@ -1,8 +1,8 @@
 """
 JwNavigator Icon Library
 
-Icon : Rectangle
-Size : 24×24
+Icon : 矩形
+Size : 24x24
 """
 
 import tkinter as tk
@@ -10,10 +10,6 @@ import tkinter as tk
 def draw(canvas, x=0, y=0):
 
     canvas.create_rectangle(
-        x+5,
-        y+5,
-        x+19,
-        y+19,
-        outline="black",
-        width=2
+        x+5, y+5, x+19, y+19,
+        outline="black", width=2
     )
