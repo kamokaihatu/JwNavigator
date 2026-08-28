@@ -10,6 +10,7 @@ from utils.send_key import force_foreground_window
 WM_COMMAND = 0x0111
 TB_GETSTATE = 0x0412
 TBSTATE_CHECKED = 0x01
+TBSTATE_PRESSED = 0x02
 TBSTATE_ENABLED = 0x04
 
 
@@ -115,6 +116,35 @@ def get_command_checked_states(hwnd: int, id_commands):
             if _is_not_found_state(raw):
                 continue
             state = bool(raw & TBSTATE_CHECKED)
+            break
+        result[id_command] = state
+    return result
+
+
+def get_command_pressed_states(hwnd: int, id_commands):
+    # 👑 【PRESSEDビット方式】戻る等、選択状態が残らない単発コマンドの
+    # 実クリック検出用。TBSTATE_PRESSEDはマウスボタンが実際にそのツールバー
+    # ボタン上で押し下げられている間だけ立つ（CHECKEDと違い離すと消える）。
+    # WM_COMMANDを外部からPostMessageで直接送った場合はこのビットは
+    # 立たないため、jw_cad自身のツールバーを物理的にクリックした場合のみ
+    # 検出できる（JwNavigatorのパレット経由やCtrl+Z等のショートカット
+    # 経由では検出できない）。
+    # 戻り値: {id_command: True(押下中)/False(見つかったが押下中でない)
+    # /None(どの表示中ツールバーにも見つからない)}。
+    result = {}
+    if not hwnd:
+        return {i: None for i in id_commands}
+    toolbars = _find_toolbar_windows(hwnd)
+    for id_command in id_commands:
+        state = None
+        for tb_hwnd in toolbars:
+            try:
+                raw = win32gui.SendMessage(tb_hwnd, TB_GETSTATE, id_command, 0)
+            except Exception:
+                continue
+            if _is_not_found_state(raw):
+                continue
+            state = bool(raw & TBSTATE_PRESSED)
             break
         result[id_command] = state
     return result
