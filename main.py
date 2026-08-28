@@ -49,6 +49,7 @@ from utils.state_collection import StateCollectionLogger
 from utils.win_event_watcher import WinEventWatcher
 from utils.palette_layout import compute_palette_geometry
 from utils import window_state
+from utils.tray_icon import TrayIcon
 
 WH_MOUSE_LL = 14
 WM_MOUSEMOVE = 0x0200
@@ -294,7 +295,10 @@ class JwNavigatorManager:
             exe_dir, "JwNavigator_StateCollection_Log.txt"
         )
         self.state_collection_logger = StateCollectionLogger(state_collection_log_path)
-        self.state_collection_logger.enable()
+        # 👑 開発中はパターン収集のため常時有効にしていたが、配布後は
+        # コマンド送信のたびにディスクへ書き込むだけの負荷になるため、
+        # 既定で無効にした。トレイメニューの「詳細ログを有効にする」で
+        # 必要な時だけONにする運用に変更（配布向け運用設計）。
         self._last_state_collection_state = None
         self._last_state_collection_rule = None
         self._shutdown_requested = False
@@ -303,17 +307,39 @@ class JwNavigatorManager:
         self._auto_create_palettes = True
         self.window_state = window_state.load_state()
         self._pending_pin_restore = {}
+        self.tray_icon = None
         self.root.withdraw()
         self.write_system_log("--- JwNavigator Ver2.0 メインシステム始動 ---")
-        self.write_system_log("🧪 状態収集モードを有効化しました。")
+
+    LOG_MAX_BYTES = 5 * 1024 * 1024  # 5MB
 
     def write_system_log(self, text):
         now_str = datetime.datetime.now().strftime("%H:%M:%S.%f")[:-3]
         try:
+            self._rotate_log_if_needed(self.log_file_path)
             with open(self.log_file_path, "a", encoding="utf-8") as f:
                 f.write(f"[{now_str}] {text}\n")
         except Exception as e:
             print(f"Log Write Error: {e}")
+
+    def _rotate_log_if_needed(self, path):
+        # 👑 配布後は開発時と違って無制限に増え続けても誰も気づかないため、
+        # 一定サイズを超えたら古い前半を切り捨てる簡易ローテーション。
+        # 不具合報告時にログをコピペしてもらう運用は残したいので、
+        # 完全に消さず直近分は必ず残す。
+        try:
+            if os.path.getsize(path) <= self.LOG_MAX_BYTES:
+                return
+        except OSError:
+            return
+        try:
+            with open(path, "r", encoding="utf-8", errors="ignore") as f:
+                lines = f.readlines()
+            keep = lines[len(lines) // 2:]
+            with open(path, "w", encoding="utf-8") as f:
+                f.writelines(keep)
+        except Exception:
+            pass
 
     JW_CAD_EXE_NAME = "jw_win.exe"
     # 👑 送信直後の一瞬のIdle応答を吸収するためだけのロック。これより長く
@@ -682,8 +708,12 @@ class JwNavigatorManager:
                         )
                         menu.add_separator()
                         menu.add_command(
-                            label="⚙️ このパレットだけを閉じる",
-                            command=lambda h=target_hwnd: self.close_single_palette(h),
+                            label=f"⚙️ この{side_key}パレットだけを閉じる",
+                            command=lambda h=target_hwnd, sk=side_key: self.close_one_side(h, sk),
+                        )
+                        menu.add_command(
+                            label="👁️ 隠したパレットを再表示",
+                            command=lambda h=target_hwnd: self.show_hidden_palettes(h),
                         )
                         menu.add_command(
                             label="❌ JwNaviシステムを終了する",
@@ -713,6 +743,7 @@ class JwNavigatorManager:
                             tb.is_pinned = True
                             tb.pin_btn.configure(text="自由", bg="#e1e1e1", relief="raised")
                             tb.wm_geometry(f"+{x}+{y}")
+                            tb.update_idletasks()
                             tb._last_geom = None
                         else:
                             self._restore_pinned_position(tb, side_key)
@@ -864,7 +895,7 @@ class JwNavigatorManager:
     def _execute_pipeline_tick(self, hwnd, t_loop_start, click_confirmed=False):
         tl = self.active_launchers[hwnd]["左"]
         tr = self.active_launchers[hwnd]["右"]
-        if hasattr(tl, "user_hidden") and tl.user_hidden:
+        if tl.user_hidden and tr.user_hidden:
             return
 
         if win32gui.IsIconic(hwnd):
@@ -874,9 +905,13 @@ class JwNavigatorManager:
                 tr.withdraw()
             return
         else:
-            if not tl.winfo_viewable() and len(tl.buttons) > 0:
+            # 👑 「このパレットだけを閉じる」で片側だけuser_hidden=Trueに
+            # なっている場合は、そちら側だけ再表示しないようにする
+            # （以前は左右どちらか片方が実質「hwnd全体を隠すフラグ」を
+            # 兼ねていて、閉じたつもりが両方消えるバグになっていた）。
+            if not tl.winfo_viewable() and len(tl.buttons) > 0 and not tl.user_hidden:
                 tl.deiconify()
-            if not tr.winfo_viewable() and len(tr.buttons) > 0:
+            if not tr.winfo_viewable() and len(tr.buttons) > 0 and not tr.user_hidden:
                 tr.deiconify()
 
         self._update_button_enabled_states(hwnd, tl, tr)
@@ -1021,24 +1056,45 @@ class JwNavigatorManager:
             tb.is_pinned = True
             tb.pin_btn.configure(text="自由", bg="#e1e1e1", relief="raised")
             tb.wm_geometry(f"+{pos['x']}+{pos['y']}")
+            # 👑 wm_geometry()だけだと、イベントループが回るまで実際の移動が
+            # 反映されないことがある（sync_toolbar_positionの通常同期でも
+            # 同じ理由でupdate_idletasks()している）。ここで呼び忘れていた
+            # ため、保存位置を正しく計算していても画面(0,0)に見えたまま
+            # だった（実測で確認、2026-08-27）。
+            tb.update_idletasks()
             tb._last_geom = None
         except Exception as e:
             self.write_system_log(f"⚠️ {side_key}パレット位置復元エラー: {str(e)}")
 
-    def close_single_palette(self, hwnd):
-        if hwnd in self.active_launchers:
-            tl = self.active_launchers[hwnd]["左"]
-            tr = self.active_launchers[hwnd]["右"]
-            tl.user_hidden = True
-            if tl:
-                tl.destroy()
-            if tr:
-                tr.destroy()
+    def close_one_side(self, hwnd, side_key):
+        # 👑 以前はここでtl/tr両方をdestroy()していて、「このパレットだけを
+        # 閉じる」つもりが両方閉じてしまうバグだった（ユーザー指摘）。
+        # destroy()すると二度と復元できないため、withdraw()（非表示化）+
+        # user_hidden=Trueに変更し、show_hidden_palettes()でいつでも
+        # 再表示できるようにする。
+        if hwnd not in self.active_launchers:
+            return
+        tb = self.active_launchers[hwnd][side_key]
+        tb.user_hidden = True
+        tb.withdraw()
+
+    def show_hidden_palettes(self, hwnd):
+        if hwnd not in self.active_launchers:
+            return
+        for side_key in ("左", "右"):
+            tb = self.active_launchers[hwnd][side_key]
+            if tb.user_hidden:
+                tb.user_hidden = False
+                if len(tb.buttons) > 0:
+                    tb.deiconify()
 
     def shutdown_manager(self):
         if self._shutdown_requested:
             return
         self._shutdown_requested = True
+        if self.tray_icon:
+            self.tray_icon.destroy()
+            self.tray_icon = None
         if self.mouse_hook_controller:
             self.mouse_hook_controller.stop()
         if self.keyboard_hook_controller:
@@ -1095,7 +1151,33 @@ class JwNavigatorManager:
         self.root.after(500, self._fast_sync_loop)
         self.root.after(30, self._drain_hook_queue)
         self.root.after(30, self._drain_win_event_queue)
+        self._create_tray_icon()
         self.root.mainloop()
+
+    def _create_tray_icon(self):
+        try:
+            self.tray_icon = TrayIcon(
+                tooltip="JwNavigator",
+                menu_items_provider=self._tray_menu_items,
+                on_default_click=self.open_settings_window,
+            )
+        except Exception as e:
+            self.write_system_log(f"⚠️ タスクトレイアイコン作成に失敗しました: {str(e)}")
+
+    def _tray_menu_items(self):
+        # 👑 状態収集ログ(詳細ログ)のトグルはここに置かず、別途独立した
+        # ログ収集システムとして作る方針にしたため外してある
+        # （ユーザー方針：「ログをとってほしい時だけ起動する」別ツール）。
+        return [
+            ("⚙️ パレットを編集", self.open_settings_window, None),
+            ("👁️ 隠したパレットを再表示", self._show_all_hidden_palettes, None),
+            ("", None, None),
+            ("❌ JwNaviシステムを終了する", self.shutdown_manager, None),
+        ]
+
+    def _show_all_hidden_palettes(self):
+        for hwnd in list(self.active_launchers.keys()):
+            self.show_hidden_palettes(hwnd)
 
     def _drain_win_event_queue(self):
         # 👑 SetWinEventHookのコールバック（別スレッド）が積んだイベントを、
