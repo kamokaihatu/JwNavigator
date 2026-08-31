@@ -1,7 +1,8 @@
 # -*- mode: python ; coding: utf-8 -*-
 # 👑 usage_logger.pyはJwNavigator本体とは無関係に単体配布する想定
 # （Pythonを持たない同僚に「これだけ実行しておいて」と渡す用途）。
-# 進捗表示・Ctrl+Cでの終了操作が要るのでconsole=Trueにする。
+# 小さなtkinterウィンドウ＋「終了して保存」ボタンで完結するため、
+# 黒いコンソール窓は不要（console=False）。
 
 a = Analysis(
     ['tools/usage_logger.py'],
@@ -38,7 +39,7 @@ exe = EXE(
     bootloader_ignore_signals=False,
     strip=False,
     upx=True,
-    console=True,
+    console=False,
     disable_windowed_traceback=False,
     argv_emulation=False,
     target_arch=None,

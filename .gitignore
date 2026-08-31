@@ -47,6 +47,9 @@ data/_collector_control.txt
 config/window_state.json
 tools/JwNavigator_UsageLog.txt
 tools/JwNavigator_UsageLog_進行中.txt
+JwNavigator_UsageLog.txt
+JwNavigator_UsageLog_進行中.txt
+JwNavigator_UsageAnalysis.txt
 
 # Unit test / coverage reports
 htmlcov/
