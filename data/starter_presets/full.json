@@ -8,120 +8,6 @@
         {
           "buttons": [
             {
-              "command_id": "C057",
-              "name": "図形",
-              "icon": "shape",
-              "color": "#f0f0f0"
-            },
-            {
-              "command_id": "C059",
-              "name": "線記変形",
-              "icon": "",
-              "color": "#f0f0f0"
-            },
-            {
-              "command_id": "C060",
-              "name": "座標",
-              "icon": "",
-              "color": "#f0f0f0"
-            },
-            {
-              "command_id": "C061",
-              "name": "外変",
-              "icon": "",
-              "color": "#f0f0f0"
-            },
-            {
-              "command_id": "C062",
-              "name": "測定",
-              "icon": "measure",
-              "color": "#f0f0f0"
-            },
-            {
-              "command_id": "C063",
-              "name": "表計算",
-              "icon": "spreadsheet",
-              "color": "#f0f0f0"
-            },
-            {
-              "command_id": "C064",
-              "name": "距離点",
-              "icon": "",
-              "color": "#f0f0f0"
-            },
-            {
-              "command_id": "C065",
-              "name": "式計算",
-              "icon": "",
-              "color": "#f0f0f0"
-            },
-            {
-              "command_id": "C066",
-              "name": "パラメ",
-              "icon": "",
-              "color": "#f0f0f0"
-            },
-            {
-              "command_id": "C067",
-              "name": "寸法図化",
-              "icon": "",
-              "color": "#f0f0f0"
-            },
-            {
-              "command_id": "C068",
-              "name": "寸法図解",
-              "icon": "",
-              "color": "#f0f0f0"
-            },
-            {
-              "command_id": "C070",
-              "name": "2.5D",
-              "icon": "",
-              "color": "#f0f0f0"
-            },
-            {
-              "command_id": "C071",
-              "name": "日影図",
-              "icon": "shadow_diagram",
-              "color": "#f0f0f0"
-            },
-            {
-              "command_id": "C072",
-              "name": "天空図",
-              "icon": "sky_diagram",
-              "color": "#f0f0f0"
-            },
-            {
-              "command_id": "C039",
-              "name": "新規",
-              "icon": "file_new",
-              "color": "#f0f0f0"
-            },
-            {
-              "command_id": "C040",
-              "name": "開く",
-              "icon": "file_open",
-              "color": "#f0f0f0"
-            },
-            {
-              "command_id": "C041",
-              "name": "上書",
-              "icon": "file_overwrite",
-              "color": "#f0f0f0"
-            },
-            {
-              "command_id": "C042",
-              "name": "保存",
-              "icon": "file_save",
-              "color": "#f0f0f0"
-            },
-            {
-              "command_id": "C043",
-              "name": "印刷",
-              "icon": "print_out",
-              "color": "#f0f0f0"
-            },
-            {
               "command_id": "C001",
               "name": "線",
               "icon": "line",
@@ -186,11 +72,7 @@
               "name": "接線",
               "icon": "",
               "color": "#f0f0f0"
-            }
-          ]
-        },
-        {
-          "buttons": [
+            },
             {
               "command_id": "C012",
               "name": "接円",
@@ -232,17 +114,7 @@
               "name": "ソリッド",
               "icon": "solid",
               "color": "#f0f0f0"
-            }
-          ]
-        }
-      ]
-    },
-    "右": {
-      "orientation": "portrait",
-      "button_size": 48,
-      "groups": [
-        {
-          "buttons": [
+            },
             {
               "command_id": "C019",
               "name": "曲線",
@@ -314,7 +186,11 @@
               "name": "包絡",
               "icon": "",
               "color": "#f0f0f0"
-            },
+            }
+          ]
+        },
+        {
+          "buttons": [
             {
               "command_id": "C031",
               "name": "分割",
@@ -356,11 +232,51 @@
               "name": "Bk編",
               "icon": "bl_edit",
               "color": "#f0f0f0"
-            },
+            }
+          ]
+        }
+      ]
+    },
+    "右": {
+      "orientation": "portrait",
+      "button_size": 48,
+      "groups": [
+        {
+          "buttons": [
             {
               "command_id": "C038",
               "name": "Bk終",
               "icon": "",
+              "color": "#f0f0f0"
+            },
+            {
+              "command_id": "C039",
+              "name": "新規",
+              "icon": "file_new",
+              "color": "#f0f0f0"
+            },
+            {
+              "command_id": "C040",
+              "name": "開く",
+              "icon": "file_open",
+              "color": "#f0f0f0"
+            },
+            {
+              "command_id": "C041",
+              "name": "上書",
+              "icon": "file_overwrite",
+              "color": "#f0f0f0"
+            },
+            {
+              "command_id": "C042",
+              "name": "保存",
+              "icon": "file_save",
+              "color": "#f0f0f0"
+            },
+            {
+              "command_id": "C043",
+              "name": "印刷",
+              "icon": "print_out",
               "color": "#f0f0f0"
             },
             {
@@ -379,12 +295,6 @@
               "command_id": "C046",
               "name": "貼付",
               "icon": "paste",
-              "color": "#f0f0f0"
-            },
-            {
-              "command_id": "C074",
-              "name": "画像編集",
-              "icon": "image_edit",
               "color": "#f0f0f0"
             },
             {
@@ -422,11 +332,7 @@
               "name": "2点角",
               "icon": "",
               "color": "#cfe0f5"
-            }
-          ]
-        },
-        {
-          "buttons": [
+            },
             {
               "command_id": "C053",
               "name": "線長",
@@ -450,6 +356,100 @@
               "name": "基本設定",
               "icon": "basic_settings",
               "color": "#cfe0f5"
+            },
+            {
+              "command_id": "C057",
+              "name": "図形",
+              "icon": "shape",
+              "color": "#f0f0f0"
+            },
+            {
+              "command_id": "C059",
+              "name": "線記変形",
+              "icon": "",
+              "color": "#f0f0f0"
+            },
+            {
+              "command_id": "C060",
+              "name": "座標",
+              "icon": "",
+              "color": "#f0f0f0"
+            },
+            {
+              "command_id": "C061",
+              "name": "外変",
+              "icon": "",
+              "color": "#f0f0f0"
+            },
+            {
+              "command_id": "C062",
+              "name": "測定",
+              "icon": "measure",
+              "color": "#f0f0f0"
+            },
+            {
+              "command_id": "C063",
+              "name": "表計算",
+              "icon": "spreadsheet",
+              "color": "#f0f0f0"
+            },
+            {
+              "command_id": "C064",
+              "name": "距離点",
+              "icon": "",
+              "color": "#f0f0f0"
+            },
+            {
+              "command_id": "C065",
+              "name": "式計算",
+              "icon": "",
+              "color": "#f0f0f0"
+            },
+            {
+              "command_id": "C066",
+              "name": "パラメ",
+              "icon": "",
+              "color": "#f0f0f0"
+            },
+            {
+              "command_id": "C067",
+              "name": "寸法図化",
+              "icon": "",
+              "color": "#f0f0f0"
+            },
+            {
+              "command_id": "C068",
+              "name": "寸法図解",
+              "icon": "",
+              "color": "#f0f0f0"
+            }
+          ]
+        },
+        {
+          "buttons": [
+            {
+              "command_id": "C070",
+              "name": "2.5D",
+              "icon": "",
+              "color": "#f0f0f0"
+            },
+            {
+              "command_id": "C071",
+              "name": "日影図",
+              "icon": "shadow_diagram",
+              "color": "#f0f0f0"
+            },
+            {
+              "command_id": "C072",
+              "name": "天空図",
+              "icon": "sky_diagram",
+              "color": "#f0f0f0"
+            },
+            {
+              "command_id": "C074",
+              "name": "画像編集",
+              "icon": "image_edit",
+              "color": "#f0f0f0"
             },
             {
               "command_id": "C075",
