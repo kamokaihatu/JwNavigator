@@ -36,6 +36,17 @@ class Tooltip:
         )
         label.pack(ipadx=1)
 
+        # 👑 右パレットが画面右端にドッキングしている時、offset_x分右へ
+        # ずらす位置のままだとツールチップが画面外にはみ出す。実際の描画
+        # 幅が確定してから（update_idletasks後）画面幅と比較し、はみ出す
+        # 場合はボタンの左側に表示するよう反転する。
+        tw.update_idletasks()
+        tip_width = tw.winfo_width()
+        screen_width = tw.winfo_screenwidth()
+        if x + tip_width > screen_width:
+            x = max(0, self.widget.winfo_rootx() - tip_width - 4)
+            tw.geometry(f"+{x}+{y}")
+
     def hide_tip(self, event=None):
         tw = self.tip_window
         self.tip_window = None
