@@ -167,7 +167,11 @@
               "icon": "",
               "color": "#f0f0f0",
               "kind": "single"
-            },
+            }
+          ]
+        },
+        {
+          "buttons": [
             {
               "command_id": "C001",
               "name": "線",
@@ -216,11 +220,7 @@
               "icon": "center",
               "color": "#f0f0f0",
               "kind": "single"
-            }
-          ]
-        },
-        {
-          "buttons": [
+            },
             {
               "command_id": "C008",
               "name": "連続線",
@@ -412,7 +412,11 @@
               "icon": "",
               "color": "#f0f0f0",
               "kind": "single"
-            },
+            }
+          ]
+        },
+        {
+          "buttons": [
             {
               "command_id": "C048",
               "name": "属性取得",
