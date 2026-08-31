@@ -405,6 +405,18 @@ class JwNavigatorManager:
                     return True
                 if win32gui.GetParent(hwnd) != 0:
                     return True
+                # 👑 jw_cadのタイトルバーを右クリックすると出るWindowsシステム
+                # メニュー（閉じる/最大化等）は、class="#32768"・title=""・
+                # GetParent()==0・所属exeがjw_win.exeという、既存条件を
+                # すり抜けてしまう一時ウィンドウとして一瞬だけ出現することを
+                # SetWinEventHook(EVENT_SYSTEM_MENUPOPUPSTART)で実測確認
+                # （2026-08-31、ユーザー報告）。その間だけ丸ごと新しい図面と
+                # 誤認識してパレット一式を作っては、メニューが閉じると同時に
+                # 消える、という不具合になっていた。実際の図面ウィンドウは
+                # 必ず「ファイル名 - jw_win」のタイトルを持つので、空タイトル
+                # で弾けば区別できる。
+                if not win32gui.GetWindowText(hwnd):
+                    return True
                 exe_name = self._get_exe_name_for_hwnd(hwnd)
                 if exe_name == self.JW_CAD_EXE_NAME:
                     jw_hwnds.append(hwnd)
