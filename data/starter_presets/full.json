@@ -64,6 +64,13 @@
               "kind": "single"
             },
             {
+              "command_id": "C018",
+              "name": "ソリッド",
+              "icon": "solid",
+              "color": "#f0f0f0",
+              "kind": "single"
+            },
+            {
               "command_id": "C019",
               "name": "曲線",
               "icon": "curve",
@@ -209,18 +216,18 @@
               "icon": "center",
               "color": "#f0f0f0",
               "kind": "single"
-            },
+            }
+          ]
+        },
+        {
+          "buttons": [
             {
               "command_id": "C008",
               "name": "連続線",
               "icon": "polyline",
               "color": "#f0f0f0",
               "kind": "single"
-            }
-          ]
-        },
-        {
-          "buttons": [
+            },
             {
               "command_id": "C009",
               "name": "AUTO",
@@ -288,6 +295,13 @@
               "command_id": "C028",
               "name": "戻る",
               "icon": "undo",
+              "color": "#cfe0f5",
+              "kind": "single"
+            },
+            {
+              "command_id": "C029",
+              "name": "進む",
+              "icon": "redo",
               "color": "#cfe0f5",
               "kind": "single"
             },
@@ -442,6 +456,27 @@
               "kind": "single"
             },
             {
+              "command_id": "C075",
+              "name": "中心点",
+              "icon": "center_point",
+              "color": "#cfe0f5",
+              "kind": "single"
+            },
+            {
+              "command_id": "C076",
+              "name": "線上点",
+              "icon": "",
+              "color": "#cfe0f5",
+              "kind": "single"
+            },
+            {
+              "command_id": "C077",
+              "name": "円周1/4",
+              "icon": "quarter_circle_point",
+              "color": "#cfe0f5",
+              "kind": "single"
+            },
+            {
               "command_id": "C056",
               "name": "基本設定",
               "icon": "basic_settings",
@@ -498,49 +533,10 @@
               "kind": "single"
             },
             {
-              "command_id": "C018",
-              "name": "ソリッド",
-              "icon": "solid",
-              "color": "#f0f0f0",
-              "kind": "single"
-            },
-            {
-              "command_id": "C029",
-              "name": "進む",
-              "icon": "redo",
-              "color": "#cfe0f5",
-              "kind": "single"
-            },
-            {
               "command_id": "C074",
               "name": "画像編集",
               "icon": "image_edit",
               "color": "#f0f0f0",
-              "kind": "single"
-            },
-            {
-              "command_id": "C075",
-              "name": "中心点",
-              "icon": "center_point",
-              "color": "#cfe0f5",
-              "kind": "single"
-            },
-            {
-              "command_id": "C076",
-              "name": "線上点",
-              "icon": "",
-              "color": "#cfe0f5",
-              "kind": "single"
-            }
-          ]
-        },
-        {
-          "buttons": [
-            {
-              "command_id": "C077",
-              "name": "円周1/4",
-              "icon": "quarter_circle_point",
-              "color": "#cfe0f5",
               "kind": "single"
             }
           ]
