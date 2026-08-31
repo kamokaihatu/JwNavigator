@@ -3,7 +3,8 @@
 # しているだけで静的importが無いため、PyInstallerの依存解析では自動検出
 # されない。collect_submodules("icons")で明示的にexe内へ同梱する。
 # （utils/palette_config.pyのlist_icon_modules()側はsys.frozen判定で
-# pkgutil.iter_modules(icons.__path__)を使う分岐を用意済み）
+# sys._MEIPASS配下のicons/*.pyをglobする分岐を用意済み。当初pkgutilで
+# 試したが凍結パッケージの__path__は仮想パスで機能しなかったため撤回した）
 from PyInstaller.utils.hooks import collect_submodules
 
 a = Analysis(
@@ -17,7 +18,7 @@ a = Analysis(
     # iter_modules()が常に空を返すことを確認、2026-08-31）。同じ内容を
     # datasとしても実体コピーし、sys._MEIPASS配下から通常のglobで
     # 一覧取得できるようにする。
-    datas=[('icons', 'icons')],
+    datas=[('icons', 'icons'), ('data/app_icon.ico', 'data')],
     hiddenimports=collect_submodules('icons'),
     hookspath=[],
     hooksconfig={},
@@ -44,6 +45,7 @@ exe = EXE(
     target_arch=None,
     codesign_identity=None,
     entitlements_file=None,
+    icon=['data/app_icon.ico'],
 )
 coll = COLLECT(
     exe,

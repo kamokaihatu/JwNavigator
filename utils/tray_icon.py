@@ -9,12 +9,25 @@ Tcl/Tkのメインループが既にこのスレッドのメッセージポン�
 おり、そこにこの隠しウィンドウ宛てのメッセージも自然に配送される
 （追加のポーリングやPumpMessages呼び出しは不要）。
 """
+import os
+import sys
+
 import win32gui
 import win32con
 import win32api
 
 WM_TRAYICON = win32con.WM_USER + 20
 _CLASS_NAME = "JwNavigatorTrayIconWindow"
+
+
+def _icon_ico_path():
+    # 👑 exe化時はJwNavigator.specのdatasでdata/app_icon.icoをバンドル
+    # しているのでsys._MEIPASS配下から読む。開発時（未凍結）はリポジトリ
+    # ルート直下のdata/を素直に参照する。
+    base = getattr(sys, "_MEIPASS", None)
+    if base:
+        return os.path.join(base, "data", "app_icon.ico")
+    return os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "data", "app_icon.ico")
 
 
 class TrayIcon:
@@ -43,7 +56,15 @@ class TrayIcon:
         )
 
     def _add_icon(self, tooltip):
-        self._hicon = win32gui.LoadIcon(0, win32con.IDI_APPLICATION)
+        try:
+            self._hicon = win32gui.LoadImage(
+                0, _icon_ico_path(), win32con.IMAGE_ICON, 0, 0,
+                win32con.LR_LOADFROMFILE | win32con.LR_DEFAULTSIZE,
+            )
+        except Exception:
+            self._hicon = None
+        if not self._hicon:
+            self._hicon = win32gui.LoadIcon(0, win32con.IDI_APPLICATION)
         flags = win32gui.NIF_ICON | win32gui.NIF_MESSAGE | win32gui.NIF_TIP
         nid = (self.hwnd, 0, flags, WM_TRAYICON, self._hicon, tooltip)
         win32gui.Shell_NotifyIcon(win32gui.NIM_ADD, nid)
