@@ -59,6 +59,7 @@ except Exception:
 
 from widgets.toolbar import Toolbar
 from widgets.settings_window import SettingsWindow
+from widgets.first_launch_dialog import run_first_launch_setup_if_needed
 from utils.send_key import send_key_to_hwnd
 from utils.send_command import send_command_to_hwnd, is_command_enabled, get_command_states, get_command_checked_states
 from utils import command_master
@@ -289,6 +290,11 @@ class JwNavigatorManager:
     def __init__(self):
         self.root = tk.Tk()
         self.root.withdraw()
+        # 👑 config/config.jsonがまだ無ければ初回起動とみなし、パレットの
+        # 初期構成（空/ミニマム/jw初期/開発者おすすめ/フル）を選ばせる。
+        # 以降のパレット構築・監視系のセットアップより前、ここで確実に
+        # 一度だけ行う（config.jsonが既にあれば即座に何もせず戻る）。
+        run_first_launch_setup_if_needed(self.root)
         self.active_launchers = {}
         self.settings_window = None
         self.last_jww_state = "STATE_IDLE"

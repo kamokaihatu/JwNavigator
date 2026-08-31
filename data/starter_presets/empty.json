@@ -1,0 +1,15 @@
+{
+  "version": 2,
+  "sides": {
+    "左": {
+      "orientation": "portrait",
+      "button_size": 48,
+      "groups": []
+    },
+    "右": {
+      "orientation": "portrait",
+      "button_size": 48,
+      "groups": []
+    }
+  }
+}

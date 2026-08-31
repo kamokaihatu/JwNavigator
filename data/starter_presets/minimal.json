@@ -1,0 +1,85 @@
+{
+  "version": 2,
+  "sides": {
+    "左": {
+      "orientation": "portrait",
+      "button_size": 48,
+      "groups": [
+        {
+          "buttons": [
+            {
+              "command_id": "C001",
+              "name": "線",
+              "icon": "line",
+              "color": "#f0f0f0"
+            },
+            {
+              "command_id": "C002",
+              "name": "矩形",
+              "icon": "rect",
+              "color": "#f0f0f0"
+            },
+            {
+              "command_id": "C003",
+              "name": "円弧",
+              "icon": "circle",
+              "color": "#f0f0f0"
+            },
+            {
+              "command_id": "C004",
+              "name": "文字",
+              "icon": "text",
+              "color": "#f0f0f0"
+            },
+            {
+              "command_id": "C005",
+              "name": "寸法",
+              "icon": "dimension",
+              "color": "#f0f0f0"
+            }
+          ]
+        }
+      ]
+    },
+    "右": {
+      "orientation": "portrait",
+      "button_size": 48,
+      "groups": [
+        {
+          "buttons": [
+            {
+              "command_id": "C020",
+              "name": "範囲",
+              "icon": "range",
+              "color": "#f0f0f0"
+            },
+            {
+              "command_id": "C026",
+              "name": "複写",
+              "icon": "copy",
+              "color": "#f0f0f0"
+            },
+            {
+              "command_id": "C027",
+              "name": "移動",
+              "icon": "move",
+              "color": "#f0f0f0"
+            },
+            {
+              "command_id": "C023",
+              "name": "伸縮",
+              "icon": "stretch",
+              "color": "#f0f0f0"
+            },
+            {
+              "command_id": "C025",
+              "name": "消去",
+              "icon": "delete",
+              "color": "#f0f0f0"
+            }
+          ]
+        }
+      ]
+    }
+  }
+}
