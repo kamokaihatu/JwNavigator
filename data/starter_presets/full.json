@@ -400,6 +400,20 @@
               "kind": "single"
             },
             {
+              "command_id": "C067",
+              "name": "寸法図化",
+              "icon": "",
+              "color": "#f0f0f0",
+              "kind": "single"
+            },
+            {
+              "command_id": "C068",
+              "name": "寸法図解",
+              "icon": "",
+              "color": "#f0f0f0",
+              "kind": "single"
+            },
+            {
               "command_id": "C048",
               "name": "属性取得",
               "icon": "get_attribute",
@@ -481,20 +495,6 @@
               "name": "基本設定",
               "icon": "basic_settings",
               "color": "#cfe0f5",
-              "kind": "single"
-            },
-            {
-              "command_id": "C067",
-              "name": "寸法図化",
-              "icon": "",
-              "color": "#f0f0f0",
-              "kind": "single"
-            },
-            {
-              "command_id": "C068",
-              "name": "寸法図解",
-              "icon": "",
-              "color": "#f0f0f0",
               "kind": "single"
             },
             {
