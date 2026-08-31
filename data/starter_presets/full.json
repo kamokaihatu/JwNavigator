@@ -412,6 +412,27 @@
               "icon": "",
               "color": "#f0f0f0",
               "kind": "single"
+            },
+            {
+              "command_id": "C075",
+              "name": "中心点",
+              "icon": "center_point",
+              "color": "#cfe0f5",
+              "kind": "single"
+            },
+            {
+              "command_id": "C076",
+              "name": "線上点",
+              "icon": "",
+              "color": "#cfe0f5",
+              "kind": "single"
+            },
+            {
+              "command_id": "C077",
+              "name": "円周1/4",
+              "icon": "quarter_circle_point",
+              "color": "#cfe0f5",
+              "kind": "single"
             }
           ]
         },
@@ -470,27 +491,6 @@
               "command_id": "C055",
               "name": "間隔",
               "icon": "",
-              "color": "#cfe0f5",
-              "kind": "single"
-            },
-            {
-              "command_id": "C075",
-              "name": "中心点",
-              "icon": "center_point",
-              "color": "#cfe0f5",
-              "kind": "single"
-            },
-            {
-              "command_id": "C076",
-              "name": "線上点",
-              "icon": "",
-              "color": "#cfe0f5",
-              "kind": "single"
-            },
-            {
-              "command_id": "C077",
-              "name": "円周1/4",
-              "icon": "quarter_circle_point",
               "color": "#cfe0f5",
               "kind": "single"
             },
