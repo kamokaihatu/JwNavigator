@@ -248,7 +248,7 @@ class IconPickerDialog(tk.Toplevel):
         self._selected = current_icon or palette_config.NO_ICON
         self._image_refs = []
         self.title("アイコンを選ぶ")
-        self.geometry("420x480")
+        self.geometry("420x520")
         self.configure(bg="#f0f0f0")
         self.attributes("-topmost", True)
         self.transient(master)
@@ -260,6 +260,27 @@ class IconPickerDialog(tk.Toplevel):
         entry = ttk.Entry(search_bar, textvariable=self.query_var, width=20)
         entry.pack(side="left", padx=4, fill="x", expand=True)
         self.query_var.trace_add("write", lambda *a: self._rebuild_grid())
+
+        # 👑 サンプルパック（png_icons/にsample_*で大量投入したアイコン群）を
+        # 検索欄に文字を打たなくてもワンクリックで絞り込めるようにする
+        # ショートカットボタン。「ざっくり入れると選ぶの難しい」という
+        # 指摘を受けて追加。プレフィックスはサンプル投入時の命名規則
+        # （sample_cmd_/emoji_/stylish_/cute_/cool_）に合わせてある。
+        category_bar = ttk.Frame(self)
+        category_bar.pack(side="top", fill="x", padx=8, pady=(0, 4))
+        categories = [
+            ("全部", ""),
+            ("コマンド風", "sample_cmd_"),
+            ("派手", "sample_emoji_"),
+            ("落ち着いた", "sample_stylish_"),
+            ("かわいい", "sample_cute_"),
+            ("かっこいい", "sample_cool_"),
+        ]
+        for label, prefix in categories:
+            ttk.Button(
+                category_bar, text=label, width=8,
+                command=lambda p=prefix: self.query_var.set(p),
+            ).pack(side="left", padx=(0, 3))
 
         container = ttk.Frame(self)
         container.pack(side="top", fill="both", expand=True, padx=8)
