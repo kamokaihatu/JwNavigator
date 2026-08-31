@@ -7,6 +7,7 @@ import copy
 import glob
 import json
 import os
+import pkgutil
 import sys
 
 SIDES = ("左", "右")
@@ -55,6 +56,20 @@ def _png_icons_dir():
 
 
 def list_icon_modules():
+    # 👑 PyInstaller等でexe化すると icons/*.py はディスク上のファイルとして
+    # 存在しなくなる（--collect-submodulesでexe内に固められる）ため、
+    # globベースの列挙はexe化後は常に空を返す。凍結実行時はpkgutilで
+    # パッケージ内モジュール一覧を取る（importlib.import_moduleでの動的
+    # importと違い、こちらはexe内のfrozenモジュールも検出できる）。
+    if getattr(sys, "frozen", False):
+        try:
+            import icons
+            return sorted(
+                name for _, name, is_pkg in pkgutil.iter_modules(icons.__path__)
+                if not is_pkg and not name.startswith("__")
+            )
+        except Exception:
+            return []
     try:
         paths = glob.glob(os.path.join(_icons_dir(), "*.py"))
     except Exception:
