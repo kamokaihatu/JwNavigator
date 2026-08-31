@@ -9,6 +9,7 @@ config/config.jsonとしてコピーする。
 """
 import os
 import shutil
+import sys
 import tkinter as tk
 from tkinter import ttk
 
@@ -24,7 +25,14 @@ PRESETS = [
 
 
 def _presets_dir():
-    base = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    # 👑 exe化すると__file__は仮想パス（実ファイルなし）になるため
+    # 使えない（list_icon_modules()で踏んだのと同じ問題、2026-08-31）。
+    # 凍結時はsys._MEIPASS配下（JwNavigator.specでdatasとしてバンドル
+    # する想定）、開発時はリポジトリルート基準で解決する。
+    if getattr(sys, "frozen", False):
+        base = getattr(sys, "_MEIPASS", "")
+    else:
+        base = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     return os.path.join(base, "data", "starter_presets")
 
 

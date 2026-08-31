@@ -18,7 +18,7 @@ a = Analysis(
     # iter_modules()が常に空を返すことを確認、2026-08-31）。同じ内容を
     # datasとしても実体コピーし、sys._MEIPASS配下から通常のglobで
     # 一覧取得できるようにする。
-    datas=[('icons', 'icons'), ('data/app_icon.ico', 'data')],
+    datas=[('icons', 'icons'), ('data/app_icon.ico', 'data'), ('data/starter_presets', 'data/starter_presets')],
     hiddenimports=collect_submodules('icons'),
     hookspath=[],
     hooksconfig={},
