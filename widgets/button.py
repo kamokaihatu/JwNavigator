@@ -3,6 +3,8 @@ import os
 import re
 import tkinter as tk
 
+from utils.palette_config import png_icon_path
+
 
 class Tooltip:
     def __init__(self, widget, text, offset_x=56):
@@ -216,7 +218,7 @@ class NavButton(tk.Frame):
         drawn = False
 
         if self.icon_name:
-            png_path = f"png_icons/{self.icon_name}.png"
+            png_path = png_icon_path(self.icon_name)
             if os.path.exists(png_path):
                 try:
                     self.photo_img = tk.PhotoImage(file=png_path)

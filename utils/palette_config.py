@@ -7,7 +7,6 @@ import copy
 import glob
 import json
 import os
-import pkgutil
 import sys
 
 SIDES = ("左", "右")
@@ -58,15 +57,18 @@ def _png_icons_dir():
 def list_icon_modules():
     # 👑 PyInstaller等でexe化すると icons/*.py はディスク上のファイルとして
     # 存在しなくなる（--collect-submodulesでexe内に固められる）ため、
-    # globベースの列挙はexe化後は常に空を返す。凍結実行時はpkgutilで
-    # パッケージ内モジュール一覧を取る（importlib.import_moduleでの動的
-    # importと違い、こちらはexe内のfrozenモジュールも検出できる）。
+    # globベースの列挙はexe化後は常に空を返す。当初pkgutil.iter_modules()
+    # で対応しようとしたが、凍結パッケージの__path__はPyInstaller内部の
+    # 仮想パスで実ファイルが存在せず、常に空を返すことが実測で判明
+    # （2026-08-31）。代わりにJwNavigator.spec側でicons/をdatasとしても
+    # 実体コピーしており、sys._MEIPASS配下から通常のglobで列挙できる。
     if getattr(sys, "frozen", False):
         try:
-            import icons
+            base = getattr(sys, "_MEIPASS", _resolve_base_dir())
+            paths = glob.glob(os.path.join(base, "icons", "*.py"))
             return sorted(
-                name for _, name, is_pkg in pkgutil.iter_modules(icons.__path__)
-                if not is_pkg and not name.startswith("__")
+                os.path.splitext(os.path.basename(p))[0] for p in paths
+                if not os.path.basename(p).startswith("__")
             )
         except Exception:
             return []

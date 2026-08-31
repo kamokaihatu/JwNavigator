@@ -15,6 +15,8 @@ try:
     import win32process
     import win32api
     import win32con
+    import win32event
+    import winerror
 except ModuleNotFoundError as exc:
     raise SystemExit(
         "pywin32 のインポートに失敗しました。"
@@ -22,6 +24,24 @@ except ModuleNotFoundError as exc:
         "次のコマンドで同じ Python 環境に pywin32 を入れてください:\n"
         f"{sys.executable} -m pip install pywin32"
     ) from exc
+
+# 👑 二重起動防止。exe化して配布すると「デスクトップのアイコンを
+# ダブルクリックし忘れて連打する」等で2つ目が起動しやすくなる。同じ
+# hwnd/config/ログファイルへ2プロセスが同時に触ると壊れるため、名前付き
+# Mutexで検知し、2つ目は即座にメッセージを出して終了する（1つ目には
+# 一切触らない — 最初に起動したプロセスをそのまま使ってもらう）。
+_single_instance_mutex = win32event.CreateMutex(None, False, "JwNavigator_SingleInstance_Mutex")
+if win32api.GetLastError() == winerror.ERROR_ALREADY_EXISTS:
+    try:
+        ctypes.windll.user32.MessageBoxW(
+            0,
+            "JwNavigatorは既に起動しています。\nタスクトレイのアイコンをご確認ください。",
+            "JwNavigator",
+            0x40,  # MB_ICONINFORMATION
+        )
+    except Exception:
+        pass
+    sys.exit(0)
 
 # 👑 DPI非対応のままだとWindowsがアプリ全体をビットマップ拡大表示する
 # （DPI仮想化）。tkinterの自前描画ウィジェットはあまり目立たないが、

@@ -10,7 +10,14 @@ a = Analysis(
     ['main.py'],
     pathex=[],
     binaries=[],
-    datas=[],
+    # 👑 icons/*.pyはhiddenimportsでexe内に実行可能な形で同梱されるが、
+    # それだけだとutils/palette_config.pyのlist_icon_modules()が
+    # 「一覧を取得する」ためにファイルとして走査できない（凍結パッケージの
+    # __path__は仮想パスで実ファイルが存在しないため、実測でpkgutil.
+    # iter_modules()が常に空を返すことを確認、2026-08-31）。同じ内容を
+    # datasとしても実体コピーし、sys._MEIPASS配下から通常のglobで
+    # 一覧取得できるようにする。
+    datas=[('icons', 'icons')],
     hiddenimports=collect_submodules('icons'),
     hookspath=[],
     hooksconfig={},
