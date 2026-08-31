@@ -15,6 +15,14 @@ def _resolve_csv_path():
             return path
     except Exception:
         pass
+    # 👑 tools/usage_logger.pyのようにexe横にdata/を配置しない単体配布
+    # （PyInstaller onefile）の場合、上のexe_dir基準では見つからない。
+    # その場合はsys._MEIPASS配下に同梱したフォールバック用コピーを使う。
+    meipass = getattr(sys, "_MEIPASS", None)
+    if meipass:
+        bundled_path = os.path.join(meipass, "data", "commands_master.csv")
+        if os.path.exists(bundled_path):
+            return bundled_path
     return os.path.join("data", "commands_master.csv")
 
 

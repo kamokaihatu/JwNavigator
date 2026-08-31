@@ -31,9 +31,10 @@ MANIFEST
 #   before PyInstaller builds the exe, so as to inject date/other infos into it.
 *.manifest
 *.spec
-# ...except JwNavigator's own spec, which we hand-wrote and keep committed
-# for a reproducible build.
+# ...except our own hand-written specs, which we keep committed for a
+# reproducible build.
 !JwNavigator.spec
+!UsageLogger.spec
 
 # Installer logs
 pip-log.txt
