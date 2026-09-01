@@ -25,6 +25,14 @@ SUB_COMMAND_DEFAULT_COLOR = "#cfe0f5"
 MAX_GROUP_LEN = 30
 CONFIG_VERSION = 2
 
+# 👑 グループボタン（フライアウト/マクロ）の種別。「groups」（config.json内の
+# 30個区切りのページング単位）とは無関係の別概念なので、変数名は
+# button "kind" に統一し、混同しないようにする。
+BUTTON_KIND_SINGLE = "single"
+BUTTON_KIND_FLYOUT = "flyout"
+BUTTON_KIND_MACRO = "macro"
+BUTTON_KINDS_GROUP = (BUTTON_KIND_FLYOUT, BUTTON_KIND_MACRO)
+
 _COLOR_RE_LEN = 7  # "#RRGGBB"
 
 
@@ -110,6 +118,21 @@ def new_button(command_id, name, icon=NO_ICON, color=DEFAULT_COLOR):
         "name": name,
         "icon": icon or NO_ICON,
         "color": color or DEFAULT_COLOR,
+        "kind": BUTTON_KIND_SINGLE,
+    }
+
+
+def new_group_button(name, kind, sub_buttons, icon=NO_ICON, color=DEFAULT_COLOR):
+    # 👑 sub_buttonsは通常ボタンと同じ形のdictのリスト（ネストは1階層のみ、
+    # sub_buttons自身がさらにkind=flyout/macroを持つことは許さない。
+    # _normalize_button()側でallow_group=Falseとして弾く）。
+    return {
+        "command_id": "",
+        "name": name,
+        "icon": icon or NO_ICON,
+        "color": color or DEFAULT_COLOR,
+        "kind": kind,
+        "sub_buttons": list(sub_buttons),
     }
 
 
@@ -142,20 +165,52 @@ def _is_valid_color(value):
         return False
 
 
-def _normalize_button(raw, known_icons):
+def _normalize_button(raw, known_icons, allow_group=True):
     if not isinstance(raw, dict):
         return None
-    command_id = str(raw.get("command_id") or "").strip()
-    if not command_id:
-        return None
-    name = str(raw.get("name") or "").strip() or command_id
+
+    kind = raw.get("kind") if allow_group else BUTTON_KIND_SINGLE
+    if kind not in BUTTON_KINDS_GROUP:
+        kind = BUTTON_KIND_SINGLE
+
+    name_fallback = ""
+    if kind == BUTTON_KIND_SINGLE:
+        command_id = str(raw.get("command_id") or "").strip()
+        if not command_id:
+            return None
+        name_fallback = command_id
+    else:
+        # 👑 グループボタン自体はどのjw_cadコマンドにも対応しないので
+        # command_idは持たない（クリック時はsub_buttonsの中身を実行する）。
+        command_id = ""
+
+    name = str(raw.get("name") or "").strip() or name_fallback or "グループ"
     icon = str(raw.get("icon") or "").strip()
     if icon and icon not in known_icons:
         icon = NO_ICON
     color = raw.get("color")
     if not _is_valid_color(color):
         color = DEFAULT_COLOR
-    return {"command_id": command_id, "name": name, "icon": icon, "color": color}
+
+    button = {"command_id": command_id, "name": name, "icon": icon, "color": color, "kind": kind}
+
+    if kind != BUTTON_KIND_SINGLE:
+        raw_sub = raw.get("sub_buttons")
+        sub_buttons = []
+        if isinstance(raw_sub, list):
+            for item in raw_sub:
+                # allow_group=False: sub_buttons自身はネストして
+                # さらにグループを持てない（1階層のみ）。
+                sub = _normalize_button(item, known_icons, allow_group=False)
+                if sub:
+                    sub_buttons.append(sub)
+        # 👑 「先に空の箱を作って、あとから中身を詰める」使い方のため、
+        # sub_buttonsが空でもグループボタン自体は保持する(以前はここで
+        # Noneを返して丸ごと消していたため、空の箱がconfig.json保存の
+        # たびに消滅していた)。
+        button["sub_buttons"] = sub_buttons
+
+    return button
 
 
 def _normalize_group(raw, known_icons):

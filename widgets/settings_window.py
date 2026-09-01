@@ -361,6 +361,53 @@ class IconPickerDialog(tk.Toplevel):
         self.destroy()
 
 
+class TextInputDialog(tk.Toplevel):
+    """1行だけの名前入力用ダイアログ。tkinter標準のsimpledialog.askstring()は
+    使わず、ColorPickerDialog/IconPickerDialogと同じ自前スタイルに揃える
+    （このマシンの高DPI環境で標準ダイアログが崩れる既知の問題を避ける方針
+    を踏襲）。結果はself.result(文字列、キャンセル時はNone)に残る。"""
+
+    def __init__(self, master, title, label, initial=""):
+        super().__init__(master)
+        self.result = None
+        self.title(title)
+        self.configure(bg="#f0f0f0")
+        self.resizable(False, False)
+        self.attributes("-topmost", True)
+        self.transient(master)
+
+        self.name_var = tk.StringVar(value=initial)
+
+        body = ttk.Frame(self)
+        body.pack(padx=12, pady=12)
+        ttk.Label(body, text=label).pack(side="left", padx=(0, 6))
+        entry = ttk.Entry(body, textvariable=self.name_var, width=24)
+        entry.pack(side="left")
+        entry.bind("<Return>", lambda e: self._on_ok())
+
+        footer = ttk.Frame(self)
+        footer.pack(fill="x", padx=12, pady=(0, 12))
+        ttk.Button(footer, text="OK", command=self._on_ok, width=10).pack(side="right")
+        ttk.Button(footer, text="キャンセル", command=self._on_cancel, width=10).pack(side="right", padx=(0, 6))
+
+        self.protocol("WM_DELETE_WINDOW", self._on_cancel)
+        entry.focus_set()
+        entry.select_range(0, tk.END)
+        self.grab_set()
+
+    def _on_ok(self):
+        val = self.name_var.get().strip()
+        if not val:
+            messagebox.showwarning("入力エラー", "名前を入力してください。", parent=self)
+            return
+        self.result = val
+        self.destroy()
+
+    def _on_cancel(self):
+        self.result = None
+        self.destroy()
+
+
 class CommandPickerDialog(tk.Toplevel):
     """コマンド追加ダイアログ。選択されたコマンド一覧をself.resultに残す。"""
 
@@ -457,6 +504,152 @@ class CommandPickerDialog(tk.Toplevel):
         self.destroy()
 
 
+class GroupContentsDialog(tk.Toplevel):
+    """フライアウト/マクロの「箱」の中身編集。追加・削除・並べ替えに加え、
+    中身1つ1つに個別のアイコン/色を付けられる(ユーザー要望:「中身の
+    アイコンはどうやって選ぶの？」)。SidePanel本体の一覧+詳細の仕組みを
+    そのまま流用せず、箱の中身専用の小さいダイアログとして独立させて
+    ある(sub_buttonsはトップレベルのgroups[].buttonsとは別物で、既存の
+    選択/並べ替えロジックがそのままでは使えないため)。
+    OKを押すとself.resultに編集後のリストが残る(キャンセル時はNone)。"""
+
+    def __init__(self, master, sub_buttons):
+        super().__init__(master)
+        self.result = None
+        self._buttons = [dict(b) for b in sub_buttons]
+
+        self.title("中身を編集")
+        self.geometry("420x480")
+        self.configure(bg="#f0f0f0")
+        self.attributes("-topmost", True)
+        self.transient(master)
+
+        body = ttk.Frame(self)
+        body.pack(side="top", fill="both", expand=True, padx=8, pady=8)
+
+        list_frame = ttk.Frame(body)
+        list_frame.pack(side="left", fill="both", expand=True)
+        self.listbox = tk.Listbox(list_frame, selectmode="extended", exportselection=0, font=("Meiryo UI", 9))
+        scroll = ttk.Scrollbar(list_frame, orient="vertical", command=self.listbox.yview)
+        self.listbox.configure(yscrollcommand=scroll.set)
+        self.listbox.pack(side="left", fill="both", expand=True)
+        scroll.pack(side="right", fill="y")
+
+        ops = ttk.Frame(body)
+        ops.pack(side="right", fill="y", padx=(6, 0))
+        ttk.Button(ops, text="▲", width=8, command=self._move_up).pack(pady=2)
+        ttk.Button(ops, text="▼", width=8, command=self._move_down).pack(pady=2)
+        ttk.Separator(ops, orient="horizontal").pack(fill="x", pady=6)
+        ttk.Button(ops, text="追加…", width=8, command=self._on_add).pack(pady=2)
+        ttk.Button(ops, text="削除", width=8, command=self._on_remove).pack(pady=2)
+        ttk.Separator(ops, orient="horizontal").pack(fill="x", pady=6)
+        ttk.Button(ops, text="アイコン…", width=8, command=self._on_pick_icon).pack(pady=2)
+        ttk.Button(ops, text="色…", width=8, command=self._on_pick_color).pack(pady=2)
+
+        ttk.Label(self, text="(複数選択してまとめてアイコン・色を変更できます)",
+                  foreground="#888888").pack(side="top", anchor="w", padx=8)
+
+        footer = ttk.Frame(self)
+        footer.pack(side="top", fill="x", padx=8, pady=8)
+        ttk.Button(footer, text="OK", command=self._on_ok, width=10).pack(side="right")
+        ttk.Button(footer, text="キャンセル", command=self._on_cancel, width=10).pack(side="right", padx=(0, 6))
+
+        self.protocol("WM_DELETE_WINDOW", self._on_cancel)
+        self._rebuild_list()
+        self.grab_set()
+
+    def _rebuild_list(self, reselect=None):
+        self.listbox.delete(0, tk.END)
+        for b in self._buttons:
+            icon_label = b["icon"] or ICON_NONE_LABEL
+            self.listbox.insert(tk.END, f"{b['name']}  [{icon_label}]")
+        for i in (reselect or []):
+            if 0 <= i < len(self._buttons):
+                self.listbox.selection_set(i)
+
+    def _selected_indices(self):
+        return list(self.listbox.curselection())
+
+    def _on_add(self):
+        existing_ids = {b["command_id"] for b in self._buttons}
+        dlg = CommandPickerDialog(self, existing_ids=existing_ids)
+        self.wait_window(dlg)
+        rows = dlg.result
+        if not rows:
+            return
+        known_icons = set(palette_config.list_all_icon_names())
+        for row in rows:
+            if row["command_id"] in existing_ids:
+                continue
+            default_color = (
+                palette_config.SUB_COMMAND_DEFAULT_COLOR
+                if row.get("command_kind") == "サブ"
+                else palette_config.DEFAULT_COLOR
+            )
+            default_icon = row.get("default_icon") or palette_config.NO_ICON
+            if default_icon not in known_icons:
+                default_icon = palette_config.NO_ICON
+            self._buttons.append(palette_config.new_button(
+                row["command_id"], row["toolbar_name"], icon=default_icon, color=default_color
+            ))
+            existing_ids.add(row["command_id"])
+        self._rebuild_list()
+
+    def _on_remove(self):
+        indices = self._selected_indices()
+        if not indices:
+            return
+        for i in reversed(indices):
+            self._buttons.pop(i)
+        self._rebuild_list()
+
+    def _move_up(self):
+        indices = sorted(self._selected_indices())
+        if not indices or indices[0] <= 0:
+            return
+        for i in indices:
+            self._buttons[i - 1], self._buttons[i] = self._buttons[i], self._buttons[i - 1]
+        self._rebuild_list(reselect=[i - 1 for i in indices])
+
+    def _move_down(self):
+        indices = sorted(self._selected_indices(), reverse=True)
+        if not indices or indices[0] >= len(self._buttons) - 1:
+            return
+        for i in indices:
+            self._buttons[i + 1], self._buttons[i] = self._buttons[i], self._buttons[i + 1]
+        self._rebuild_list(reselect=[i + 1 for i in indices])
+
+    def _on_pick_icon(self):
+        indices = self._selected_indices()
+        if not indices:
+            return
+        dlg = IconPickerDialog(self, current_icon=self._buttons[indices[0]].get("icon"))
+        self.wait_window(dlg)
+        if dlg.result is not None:
+            for i in indices:
+                self._buttons[i]["icon"] = dlg.result
+            self._rebuild_list(reselect=indices)
+
+    def _on_pick_color(self):
+        indices = self._selected_indices()
+        if not indices:
+            return
+        dlg = ColorPickerDialog(self, initial_color=self._buttons[indices[0]].get("color"))
+        self.wait_window(dlg)
+        if dlg.result:
+            for i in indices:
+                self._buttons[i]["color"] = dlg.result
+            self._rebuild_list(reselect=indices)
+
+    def _on_ok(self):
+        self.result = self._buttons
+        self.destroy()
+
+    def _on_cancel(self):
+        self.result = None
+        self.destroy()
+
+
 class SidePanel(ttk.Frame):
     def __init__(self, master, side, side_cfg):
         super().__init__(master)
@@ -521,6 +714,8 @@ class SidePanel(ttk.Frame):
         ttk.Button(ops, text="追加", width=6, command=self._on_add).pack(pady=2)
         ttk.Button(ops, text="削除", width=6, command=self._on_remove).pack(pady=2)
         ttk.Separator(ops, orient="horizontal").pack(fill="x", pady=6)
+        ttk.Button(ops, text="箱追加", width=6, command=self._on_add_box).pack(pady=2)
+        ttk.Separator(ops, orient="horizontal").pack(fill="x", pady=6)
         self.add_group_btn = ttk.Button(ops, text="＋列", width=6, command=self._on_add_group)
         self.add_group_btn.pack(pady=2)
         self.remove_group_btn = ttk.Button(ops, text="－列", width=6, command=self._on_remove_group)
@@ -531,7 +726,7 @@ class SidePanel(ttk.Frame):
         lf.pack(side="top", fill="x", padx=8, pady=(0, 8))
 
         ttk.Label(lf, text="コマンド:").grid(row=0, column=0, sticky="e", padx=6, pady=4)
-        ttk.Label(lf, textvariable=self.cmd_var).grid(row=0, column=1, sticky="w", padx=6, pady=4)
+        ttk.Label(lf, textvariable=self.cmd_var, wraplength=460, justify="left").grid(row=0, column=1, sticky="w", padx=6, pady=4)
 
         ttk.Label(lf, text="表示名:").grid(row=1, column=0, sticky="e", padx=6, pady=4)
         self.name_entry = ttk.Entry(lf, textvariable=self.name_var, width=18)
@@ -560,7 +755,23 @@ class SidePanel(ttk.Frame):
         ttk.Label(lf, text="(リストでCtrl/Shiftクリックすると複数選択してまとめて色・アイコン変更できます)",
                   foreground="#888888").grid(row=4, column=0, columnspan=2, sticky="w", padx=6, pady=(0, 4))
 
+        # 👑 フライアウト/マクロの「箱」ボタンを選んだ時だけ使う操作。
+        # 普通のコマンドボタンでは常に無効(disabled)のまま。
+        ttk.Separator(lf, orient="horizontal").grid(row=5, column=0, columnspan=2, sticky="ew", padx=6, pady=(2, 4))
+        group_frame = ttk.Frame(lf)
+        group_frame.grid(row=6, column=0, columnspan=2, sticky="w", padx=6, pady=(0, 4))
+        self.edit_group_btn = ttk.Button(group_frame, text="中身を編集…", command=self._on_edit_group)
+        self.edit_group_btn.pack(side="left")
+        self.ungroup_btn = ttk.Button(group_frame, text="グループ解除", command=self._on_ungroup)
+        self.ungroup_btn.pack(side="left", padx=(6, 0))
+
         self._set_detail_enabled(False, False)
+        self._set_group_buttons_enabled(False)
+
+    def _set_group_buttons_enabled(self, enabled):
+        state = "normal" if enabled else "disabled"
+        self.edit_group_btn.configure(state=state)
+        self.ungroup_btn.configure(state=state)
 
     # ---- 選択・表示 ----
 
@@ -613,15 +824,29 @@ class SidePanel(ttk.Frame):
                 self._update_icon_preview("")
                 self.color_swatch.configure(bg=palette_config.DEFAULT_COLOR)
                 self._set_detail_enabled(False, False)
+                self._set_group_buttons_enabled(False)
                 return
             if btn is not None:
-                row = command_master.get_by_command_id(btn["command_id"]) or {}
-                category = (row.get("category") or "").strip()
-                self.cmd_var.set(f"{btn['command_id']} ({category})" if category else btn["command_id"])
+                is_group = btn.get("kind") in (palette_config.BUTTON_KIND_FLYOUT, palette_config.BUTTON_KIND_MACRO)
+                if is_group:
+                    # 👑 「中身5個」という個数だけでは何が入っているか分からない
+                    # という指摘のため、コマンド欄に中身の名前も並べて表示する
+                    # (専用の行を別途足すと縦に伸びて設定ウィンドウ下端の
+                    # 保存ボタンが枠外に押し出されてしまったため、既存の
+                    # 「コマンド:」行に折り返し表示でまとめる形にした)。
+                    kind_label = "フライアウト" if btn["kind"] == palette_config.BUTTON_KIND_FLYOUT else "マクロ"
+                    sub_buttons = btn.get("sub_buttons") or []
+                    contents = "、".join(sb["name"] for sb in sub_buttons) if sub_buttons else "(まだ何もありません)"
+                    self.cmd_var.set(f"({kind_label}) {contents}")
+                else:
+                    row = command_master.get_by_command_id(btn["command_id"]) or {}
+                    category = (row.get("category") or "").strip()
+                    self.cmd_var.set(f"{btn['command_id']} ({category})" if category else btn["command_id"])
                 self.name_var.set(btn["name"])
                 self._update_icon_preview(btn["icon"])
                 self.color_swatch.configure(bg=btn["color"])
                 self._set_detail_enabled(True, True)
+                self._set_group_buttons_enabled(is_group)
             else:
                 # 複数選択中: 名前は編集不可、色・アイコンはまとめて変更可能
                 self.cmd_var.set(f"{len(multi)}個選択中")
@@ -629,6 +854,7 @@ class SidePanel(ttk.Frame):
                 self._update_icon_preview(multi[0]["icon"])
                 self.color_swatch.configure(bg=multi[0]["color"])
                 self._set_detail_enabled(False, True)
+                self._set_group_buttons_enabled(False)
         finally:
             self._loading_detail = False
 
@@ -892,6 +1118,57 @@ class SidePanel(ttk.Frame):
             return
         for i in reversed(indices):
             buttons.pop(i)
+        self.selected = None
+        self._selected_group = None
+        self._selected_indices = []
+        self._rebuild_groups()
+
+    def _on_add_box(self):
+        # 👑 「先に空のフライアウト箱を作って、あとから中身を詰める」
+        # フロー。マクロ型は後回しなので、ここでは種別を聞かずフライアウト
+        # 固定にする(ユーザー決定: 2026-08-31/2026-09-01)。
+        dlg = TextInputDialog(self.winfo_toplevel(), title="フライアウトを追加", label="名前:", initial="新しい箱")
+        self.winfo_toplevel().wait_window(dlg)
+        name = dlg.result
+        if not name:
+            return
+
+        groups = self.side_cfg["groups"]
+        if not groups:
+            groups.append(palette_config.new_group())
+        gi = self.selected[0] if self.selected is not None else 0
+        gi = min(gi, len(groups) - 1)
+        insert_at = self.selected[1] + 1 if self.selected is not None and self.selected[0] == gi else len(groups[gi]["buttons"])
+
+        new_btn = palette_config.new_group_button(name, palette_config.BUTTON_KIND_FLYOUT, [])
+        groups[gi]["buttons"].insert(insert_at, new_btn)
+        self.selected = (gi, insert_at)
+        self._rebuild_groups()
+
+    def _on_edit_group(self):
+        btn = self._selected_button()
+        if btn is None or btn.get("kind") not in (palette_config.BUTTON_KIND_FLYOUT, palette_config.BUTTON_KIND_MACRO):
+            return
+        dlg = GroupContentsDialog(self.winfo_toplevel(), btn.get("sub_buttons") or [])
+        self.winfo_toplevel().wait_window(dlg)
+        if dlg.result is not None:
+            btn["sub_buttons"] = dlg.result
+            self._load_detail()
+
+    def _on_ungroup(self):
+        btn = self._selected_button()
+        if btn is None or btn.get("kind") not in (palette_config.BUTTON_KIND_FLYOUT, palette_config.BUTTON_KIND_MACRO):
+            return
+        gi, ii = self.selected
+        sub_buttons = btn.get("sub_buttons") or []
+        if sub_buttons and not messagebox.askyesno(
+            "確認",
+            f"「{btn['name']}」を解除して、中の{len(sub_buttons)}個を個別ボタンに戻しますか?",
+            parent=self.winfo_toplevel(),
+        ):
+            return
+        buttons = self.side_cfg["groups"][gi]["buttons"]
+        buttons[ii:ii + 1] = [dict(sb) for sb in sub_buttons]
         self.selected = None
         self._selected_group = None
         self._selected_indices = []

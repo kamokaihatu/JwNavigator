@@ -1,24 +1,8 @@
 # ===== ✂️ widgets/toolbar.py START ✂️ =====
 import tkinter as tk
-import importlib
-from widgets.button import NavButton
+from widgets.button import NavButton, import_icon_module as _import_icon_module
+from widgets.flyout_popup import FlyoutPopup
 from utils import palette_config
-
-_ICON_MODULE_CACHE = {}
-
-
-def _import_icon_module(icon_name):
-    if not icon_name:
-        return None
-    if icon_name in _ICON_MODULE_CACHE:
-        return _ICON_MODULE_CACHE[icon_name]
-    module = None
-    try:
-        module = importlib.import_module(f"icons.{icon_name}")
-    except Exception as e:
-        print(f"[WARN] icon module load failed: {icon_name} ({e})")
-    _ICON_MODULE_CACHE[icon_name] = module
-    return module
 
 
 class Toolbar(tk.Toplevel):
@@ -33,6 +17,7 @@ class Toolbar(tk.Toplevel):
         self.buttons = []
         self.is_pinned = False
         self.user_hidden = False
+        self._open_flyout = None  # 👑 グループボタン(フライアウト)の開閉状態
 
         self.orientation = palette_config.ORIENTATION_PORTRAIT
         self.button_size = palette_config.DEFAULT_BUTTON_SIZE
@@ -170,14 +155,26 @@ class Toolbar(tk.Toplevel):
 
             for entry in entries:
                 icon_module = _import_icon_module(entry["icon"])
+                kind = entry.get("kind", palette_config.BUTTON_KIND_SINGLE)
+
+                if kind == palette_config.BUTTON_KIND_FLYOUT:
+                    command = None  # 生成後、btn自身を参照するために下で差し替える
+                elif kind == palette_config.BUTTON_KIND_MACRO:
+                    command = lambda e=entry: self.execute_macro(e)
+                else:
+                    command = lambda k=entry["command_id"]: self.execute_command(k)
+
                 btn = NavButton(
                     master=frame, name=entry["name"], icon_module=icon_module, cmd_color=entry["color"],
-                    command=lambda k=entry["command_id"]: self.execute_command(k), manager_ref=self.manager_ref,
+                    command=command, manager_ref=self.manager_ref,
                     size=self.button_size,
                 )
+                if kind == palette_config.BUTTON_KIND_FLYOUT:
+                    btn.command = lambda b=btn, e=entry: self.toggle_flyout(b, e)
                 btn.command_key = entry["command_id"]
                 btn.hwnd = self.target_hwnd
                 btn.icon_name = entry["icon"]
+                btn.entry = entry
                 btn.load_and_draw()
 
                 btn.pack(side=button_side)
@@ -205,6 +202,43 @@ class Toolbar(tk.Toplevel):
             )
         if self.execute_func:
             self.execute_func(self.target_hwnd, command_id)
+
+    def toggle_flyout(self, trigger_btn, entry):
+        was_open_for_same = False
+        if self._open_flyout is not None:
+            was_open_for_same = self._open_flyout.trigger_btn is trigger_btn
+            self._open_flyout.close()
+            self._open_flyout = None
+            if was_open_for_same:
+                return  # 同じボタンをもう一度押した＝閉じるだけでよい
+
+        def _clear():
+            self._open_flyout = None
+
+        on_pick = lambda sub_entry: self._on_flyout_pick(trigger_btn, sub_entry)
+        self._open_flyout = FlyoutPopup(trigger_btn, entry, on_pick=on_pick, on_close=_clear)
+
+    def _on_flyout_pick(self, trigger_btn, sub_entry):
+        # 👑 選んだ中身の見た目(アイコン/名前)を起動ボタン自身にも反映する
+        # (「入れ物」から「面取り」に変わる)。command_keyも実コマンドの
+        # ものへ差し替えることで、CHECKEDビット監視の対象になり、以後は
+        # 普通のコマンドボタンと同じく選択中/非選択中が正しく凹み表示に
+        # 反映されるようになる(ユーザー要望: 「面取りおしたら、入れ物から
+        # 面取りに変わってさらに凹んでくれるとうれしい」)。
+        command_id = sub_entry.get("command_id", "")
+        trigger_btn.name = sub_entry.get("name") or trigger_btn.name
+        trigger_btn.icon_name = sub_entry.get("icon", "")
+        trigger_btn.icon_module = _import_icon_module(trigger_btn.icon_name)
+        trigger_btn.command_key = command_id
+        trigger_btn.update_tooltip_text(trigger_btn.name)
+        trigger_btn.load_and_draw()
+        self.execute_command(command_id)
+
+    def execute_macro(self, entry):
+        sub_buttons = entry.get("sub_buttons") or []
+        command_ids = [b["command_id"] for b in sub_buttons if b.get("command_id")]
+        if self.manager_ref and hasattr(self.manager_ref, "execute_macro_sequence"):
+            self.manager_ref.execute_macro_sequence(self.target_hwnd, command_ids)
 
     def select_button(self, target_btn):
         if self.current_selected_button and self.current_selected_button != target_btn:

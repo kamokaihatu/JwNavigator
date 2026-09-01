@@ -1,9 +1,35 @@
 # ===== ✂️ widgets/button.py START PART 1 ✂️ =====
+import importlib
 import os
 import re
 import tkinter as tk
 
-from utils.palette_config import png_icon_path
+from utils.palette_config import png_icon_path, BUTTON_KIND_FLYOUT, BUTTON_KIND_MACRO
+
+_GROUP_BADGE_COLOR = {
+    BUTTON_KIND_FLYOUT: "#2b6fd4",  # 青系
+    BUTTON_KIND_MACRO: "#e08a1e",   # オレンジ系
+}
+
+# 👑 icons/*.pyの動的インポート＋キャッシュ。以前はtoolbar.py/flyout_popup.py
+# にそれぞれ同じ内容を複製していたが、フライアウトの「顔の入れ替え」機能で
+# button.py自身もアイコンモジュールを解決する必要が出たため、ここに一本化
+# する（他はここからimportして使う）。
+_ICON_MODULE_CACHE = {}
+
+
+def import_icon_module(icon_name):
+    if not icon_name:
+        return None
+    if icon_name in _ICON_MODULE_CACHE:
+        return _ICON_MODULE_CACHE[icon_name]
+    module = None
+    try:
+        module = importlib.import_module(f"icons.{icon_name}")
+    except Exception:
+        pass
+    _ICON_MODULE_CACHE[icon_name] = module
+    return module
 
 
 class Tooltip:
@@ -151,6 +177,10 @@ class NavButton(tk.Frame):
         self.command_key = ""
         self.hwnd = 0
         self.icon_name = "fallback"
+        # 👑 グループボタン（フライアウト/マクロ）のバッジ描画・クリック時の
+        # 中身参照用に、config.jsonの生エントリをそのまま持たせておく。
+        # toolbar.py側でボタン生成後に設定する（単発ボタンはNoneのまま）。
+        self.entry = None
         self.selected = False
         self.is_enabled = True
         self._is_dragging = False
@@ -175,8 +205,14 @@ class NavButton(tk.Frame):
         self.canvas.bind("<Enter>", self.enter)
         self.canvas.bind("<Leave>", self.leave)
 
-        Tooltip(self, self.name, offset_x=self.size + 8)
-        Tooltip(self.canvas, self.name, offset_x=self.size + 8)
+        self._tooltips = [
+            Tooltip(self, self.name, offset_x=self.size + 8),
+            Tooltip(self.canvas, self.name, offset_x=self.size + 8),
+        ]
+
+    def update_tooltip_text(self, name):
+        for tip in self._tooltips:
+            tip.text = name
 
     @staticmethod
     def _wrap_label(name, size=48):
@@ -263,6 +299,17 @@ class NavButton(tk.Frame):
                 justify="center",
             )
 
+        badge_color = _GROUP_BADGE_COLOR.get((self.entry or {}).get("kind"))
+        if badge_color:
+            # 👑 フライアウト/マクロを普通のボタンと見分けるための小さな
+            # 三角バッジ（右下）。種別ごとに色を変える。
+            s = self.canvas_size
+            b = max(6, int(s * 0.22))
+            self.canvas.create_polygon(
+                s, s - b, s, s, s - b, s,
+                fill=badge_color, outline="",
+            )
+
         if not self.is_enabled:
             # 無効（グレーアウト）表示：内容の上から半透明のグレーを重ねる
             self.canvas.create_rectangle(
@@ -307,10 +354,17 @@ class NavButton(tk.Frame):
         except Exception:
             pass
 
-        if hasattr(self.master, "select_button"):
-            self.master.select_button(self)
-        else:
-            self.set_selected()
+        # 👑 グループボタン(フライアウト/マクロ)はcommand_keyが空("")で、
+        # 特定のjw_cadコマンドに対応しない。CHECKEDビット監視の対象外
+        # (main.pyの_update_checked_highlightのid_mapにも入らない)なので、
+        # ここで凹み表示にしてしまうと二度と解除されず凹んだままになる
+        # (実機で発覚: フライアウトを開いた後、別コマンドに切り替えても
+        # フライアウトの起動ボタンだけ凹んだまま残っていた)。
+        if self.command_key:
+            if hasattr(self.master, "select_button"):
+                self.master.select_button(self)
+            else:
+                self.set_selected()
 
         if getattr(self.manager_ref, "record_state_collection_event", None):
             raw_status_text = self.manager_ref.capture_statusbar_for_window(self.hwnd)
@@ -347,6 +401,19 @@ class NavButton(tk.Frame):
         self.selected = False
         self.configure(bg=self.bg_color, relief="raised")
         self.canvas.configure(bg=self.bg_color)
+
+        # 👑 フライアウト/マクロの起動ボタンは、中身を選ぶと一時的にその
+        # コマンドの顔(アイコン/名前)を借りて表示する(apply_group_pick)。
+        # そのコマンドの凹みが外れた＝もう有効ではない、ということなので、
+        # ここで箱自体(グループ自身)の見た目に戻す(ユーザー要望: 「違う
+        # コマンド選んだら、箱にもどってくれる？」)。
+        if self.entry and self.entry.get("kind") in (BUTTON_KIND_FLYOUT, BUTTON_KIND_MACRO) and self.command_key:
+            self.command_key = ""
+            self.name = self.entry.get("name", self.name)
+            self.icon_name = self.entry.get("icon", "")
+            self.icon_module = import_icon_module(self.icon_name)
+            self.update_tooltip_text(self.name)
+            self.load_and_draw()
 
 
 # ===== ✂️ widgets/button.py END PART 2 ✂️ =====

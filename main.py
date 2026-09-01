@@ -774,6 +774,7 @@ class JwNavigatorManager:
                     self.root.update_idletasks()
                     toolbar_l.update_idletasks()
                     toolbar_r.update_idletasks()
+                    is_reload = hwnd in self._pending_pin_restore
                     pending_pins = self._pending_pin_restore.pop(hwnd, {})
                     for side_key, tb in (("左", toolbar_l), ("右", toolbar_r)):
                         if side_key in pending_pins:
@@ -783,7 +784,10 @@ class JwNavigatorManager:
                             tb.wm_geometry(f"+{x}+{y}")
                             tb.update_idletasks()
                             tb._last_geom = None
-                        else:
+                        elif not is_reload:
+                            # 👑 設定保存によるリロードでは、記憶位置の復元は
+                            # 行わない（追従だった側は追従のまま）。これは
+                            # アプリ起動時・jw_cad新規検出時だけの処理。
                             self._restore_pinned_position(tb, side_key)
                     try:
                         _, pid = win32process.GetWindowThreadProcessId(hwnd)
@@ -808,6 +812,16 @@ class JwNavigatorManager:
         # 自由配置していたパレットが保存のたびに追従モードへ戻ってしまう
         # 不具合があった（ユーザー指摘）。破棄前に自由配置中だった側の
         # 位置を覚えておき、作り直した直後に再適用する。
+        # 👑 【自由配置→保存で追従に戻るバグの逆パターン】以前は「自由配置
+        # だった側の位置を覚えておく」pending_pinsを、1側でも自由配置が
+        # あった時だけhwnd単位で作っていた。すると「両側とも追従中に設定を
+        # 保存」した場合、pending_pinsにそのhwndのキー自体が無いため、
+        # 後段の再ドッキング処理が「新規に検出したjw_cadウィンドウ」と
+        # 区別できず、window_state.json（終了時に記憶した自由配置位置）を
+        # 誤って復元し、追従だったはずが自由配置に化けていた（ユーザー
+        # 指摘、2026-08-31）。両側とも追従でも必ずhwnd自体のキーは作り、
+        # 「これは設定保存によるリロードであって新規検出ではない」ことを
+        # 後段が判別できるようにする。
         pending_pins = {}
         for hwnd in list(self.active_launchers.keys()):
             pair = self.active_launchers.pop(hwnd, None) or {}
@@ -819,8 +833,7 @@ class JwNavigatorManager:
                     tb.destroy()
                 except Exception:
                     pass
-            if pins:
-                pending_pins[hwnd] = pins
+            pending_pins[hwnd] = pins
             self.event_engines.pop(hwnd, None)
             self.locked_intent.pop(hwnd, None)
         self._pending_pin_restore = pending_pins
@@ -1043,6 +1056,22 @@ class JwNavigatorManager:
                             name = "面取" if btn.name in ["面取", "面取り"] else btn.name
                             self.locked_intent[hwnd] = (name, time.time())
                         return
+
+    MACRO_STEP_DELAY_MS = 300
+
+    def execute_macro_sequence(self, hwnd, command_ids, index=0):
+        # 👑 マクロ(グループボタン)の連続実行。time.sleep()でブロッキング
+        # せず、root.after()で次のステップを予約することでUIを固まらせ
+        # ない。各ステップはlogged_execute_command()をそのまま呼ぶので、
+        # 有効/無効チェック・ログ・選択ハイライトは単発実行と同じく効く。
+        # ステップ間隔はjw_cad側の反応速度を見て実機調整する想定の値。
+        if index >= len(command_ids):
+            return
+        self.logged_execute_command(hwnd, command_ids[index])
+        self.root.after(
+            self.MACRO_STEP_DELAY_MS,
+            lambda: self.execute_macro_sequence(hwnd, command_ids, index + 1),
+        )
 
     def is_cursor_over_jw_window(self, x, y):
         # 👑 マウスフック内から呼ばれるため、重いfind_all_jw_cad_windows()は使わず
