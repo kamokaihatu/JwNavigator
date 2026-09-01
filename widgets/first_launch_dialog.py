@@ -48,7 +48,7 @@ class FirstLaunchDialog(tk.Toplevel):
         # 出ていない=withdrawn状態のため）ウィンドウ自体が表示されない
         # ことを実測で確認した。ここではtransientにせず独立ウィンドウ
         # として出す（-topmostだけで最前面表示は確保できる）。
-        self.chosen = "empty"
+        self.chosen = None
 
         tk.Label(
             self, text="はじめまして。パレットの初期構成を選んでください。\n"
@@ -69,7 +69,7 @@ class FirstLaunchDialog(tk.Toplevel):
                 bg="#ffffff", anchor="w",
             ).pack(side="left", padx=(0, 8), pady=8, fill="x", expand=True)
 
-        self.protocol("WM_DELETE_WINDOW", lambda: self._choose("empty"))
+        self.protocol("WM_DELETE_WINDOW", self.destroy)
         self.grab_set()
 
     def _choose(self, key):
@@ -86,8 +86,11 @@ def run_first_launch_setup_if_needed(root):
 
     dlg = FirstLaunchDialog(root)
     root.wait_window(dlg)
+    # 👑 ×で閉じた(何も選ばなかった)場合は「空から始める」を選んだのと
+    # 同じ扱いにする(初回起動は必ず何らかのconfig.jsonを作りたいため)。
+    chosen = dlg.chosen or "empty"
 
-    preset_path = os.path.join(_presets_dir(), f"{dlg.chosen}.json")
+    preset_path = os.path.join(_presets_dir(), f"{chosen}.json")
     if not os.path.exists(preset_path):
         return
     try:
@@ -97,4 +100,31 @@ def run_first_launch_setup_if_needed(root):
         shutil.copy(preset_path, target_path)
     except Exception:
         pass
+
+
+def run_preset_reset(root):
+    """設定画面/トレイメニューから明示的に呼ぶ「初期構成を選び直す」。
+    初回起動時と違って既存のconfig.jsonを上書きする破壊的操作なので、
+    ダイアログを×で閉じた(何も選ばなかった)場合は何もしない
+    (run_first_launch_setup_if_needed()のように「空」へ勝手に倒さない)。
+    呼び出し元(main.py)が確認ダイアログを出す前提。
+    戻り値: 実際にconfig.jsonを上書きしたらTrue、しなかったらFalse。"""
+    dlg = FirstLaunchDialog(root)
+    root.wait_window(dlg)
+    if dlg.chosen is None:
+        return False
+
+    preset_path = os.path.join(_presets_dir(), f"{dlg.chosen}.json")
+    if not os.path.exists(preset_path):
+        return False
+
+    target_path = palette_config.config_path()
+    try:
+        target_dir = os.path.dirname(target_path)
+        if target_dir:
+            os.makedirs(target_dir, exist_ok=True)
+        shutil.copy(preset_path, target_path)
+    except Exception:
+        return False
+    return True
 # ===== ✂️ widgets/first_launch_dialog.py END ✂️ =====

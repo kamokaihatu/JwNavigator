@@ -6,7 +6,7 @@ import re
 import tkinter as tk
 from tkinter import ttk, messagebox
 
-from utils import palette_config, command_master
+from utils import palette_config, command_master, menu_prefs
 from widgets.button import ScaledCanvas
 
 ICON_NONE_LABEL = "アイコンなし"
@@ -1201,6 +1201,30 @@ class SidePanel(ttk.Frame):
         self._on_size()
 
 
+class RightClickMenuPanel(ttk.Frame):
+    """パレット右クリックメニューの項目ごとのON/OFF設定タブ。
+    「⚙️ 編集」だけは常に表示なのでここには出さない(消せない)。"""
+
+    def __init__(self, master):
+        super().__init__(master)
+        prefs = menu_prefs.load_prefs()
+        self.vars = {key: tk.BooleanVar(value=prefs.get(key, True)) for key in menu_prefs.ITEM_KEYS}
+
+        ttk.Label(
+            self, text="右クリックメニューに表示する項目を選んでください。\n"
+                       "(「⚙️ 編集」は常に表示されます)",
+            justify="left",
+        ).pack(side="top", anchor="w", padx=12, pady=(12, 8))
+
+        for key in menu_prefs.ITEM_KEYS:
+            ttk.Checkbutton(
+                self, text=menu_prefs.ITEM_LABELS[key], variable=self.vars[key],
+            ).pack(side="top", anchor="w", padx=16, pady=3)
+
+    def save(self):
+        menu_prefs.save_prefs({key: var.get() for key, var in self.vars.items()})
+
+
 class SettingsWindow(tk.Toplevel):
     def __init__(self, master, manager_ref=None, initial_side="左"):
         super().__init__(master)
@@ -1222,6 +1246,9 @@ class SettingsWindow(tk.Toplevel):
             panel = SidePanel(self.notebook, side, side_cfg)
             self.notebook.add(panel, text=f"{side}パレット")
             self.panels[side] = panel
+
+        self.menu_panel = RightClickMenuPanel(self.notebook)
+        self.notebook.add(self.menu_panel, text="右クリック")
 
         footer = ttk.Frame(self)
         footer.pack(side="top", fill="x", padx=8, pady=10)
@@ -1245,6 +1272,7 @@ class SettingsWindow(tk.Toplevel):
     def _on_save(self):
         for panel in self.panels.values():
             panel.commit_scalars()
+        self.menu_panel.save()
 
         new_config = palette_config.normalize_config(self.config_data)
 

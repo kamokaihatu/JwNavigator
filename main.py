@@ -3,6 +3,7 @@ import sys
 import ctypes
 from ctypes import wintypes
 import tkinter as tk
+from tkinter import messagebox
 import time
 import datetime
 import re
@@ -59,7 +60,7 @@ except Exception:
 
 from widgets.toolbar import Toolbar
 from widgets.settings_window import SettingsWindow
-from widgets.first_launch_dialog import run_first_launch_setup_if_needed
+from widgets.first_launch_dialog import run_first_launch_setup_if_needed, run_preset_reset
 from utils.send_key import send_key_to_hwnd
 from utils.send_command import send_command_to_hwnd, is_command_enabled, get_command_states, get_command_checked_states
 from utils import command_master
@@ -70,6 +71,7 @@ from utils.state_collection import StateCollectionLogger
 from utils.win_event_watcher import WinEventWatcher
 from utils.palette_layout import compute_palette_geometry
 from utils import window_state
+from utils import menu_prefs
 from utils.tray_icon import TrayIcon
 
 WH_MOUSE_LL = 14
@@ -731,32 +733,46 @@ class JwNavigatorManager:
                     toolbar_l.status_label.pack(side="top", fill="x", pady=(0, 2))
 
                     def show_exit_popup(event, target_hwnd=hwnd, side_key="左"):
+                        # 👑 「⚙️ 編集」だけは常に表示（消せない）。それ以外は
+                        # 設定画面の「右クリック」タブでON/OFFできる
+                        # (ユーザー要望: 普段使わない/誤操作が怖い項目を
+                        # コワーカー向けに隠せるように)。
+                        prefs = menu_prefs.load_prefs()
                         menu = tk.Menu(self.root, tearoff=0, font=("Meiryo UI", 9))
                         menu.add_command(
-                            label="⚙️ パレットを編集",
+                            label="⚙️ 編集",
                             command=lambda sk=side_key: self.open_settings_window(initial_side=sk),
                         )
-                        remember_var = tk.BooleanVar(
-                            value=self.window_state.get("remember_on_exit", False)
-                        )
-                        menu.add_checkbutton(
-                            label="📌 終了時の配置を記憶する（自由配置中の側のみ）",
-                            variable=remember_var,
-                            command=lambda v=remember_var: self._toggle_remember_position(v.get()),
-                        )
+                        if prefs.get("remember_position", True):
+                            remember_var = tk.BooleanVar(
+                                value=self.window_state.get("remember_on_exit", False)
+                            )
+                            menu.add_checkbutton(
+                                label="📌 終了時の配置を記憶する（自由配置中の側のみ）",
+                                variable=remember_var,
+                                command=lambda v=remember_var: self._toggle_remember_position(v.get()),
+                            )
                         menu.add_separator()
-                        menu.add_command(
-                            label=f"⚙️ この{side_key}パレットだけを閉じる",
-                            command=lambda h=target_hwnd, sk=side_key: self.close_one_side(h, sk),
-                        )
-                        menu.add_command(
-                            label="👁️ 隠したパレットを再表示",
-                            command=lambda h=target_hwnd: self.show_hidden_palettes(h),
-                        )
-                        menu.add_command(
-                            label="❌ JwNaviシステムを終了する",
-                            command=self.shutdown_manager,
-                        )
+                        if prefs.get("close_this_side", True):
+                            menu.add_command(
+                                label="⚙️ このパレットだけを閉じる",
+                                command=lambda h=target_hwnd, sk=side_key: self.close_one_side(h, sk),
+                            )
+                        if prefs.get("show_hidden", True):
+                            menu.add_command(
+                                label="👁️ 隠したパレットを再表示",
+                                command=lambda h=target_hwnd: self.show_hidden_palettes(h),
+                            )
+                        if prefs.get("reset_preset", True):
+                            menu.add_command(
+                                label="🔄 初期構成を選び直す",
+                                command=self._on_reset_to_preset,
+                            )
+                        if prefs.get("exit", True):
+                            menu.add_command(
+                                label="❌ JwNaviシステムを終了する",
+                                command=self.shutdown_manager,
+                            )
                         menu.post(event.x_root, event.y_root)
 
                     toolbar_l.bind("<Button-3>", lambda e: show_exit_popup(e, side_key="左"))
@@ -1235,9 +1251,19 @@ class JwNavigatorManager:
         # 👑 状態収集ログ(詳細ログ)のトグルはここに置かず、別途独立した
         # ログ収集システムとして作る方針にしたため外してある
         # （ユーザー方針：「ログをとってほしい時だけ起動する」別ツール）。
+        # 👑 トレイメニューは、右クリックメニュー側のON/OFF設定(menu_prefs)
+        # の影響を受けず、常にフルセットを表示する(ユーザー要望:
+        # 「タスクトレイのほうには右クリックメニュー全部載せといてね」
+        # ＝コワーカー向けに右クリックを簡略化しても、開発者/管理側は
+        # トレイから常に全機能へアクセスできるようにする)。「この◯
+        # パレットだけを閉じる」だけは対象のhwnd/sideを一意に選べない
+        # ため、トレイには載せない。
+        remember_on = self.window_state.get("remember_on_exit", False)
         return [
-            ("⚙️ パレットを編集", self.open_settings_window, None),
+            ("⚙️ 編集", self.open_settings_window, None),
+            ("📌 終了時の配置を記憶する", lambda: self._toggle_remember_position(not remember_on), remember_on),
             ("👁️ 隠したパレットを再表示", self._show_all_hidden_palettes, None),
+            ("🔄 初期構成を選び直す", self._on_reset_to_preset, None),
             ("", None, None),
             ("❌ JwNaviシステムを終了する", self.shutdown_manager, None),
         ]
@@ -1245,6 +1271,22 @@ class JwNavigatorManager:
     def _show_all_hidden_palettes(self):
         for hwnd in list(self.active_launchers.keys()):
             self.show_hidden_palettes(hwnd)
+
+    def _on_reset_to_preset(self):
+        # 👑 「初期設定ミスったな」と思った時のやり直し導線。config.jsonを
+        # 手動削除しないと出せなかった初回起動の選択画面を、いつでも
+        # 呼び出せるようにする(ユーザー要望、配布直前に追加)。
+        if not messagebox.askyesno(
+            "確認",
+            "今のパレット構成を、選び直した初期構成で上書きします。\n"
+            "(今のボタン配置は失われます。保存は不要です・押した瞬間に上書きされます)\n"
+            "続けますか?",
+            parent=self.root,
+        ):
+            return
+        if run_preset_reset(self.root):
+            self.reload_all_palettes()
+            self.write_system_log("🔄 初期構成を選び直しました。")
 
     def _drain_win_event_queue(self):
         # 👑 SetWinEventHookのコールバック（別スレッド）が積んだイベントを、
