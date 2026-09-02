@@ -17,10 +17,11 @@ from widgets.button import NavButton, import_icon_module as _import_icon_module
 
 
 class FlyoutPopup(tk.Toplevel):
-    def __init__(self, trigger_btn, entry, on_pick, on_close=None):
+    def __init__(self, trigger_btn, entry, on_pick, on_pick_auto_attr=None, on_close=None):
         super().__init__(trigger_btn)
         self.trigger_btn = trigger_btn
         self._on_pick = on_pick
+        self._on_pick_auto_attr = on_pick_auto_attr
         self._on_close = on_close
         self._closed = False
 
@@ -42,13 +43,23 @@ class FlyoutPopup(tk.Toplevel):
             ).pack()
         for sub in sub_buttons:
             icon_module = _import_icon_module(sub.get("icon"))
+            # 👑 「グループボタンの中には線属性ボタン作れますか？」への
+            # 対応。中身が補助線系(kind="auto_attr")の場合は、単純な
+            # コマンド送信(_pick)ではなく実際の自動化シーケンス
+            # (線属性を覚えて切替→直線へ→離脱で復帰)を起動する別経路
+            # に振り分ける。
+            if sub.get("kind") == "auto_attr":
+                click_cmd = lambda s=sub: self._pick_auto_attr(s)
+            else:
+                click_cmd = lambda s=sub: self._pick(s)
             btn = NavButton(
                 master=inner, name=sub.get("name", ""), icon_module=icon_module,
                 cmd_color=sub.get("color"),
-                command=lambda s=sub: self._pick(s),
+                command=click_cmd,
                 size=size,
             )
             btn.icon_name = sub.get("icon", "")
+            btn.entry = sub
             btn.load_and_draw()
             btn.pack(side="left", padx=1, pady=1)
 
@@ -91,6 +102,11 @@ class FlyoutPopup(tk.Toplevel):
         self.close()
         if self._on_pick:
             self._on_pick(sub_entry)
+
+    def _pick_auto_attr(self, sub_entry):
+        self.close()
+        if self._on_pick_auto_attr:
+            self._on_pick_auto_attr(sub_entry)
 
     def close(self):
         if self._closed:

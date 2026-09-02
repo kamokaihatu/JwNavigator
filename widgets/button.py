@@ -4,11 +4,12 @@ import os
 import re
 import tkinter as tk
 
-from utils.palette_config import png_icon_path, BUTTON_KIND_FLYOUT, BUTTON_KIND_MACRO
+from utils.palette_config import png_icon_path, BUTTON_KIND_FLYOUT, BUTTON_KIND_MACRO, BUTTON_KIND_AUTO_ATTR
 
 _GROUP_BADGE_COLOR = {
-    BUTTON_KIND_FLYOUT: "#2b6fd4",  # 青系
-    BUTTON_KIND_MACRO: "#e08a1e",   # オレンジ系
+    BUTTON_KIND_FLYOUT: "#2b6fd4",     # 青系
+    BUTTON_KIND_MACRO: "#e08a1e",      # オレンジ系
+    BUTTON_KIND_AUTO_ATTR: "#3fa34d",  # 緑系
 }
 
 # 👑 icons/*.pyの動的インポート＋キャッシュ。以前はtoolbar.py/flyout_popup.py
@@ -408,12 +409,22 @@ class NavButton(tk.Frame):
         # ここで箱自体(グループ自身)の見た目に戻す(ユーザー要望: 「違う
         # コマンド選んだら、箱にもどってくれる？」)。
         if self.entry and self.entry.get("kind") in (BUTTON_KIND_FLYOUT, BUTTON_KIND_MACRO) and self.command_key:
-            self.command_key = ""
-            self.name = self.entry.get("name", self.name)
-            self.icon_name = self.entry.get("icon", "")
-            self.icon_module = import_icon_module(self.icon_name)
-            self.update_tooltip_text(self.name)
-            self.load_and_draw()
+            self.revert_group_face()
+
+    def revert_group_face(self):
+        # 👑 箱(フライアウト/マクロ)の中身に補助線系ボタン(kind="auto_attr")
+        # が入っている場合、それを選んだ間だけ顔を借りるが、独自の
+        # ハイライト管理(command_keyを使わない)のため、上のclear_selected()
+        # 内の分岐(self.command_key依存)では拾えない。main.py側の
+        # _revert_auto_attrから明示的に呼ぶための切り出し。
+        if not self.entry or self.entry.get("kind") not in (BUTTON_KIND_FLYOUT, BUTTON_KIND_MACRO):
+            return
+        self.command_key = ""
+        self.name = self.entry.get("name", self.name)
+        self.icon_name = self.entry.get("icon", "")
+        self.icon_module = import_icon_module(self.icon_name)
+        self.update_tooltip_text(self.name)
+        self.load_and_draw()
 
 
 # ===== ✂️ widgets/button.py END PART 2 ✂️ =====

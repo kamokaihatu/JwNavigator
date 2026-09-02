@@ -33,6 +33,12 @@ BUTTON_KIND_FLYOUT = "flyout"
 BUTTON_KIND_MACRO = "macro"
 BUTTON_KINDS_GROUP = (BUTTON_KIND_FLYOUT, BUTTON_KIND_MACRO)
 
+# 👑 「補助線」「配線」等、押すと線属性を自動で切り替えて直線コマンドへ
+# 移動し、他コマンドに切り替わったら自動で元の線属性に戻すボタン。
+# sub_buttonsを持たない点でBUTTON_KINDS_GROUPとは別枠(中身を持つ「箱」
+# ではなく、単発の設定型ボタン)。doc/補助線ボタン_要件書.md参照。
+BUTTON_KIND_AUTO_ATTR = "auto_attr"
+
 _COLOR_RE_LEN = 7  # "#RRGGBB"
 
 
@@ -136,6 +142,83 @@ def new_group_button(name, kind, sub_buttons, icon=NO_ICON, color=DEFAULT_COLOR)
     }
 
 
+# 👑 線色1〜8+補助線色(9)、線種(実線〜二点鎖2)+補助線種(9)の、jw_cad
+# 「線属性」ダイアログ上のctrl_id。utils/line_attr_dialog.py（win32依存）
+# と同じ値をここにも持つ（このファイルはtkinter/win32非依存の方針の
+# ため、あちらをimportしない。小さな定数の重複はwindow_state.py等の
+# 既存パターンに合わせた許容範囲）。
+LINE_COLOR_CTRL_IDS = (1401, 1402, 1403, 1404, 1405, 1406, 1407, 1408, 1409)
+LINE_TYPE_CTRL_IDS = (2449, 2450, 2451, 2452, 2453, 2454, 2455, 2456, 2457)
+LINE_COLOR_LABELS = ["線色1", "線色2", "線色3", "線色4", "線色5", "線色6", "線色7", "線色8", "補助線色"]
+LINE_TYPE_LABELS = ["実線", "点線1", "点線2", "点線3", "一点鎖1", "一点鎖2", "二点鎖1", "二点鎖2", "補助線種"]
+DEFAULT_LINE_COLOR_CTRL_ID = 1409  # 補助線色
+DEFAULT_LINE_TYPE_CTRL_ID = 2457   # 補助線種
+
+# 👑 レイヤ/レイヤグループ番号(0〜15)の表示ラベル(16進1桁、jw_cadの
+# 表記に合わせて0〜9,A〜F)。「変更しない」を含めて設定画面のドロップ
+# ダウンに使う。
+LAYER_NUMBER_LABELS = ["変更しない"] + [f"{i:X}" for i in range(16)]
+
+DEFAULT_AUTO_ATTR_TARGET_COMMAND = "C001"  # 直線
+
+# 👑 補助線系ボタンの「対象」候補として画面に出す、実際に描画する系の
+# コマンドだけの一覧(jw_cad本体の「作図」メニューと同じ構成、実機の
+# メニュー総ざらいで確認済み)。「メイン」種別(39個)には戻る/進む/測定/
+# 表計算/属性取得/建具平面(ファイル選択ダイアログを開く)等、描画モードに
+# 入るわけではないコマンドも混ざっているため、それらをここで除外する。
+# 👑 これはUIの選択候補を絞るための一覧であって、データ側
+# (_normalize_button)はこのリスト外のtarget_commandも引き続き受け付ける
+# (直接JSON編集等での利用を塞がない。ユーザー方針:「実は使えるみたいに
+# しとかないと、使いたいときに改修が必要になるもんね」)。
+AUTO_ATTR_DRAW_TARGET_COMMAND_IDS = (
+    "C001",  # 線
+    "C002",  # 矩形
+    "C003",  # 円弧
+    "C004",  # 文字
+    "C005",  # 寸法
+    "C006",  # 2線
+    "C007",  # 中心線
+    "C008",  # 連続線
+    "C009",  # AUTO
+    "C010",  # 点
+    "C011",  # 接線
+    "C012",  # 接円
+    "C013",  # ハッチ
+    "C017",  # 多角形
+    "C019",  # 曲線
+)
+
+
+def new_auto_attr_button(
+    name, line_color=DEFAULT_LINE_COLOR_CTRL_ID, line_type=DEFAULT_LINE_TYPE_CTRL_ID,
+    line_width="", horizontal_vertical=False, layer_group=None, layer_number=None,
+    target_command=DEFAULT_AUTO_ATTR_TARGET_COMMAND, icon=NO_ICON, color=DEFAULT_COLOR,
+):
+    # 👑 「補助線」「配線」等、押すと線属性を自動で切り替えて指定コマンド
+    # へ移動し、他コマンドに切り替わったら自動で元の線属性に戻すボタン。
+    # horizontal_vertical: 直線コマンドの「水平･垂直」条件も自動でONに
+    # するか(ユーザー要望: 補助線は水平垂直をONにしたい)。
+    # layer_group/layer_number: 0〜15(Noneなら変更しない)。押した時に
+    # このレイヤグループ/レイヤへ自動で切り替え、離脱時に元へ戻す
+    # (ユーザー要望: 「レイヤをF-Fへ変更してほしい」)。
+    # target_command: 切替先コマンド(既定は直線=C001)。「連続線とか他の
+    # コマンドも選べる？」というユーザー要望に対応。
+    return {
+        "command_id": "",
+        "name": name,
+        "icon": icon or NO_ICON,
+        "color": color or DEFAULT_COLOR,
+        "kind": BUTTON_KIND_AUTO_ATTR,
+        "line_color": line_color,
+        "line_type": line_type,
+        "line_width": line_width or "",
+        "horizontal_vertical": bool(horizontal_vertical),
+        "layer_group": layer_group,
+        "layer_number": layer_number,
+        "target_command": target_command or DEFAULT_AUTO_ATTR_TARGET_COMMAND,
+    }
+
+
 def new_group(buttons=None):
     return {"buttons": list(buttons) if buttons else []}
 
@@ -169,9 +252,17 @@ def _normalize_button(raw, known_icons, allow_group=True):
     if not isinstance(raw, dict):
         return None
 
-    kind = raw.get("kind") if allow_group else BUTTON_KIND_SINGLE
-    if kind not in BUTTON_KINDS_GROUP:
-        kind = BUTTON_KIND_SINGLE
+    requested_kind = raw.get("kind")
+    if allow_group:
+        # 最上位のボタンはflyout/macro/auto_attrいずれも可。
+        allowed_kinds = BUTTON_KINDS_GROUP + (BUTTON_KIND_AUTO_ATTR,)
+    else:
+        # 👑 sub_buttons(箱の中身)は入れ子の箱(flyout/macro)は禁止だが、
+        # auto_attrは中身自体がsub_buttonsを持たないので入れ子にならず
+        # 許可する(ユーザー要望:「グループボタンの中には線属性ボタン
+        # 作れますか？」)。
+        allowed_kinds = (BUTTON_KIND_AUTO_ATTR,)
+    kind = requested_kind if requested_kind in allowed_kinds else BUTTON_KIND_SINGLE
 
     name_fallback = ""
     if kind == BUTTON_KIND_SINGLE:
@@ -194,7 +285,7 @@ def _normalize_button(raw, known_icons, allow_group=True):
 
     button = {"command_id": command_id, "name": name, "icon": icon, "color": color, "kind": kind}
 
-    if kind != BUTTON_KIND_SINGLE:
+    if kind in BUTTON_KINDS_GROUP:
         raw_sub = raw.get("sub_buttons")
         sub_buttons = []
         if isinstance(raw_sub, list):
@@ -209,6 +300,23 @@ def _normalize_button(raw, known_icons, allow_group=True):
         # Noneを返して丸ごと消していたため、空の箱がconfig.json保存の
         # たびに消滅していた)。
         button["sub_buttons"] = sub_buttons
+    elif kind == BUTTON_KIND_AUTO_ATTR:
+        line_color = raw.get("line_color")
+        if line_color not in LINE_COLOR_CTRL_IDS:
+            line_color = DEFAULT_LINE_COLOR_CTRL_ID
+        line_type = raw.get("line_type")
+        if line_type not in LINE_TYPE_CTRL_IDS:
+            line_type = DEFAULT_LINE_TYPE_CTRL_ID
+        button["line_color"] = line_color
+        button["line_type"] = line_type
+        button["line_width"] = str(raw.get("line_width") or "")
+        button["horizontal_vertical"] = bool(raw.get("horizontal_vertical"))
+        layer_group = raw.get("layer_group")
+        button["layer_group"] = layer_group if isinstance(layer_group, int) and 0 <= layer_group <= 15 else None
+        layer_number = raw.get("layer_number")
+        button["layer_number"] = layer_number if isinstance(layer_number, int) and 0 <= layer_number <= 15 else None
+        target_command = str(raw.get("target_command") or "").strip()
+        button["target_command"] = target_command or DEFAULT_AUTO_ATTR_TARGET_COMMAND
 
     return button
 

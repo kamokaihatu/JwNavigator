@@ -15,6 +15,19 @@
               "kind": "single"
             },
             {
+              "command_id": "",
+              "name": "補助線",
+              "icon": "",
+              "color": "#f0f0f0",
+              "kind": "auto_attr",
+              "line_color": 1409,
+              "line_type": 2457,
+              "line_width": "",
+              "horizontal_vertical": true,
+              "layer_group": null,
+              "layer_number": null
+            },
+            {
               "command_id": "C002",
               "name": "矩形",
               "icon": "rect",

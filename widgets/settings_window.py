@@ -3,10 +3,12 @@ import colorsys
 import importlib
 import os
 import re
+import threading
+import time
 import tkinter as tk
 from tkinter import ttk, messagebox
 
-from utils import palette_config, command_master, menu_prefs
+from utils import palette_config, command_master, menu_prefs, line_attr_dialog
 from widgets.button import ScaledCanvas
 
 ICON_NONE_LABEL = "アイコンなし"
@@ -15,6 +17,19 @@ _HEX_COLOR_RE = re.compile(r"^#[0-9a-fA-F]{6}$")
 
 def _is_valid_hex_color(value):
     return bool(_HEX_COLOR_RE.match(value or ""))
+
+
+def _get_jw_hwnd(manager_ref):
+    # 👑 「見本で選ぶ…」(LineAttrSwatchDialog)用。線属性ダイアログは
+    # jw_cad全体で共通の設定なので、複数ウィンドウが開いていてもどれか
+    # 1つのhwndで足りる。
+    if not manager_ref:
+        return None
+    try:
+        hwnds = list(manager_ref.active_launchers.keys())
+    except Exception:
+        return None
+    return hwnds[0] if hwnds else None
 
 
 def draw_icon_thumbnail(canvas, icon_name, image_refs, size=40):
@@ -408,14 +423,279 @@ class TextInputDialog(tk.Toplevel):
         self.destroy()
 
 
-class CommandPickerDialog(tk.Toplevel):
-    """コマンド追加ダイアログ。選択されたコマンド一覧をself.resultに残す。"""
+class LineAttrSwatchDialog(tk.Toplevel):
+    """線色・線種を、jw_cad本体の線属性ダイアログと同じ見本(実際の色・
+    実際の線種パターン)から選ぶダイアログ。従来はラベル名(「線色3」等)
+    だけのコンボボックスだったが、「線種決めるのに、jwのシステムは
+    使えないよねー」という指摘を受けて、線属性ダイアログを開いて
+    (変更せず)GetPixelで実際の色・線種パターンを読み取り、それを見本
+    として再現する(doc/シート管理_設計メモ.md参照)。
+    選択結果はself.result_color/self.result_typeにctrl_idで残る
+    (キャンセル時はNone)。"""
 
-    def __init__(self, master, existing_ids=None):
+    SWATCH_W, SWATCH_H = 60, 28
+
+    def __init__(self, master, hwnd, current_color=None, current_type=None, swatch_cache=None):
+        super().__init__(master)
+        self.result_color = None
+        self.result_type = None
+        self._selected_color = current_color
+        self._selected_type = current_type
+        self._color_cells = {}
+        self._type_cells = {}
+        self._color_swatches = {}
+        self._type_canvases = {}
+        self._hwnd = hwnd
+        # 👑 まとめ合意の確定仕様:
+        # 1) 開いたら読み込みはせず、色・線種グリッドの完成形レイアウトを
+        #    そのまま出す(まだ未読み込みなのでマス目は空白)。
+        # 2) 「📥 線色・線種の読み込み」を押した時だけjw_cad本体の線属性
+        #    ダイアログを呼びに行き、実際の色・線種を読み取る。
+        # 3) 直近の読み込み結果はセッション内キャッシュ(swatch_cache、
+        #    SettingsWindow→SidePanel/GroupContentsDialog経由の共有dict)
+        #    に残し、次に開いた時はそこから即表示する(自動でjw_cadには
+        #    触れない、あくまで前回ユーザーが自分で読み込んだ結果の再利用)。
+        #    色に違和感があれば改めて読み込みボタンを押せばよい。
+        self._cache = swatch_cache if swatch_cache is not None else {"data": None}
+        cached = self._cache.get("data")
+        self._swatches = cached
+        self._attempted = cached is not None
+
+        self.title("線色・線種を見本から選ぶ")
+        self.configure(bg="#f0f0f0")
+        self.transient(master)
+        self.resizable(False, False)
+        self.attributes("-topmost", True)
+
+        self._body = None
+        self._build_body()
+        self._center_on_screen()
+
+        self.protocol("WM_DELETE_WINDOW", self._on_cancel)
+        self.grab_set()
+
+    def _center_on_screen(self):
+        # 👑 「すべてが左上になってるから」「画面の真ん中でやって」への
+        # 対応。既定だとToplevelが画面左上に出るため、毎回(内容によって
+        # サイズが変わるstateごとに)実サイズを測ってから中央寄せし直す。
+        self.update_idletasks()
+        w = self.winfo_reqwidth()
+        h = self.winfo_reqheight()
+        sw = self.winfo_screenwidth()
+        sh = self.winfo_screenheight()
+        x = max(0, (sw - w) // 2)
+        y = max(0, (sh - h) // 2)
+        self.geometry(f"+{x}+{y}")
+
+    def _load_and_build(self):
+        # 👑 【重大】自分自身をtopmostにしたままjw_cad本体の線属性ダイアログ
+        # を開くと、本物のダイアログが自分の裏に隠れてしまい、GetPixelで
+        # 自分自身の白い背景を読み取ってしまう(実機で発覚: 全部白/実線に
+        # なる不具合)。以前はwithdraw()で自分を完全に消していたが、
+        # 「ボタン押したら画面きえちゃうの？残しておけない？」への対応で、
+        # 消す(withdraw)のではなくtopmostを一旦外すだけにする。本物の
+        # jw_cadダイアログ側は_open_dialog内で明示的にHWND_TOPMOSTへ
+        # 上げているので、こちらがtopmostを譲れば自然に向こうが前面に来て
+        # 正しく読み取れる。自分の窓自体は画面に残ったまま(裏に一瞬回る
+        # だけ)。
+        self.attributes("-topmost", False)
+        t0 = time.time()
+        # 👑 「読めたもの1個ずつ更新していけたら臨場感あるけどできそう？」
+        # への対応。1項目読めるごとにon_color/on_typeコールバックで既存の
+        # (今は空白の)マスをその場で塗り替えていく。既に画面には blank な
+        # グリッドが出来上がっているので、全部読み終わった後で改めて
+        # _build_body()し直す必要はない(成功時)。
+        swatches = line_attr_dialog.capture_swatches(
+            self._hwnd, on_color=self._update_color_swatch, on_type=self._update_type_swatch,
+        )
+        elapsed = time.time() - t0
+        print(f"[LineAttrSwatchDialog] 読み取り: 成功={swatches is not None} 所要={elapsed:.2f}秒")
+        self.attributes("-topmost", True)
+        self._swatches = swatches
+        self._attempted = True
+        if swatches is not None:
+            self._cache["data"] = swatches
+        else:
+            self._build_body()
+            self._center_on_screen()
+
+    def _build_body(self):
+        if self._body is not None:
+            self._body.destroy()
+        self._color_cells = {}
+        self._type_cells = {}
+        self._color_swatches = {}
+        self._type_canvases = {}
+        body = ttk.Frame(self)
+        body.pack(side="top", fill="both", expand=True)
+        self._body = body
+        swatches = self._swatches
+
+        if self._attempted and swatches is None:
+            ttk.Label(
+                body, text="jw_cadから線属性を読み取れませんでした。\nウィンドウが開いているか確認してください。",
+                justify="center", padding=16,
+            ).pack()
+        else:
+            # 👑 未読み込み(swatches is None かつ self._attempted も False)の
+            # 場合は、色・パターンをNoneのまま渡して空白マスとして描画する
+            # (キャッシュ済み/読み込み済みなら実データをそのまま使う)。
+            color_items = swatches["colors"] if swatches else [(cid, None) for cid in line_attr_dialog.COLOR_CTRL_IDS]
+            type_items = swatches["types"] if swatches else [(cid, None) for cid in line_attr_dialog.TYPE_CTRL_IDS]
+
+            ttk.Label(body, text="線色", font=("Meiryo UI", 9, "bold")).pack(side="top", anchor="w", padx=10, pady=(10, 2))
+            color_frame = ttk.Frame(body)
+            color_frame.pack(side="top", padx=10)
+            for i, (cid, hex_color) in enumerate(color_items):
+                label = line_attr_dialog.COLOR_LABELS[i]
+                cell = self._build_color_cell(color_frame, cid, hex_color, label)
+                cell.grid(row=0, column=i, padx=2, pady=2)
+
+            ttk.Label(body, text="線種", font=("Meiryo UI", 9, "bold")).pack(side="top", anchor="w", padx=10, pady=(10, 2))
+            type_frame = ttk.Frame(body)
+            type_frame.pack(side="top", padx=10)
+            for i, (cid, pattern) in enumerate(type_items):
+                label = line_attr_dialog.TYPE_LABELS[i]
+                cell = self._build_type_cell(type_frame, cid, pattern, label)
+                cell.grid(row=i // 3, column=i % 3, padx=3, pady=3)
+
+        # 👑 「線色・線種の更新じゃなくて読み込みにして。OKの上に少し
+        # 大きめボタンで作ろう」への対応。初回読み込み・基本設定変更後の
+        # 再読み込みを兼ねる、同じボタン一つだけ(常にOKのすぐ上に置く)。
+        load_row = ttk.Frame(body)
+        load_row.pack(side="top", fill="x", padx=10, pady=(6, 0))
+        ttk.Button(
+            load_row, text="📥 線色・線種の読み込み", command=self._load_and_build,
+        ).pack(fill="x", ipady=6)
+        ttk.Label(
+            body, text="(10秒程度かかります。)", font=("Meiryo UI", 8), foreground="#888888",
+        ).pack(side="top", pady=(2, 2))
+
+        footer = ttk.Frame(body)
+        footer.pack(side="top", fill="x", padx=10, pady=(4, 10))
+        ttk.Button(footer, text="OK", command=self._on_ok, width=10).pack(side="right")
+        ttk.Button(footer, text="キャンセル", command=self._on_cancel, width=10).pack(side="right", padx=(0, 6))
+
+        self._refresh_selection()
+
+    def _build_color_cell(self, parent, ctrl_id, hex_color, label):
+        # 👑 hex_color=None は「まだ読み込んでいない」空白マス(キャッシュ
+        # 済み/読み込み済みの実データと区別するため、周囲の背景色と同じ
+        # ままにして塗りつぶさない。線色2=白との混同も避けられる)。
+        swatch_bg = hex_color if hex_color is not None else "#f0f0f0"
+        cell = tk.Frame(parent, bg="#f0f0f0", cursor="hand2", highlightthickness=2, highlightbackground="#f0f0f0")
+        swatch = tk.Frame(cell, width=self.SWATCH_W, height=self.SWATCH_H, bg=swatch_bg, relief="solid", bd=1)
+        swatch.pack_propagate(False)
+        swatch.pack(padx=3, pady=(3, 0))
+        tk.Label(cell, text=label, bg="#f0f0f0", font=("Meiryo UI", 7)).pack(pady=(0, 3))
+        for w in (cell, swatch):
+            w.bind("<Button-1>", lambda e, c=ctrl_id: self._pick_color(c))
+        self._color_cells[ctrl_id] = cell
+        self._color_swatches[ctrl_id] = swatch
+        return cell
+
+    def _build_type_cell(self, parent, ctrl_id, pattern, label):
+        cell = tk.Frame(parent, bg="#f0f0f0", cursor="hand2", highlightthickness=2, highlightbackground="#f0f0f0")
+        canvas = tk.Canvas(cell, width=self.SWATCH_W + 20, height=16, bg="#ffffff",
+                            highlightthickness=1, highlightbackground="#cccccc")
+        canvas.pack(padx=3, pady=(3, 0))
+        # 👑 pattern=None は「まだ読み込んでいない」空白マス。読み取り済み
+        # だが個別に失敗した場合(全Falseパターン)の実線フォールバックとは
+        # 区別し、こちらは何も描かず本当に空白のままにする。
+        if pattern is not None:
+            self._draw_pattern(canvas, pattern)
+        tk.Label(cell, text=label, bg="#f0f0f0", font=("Meiryo UI", 7)).pack(pady=(0, 3))
+        for w in (cell, canvas):
+            w.bind("<Button-1>", lambda e, c=ctrl_id: self._pick_type(c))
+        self._type_cells[ctrl_id] = cell
+        self._type_canvases[ctrl_id] = canvas
+        return cell
+
+    def _update_color_swatch(self, ctrl_id, hex_color):
+        # 👑 「読めたもの1個ずつ更新していけたら臨場感あるけど」への対応。
+        # capture_swatchesから1項目読めるたびに呼ばれ、そのマスだけ即座に
+        # 塗り替える(呼び出し元と同じメインスレッドなので、Tkinter操作は
+        # そのまま安全に行える)。
+        swatch = self._color_swatches.get(ctrl_id)
+        if swatch is not None:
+            swatch.configure(bg=hex_color)
+            self.update_idletasks()
+
+    def _update_type_swatch(self, ctrl_id, pattern):
+        canvas = self._type_canvases.get(ctrl_id)
+        if canvas is not None:
+            canvas.delete("all")
+            self._draw_pattern(canvas, pattern)
+            self.update_idletasks()
+
+    def _draw_pattern(self, canvas, pattern):
+        w = self.SWATCH_W + 20
+        y = 8
+        n = len(pattern) or 1
+        if not any(pattern):
+            # 👑 実機で稀に見本パターンの読み取りに失敗する(補助線種等)。
+            # 空白のまま誤解させないよう、素直な実線で代用する。
+            canvas.create_line(4, y, w - 4, y, fill="#333333", width=1)
+            return
+        run_start = None
+        for i, drawn in enumerate(pattern):
+            x = 4 + (w - 8) * i / n
+            if drawn and run_start is None:
+                run_start = x
+            elif not drawn and run_start is not None:
+                canvas.create_line(run_start, y, x, y, fill="#333333", width=2)
+                run_start = None
+        if run_start is not None:
+            canvas.create_line(run_start, y, w - 4, y, fill="#333333", width=2)
+
+    def _pick_color(self, ctrl_id):
+        self._selected_color = ctrl_id
+        self._refresh_selection()
+
+    def _pick_type(self, ctrl_id):
+        self._selected_type = ctrl_id
+        self._refresh_selection()
+
+    def _refresh_selection(self):
+        for cid, cell in self._color_cells.items():
+            cell.configure(highlightbackground=("#4d94ff" if cid == self._selected_color else "#f0f0f0"))
+        for cid, cell in self._type_cells.items():
+            cell.configure(highlightbackground=("#4d94ff" if cid == self._selected_type else "#f0f0f0"))
+
+    def _on_ok(self):
+        self.result_color = self._selected_color
+        self.result_type = self._selected_type
+        self.destroy()
+
+    def _on_cancel(self):
+        self.result_color = None
+        self.result_type = None
+        self.destroy()
+
+
+class CommandPickerDialog(tk.Toplevel):
+    """コマンド追加ダイアログ。選択されたコマンド一覧をself.resultに残す。
+    👑 「箱を作る」「線属性ボタンを作る」を専用の確認ダイアログに分離
+    したところ、「コマンドをたくさん追加したいのに毎回別メニューが挟まる
+    のが邪魔」という指摘があったため、special_kindsで指定した特殊行を
+    このリストの先頭に混ぜて出す方式にした(常時表示、検索/種別/分類の
+    絞り込みの影響を受けない)。選ばれた特殊行はself.result_specialsに
+    種類("box"/"auto_attr")のリストとして残る(self.resultは今まで通り
+    実コマンド行のみ)。"""
+
+    SPECIAL_LABELS = {
+        "box": "➕ グループボタンを作る…",
+        "auto_attr": "➕ 線属性ボタンを作る…",
+    }
+
+    def __init__(self, master, existing_ids=None, special_kinds=()):
         super().__init__(master)
         self.result = []
+        self.result_specials = []
         self._existing_ids = existing_ids or set()
         self._all_rows = command_master.list_available_commands()
+        self._special_kinds = list(special_kinds)
+        self._visible_specials = []
         self.filtered = []
 
         self.title("コマンドを追加")
@@ -444,6 +724,15 @@ class CommandPickerDialog(tk.Toplevel):
             var = tk.BooleanVar(value=True)
             self.kind_vars[kind] = var
             ttk.Checkbutton(kind_bar, text=kind, variable=var, command=self._apply_filter).pack(side="left", padx=4)
+        # 👑 「箱を作る」「線属性ボタンを作る」の特殊行も、種別フィルタの
+        # 一員としてON/OFFできるようにする(ユーザー要望)。special_kindsを
+        # 渡していない呼び出し元(GroupContentsDialog等で使わない場合)は
+        # このチェックボックス自体を出さない。
+        self.show_specials_var = tk.BooleanVar(value=True)
+        if self._special_kinds:
+            ttk.Checkbutton(
+                kind_bar, text="特殊", variable=self.show_specials_var, command=self._apply_filter,
+            ).pack(side="left", padx=4)
 
         cat_bar = ttk.Frame(self)
         cat_bar.pack(side="top", fill="x", padx=8, pady=(2, 6))
@@ -488,7 +777,10 @@ class CommandPickerDialog(tk.Toplevel):
                 continue
             self.filtered.append(row)
 
+        self._visible_specials = self._special_kinds if self.show_specials_var.get() else []
         self.listbox.delete(0, tk.END)
+        for key in self._visible_specials:
+            self.listbox.insert(tk.END, self.SPECIAL_LABELS[key])
         for row in self.filtered:
             suffix = " ※配置済" if row["command_id"] in self._existing_ids else ""
             text = f"{row['command_id']}  {row['toolbar_name']}  ({row['command_kind']}/{row['category']}){suffix}"
@@ -496,11 +788,14 @@ class CommandPickerDialog(tk.Toplevel):
 
     def _on_ok(self, event=None):
         indices = self.listbox.curselection()
-        self.result = [self.filtered[i] for i in indices]
+        n_special = len(self._visible_specials)
+        self.result_specials = [self._visible_specials[i] for i in indices if i < n_special]
+        self.result = [self.filtered[i - n_special] for i in indices if i >= n_special]
         self.destroy()
 
     def _on_cancel(self):
         self.result = []
+        self.result_specials = []
         self.destroy()
 
 
@@ -513,16 +808,22 @@ class GroupContentsDialog(tk.Toplevel):
     選択/並べ替えロジックがそのままでは使えないため)。
     OKを押すとself.resultに編集後のリストが残る(キャンセル時はNone)。"""
 
-    def __init__(self, master, sub_buttons):
+    def __init__(self, master, sub_buttons, manager_ref=None, swatch_cache=None):
         super().__init__(master)
         self.result = None
+        self.manager_ref = manager_ref
+        self.swatch_cache = swatch_cache if swatch_cache is not None else {"data": None}
         self._buttons = [dict(b) for b in sub_buttons]
+        self._loading_detail = False
+        self._icon_preview_refs = []
 
         self.title("中身を編集")
-        self.geometry("420x480")
+        self.geometry("520x680")
         self.configure(bg="#f0f0f0")
         self.attributes("-topmost", True)
         self.transient(master)
+
+        self.name_var = tk.StringVar()
 
         body = ttk.Frame(self)
         body.pack(side="top", fill="both", expand=True, padx=8, pady=8)
@@ -534,6 +835,7 @@ class GroupContentsDialog(tk.Toplevel):
         self.listbox.configure(yscrollcommand=scroll.set)
         self.listbox.pack(side="left", fill="both", expand=True)
         scroll.pack(side="right", fill="y")
+        self.listbox.bind("<<ListboxSelect>>", lambda e: self._load_detail())
 
         ops = ttk.Frame(body)
         ops.pack(side="right", fill="y", padx=(6, 0))
@@ -542,9 +844,130 @@ class GroupContentsDialog(tk.Toplevel):
         ttk.Separator(ops, orient="horizontal").pack(fill="x", pady=6)
         ttk.Button(ops, text="追加…", width=8, command=self._on_add).pack(pady=2)
         ttk.Button(ops, text="削除", width=8, command=self._on_remove).pack(pady=2)
-        ttk.Separator(ops, orient="horizontal").pack(fill="x", pady=6)
-        ttk.Button(ops, text="アイコン…", width=8, command=self._on_pick_icon).pack(pady=2)
-        ttk.Button(ops, text="色…", width=8, command=self._on_pick_color).pack(pady=2)
+
+        # 👑 「ボタン詳細は外の画面(SidePanel)と同じようにして」という
+        # 要望のため、アイコン/色の変更をops列の小さいボタンから、
+        # SidePanel本体と同じ構成(コマンド/表示名/アイコン/背景色)の
+        # 専用欄に置き換えた。
+        detail = ttk.LabelFrame(self, text="ボタン詳細")
+        detail.pack(side="top", fill="x", padx=8, pady=(0, 4))
+
+        ttk.Label(detail, text="コマンド:").grid(row=0, column=0, sticky="e", padx=6, pady=4)
+        self.cmd_var = tk.StringVar()
+        ttk.Label(detail, textvariable=self.cmd_var, wraplength=280, justify="left").grid(
+            row=0, column=1, sticky="w", padx=6, pady=4
+        )
+
+        ttk.Label(detail, text="表示名:").grid(row=1, column=0, sticky="e", padx=6, pady=4)
+        self.name_entry = ttk.Entry(detail, textvariable=self.name_var, width=18)
+        self.name_entry.grid(row=1, column=1, sticky="w", padx=6, pady=4)
+        self.name_var.trace_add("write", self._on_name_changed)
+
+        ttk.Label(detail, text="アイコン:").grid(row=2, column=0, sticky="e", padx=6, pady=4)
+        icon_frame = ttk.Frame(detail)
+        icon_frame.grid(row=2, column=1, sticky="w", padx=6, pady=4)
+        self.icon_preview = tk.Canvas(icon_frame, width=28, height=28, bg="#ffffff",
+                                       highlightthickness=1, highlightbackground="#cccccc")
+        self.icon_preview.pack(side="left")
+        self.icon_name_label = ttk.Label(icon_frame, text="", width=12)
+        self.icon_name_label.pack(side="left", padx=(4, 6))
+        self.pick_icon_btn = ttk.Button(icon_frame, text="アイコンを選ぶ…", command=self._on_pick_icon)
+        self.pick_icon_btn.pack(side="left")
+
+        ttk.Label(detail, text="背景色:").grid(row=3, column=0, sticky="e", padx=6, pady=4)
+        color_frame = ttk.Frame(detail)
+        color_frame.grid(row=3, column=1, sticky="w", padx=6, pady=4)
+        self.color_swatch = tk.Label(color_frame, width=4, relief="solid", bd=1, bg=palette_config.DEFAULT_COLOR)
+        self.color_swatch.pack(side="left")
+        self.pick_color_btn = ttk.Button(color_frame, text="色を選ぶ…", command=self._on_pick_color)
+        self.pick_color_btn.pack(side="left", padx=6)
+        self.reset_color_btn = ttk.Button(color_frame, text="既定に戻す", command=self._on_reset_color)
+        self.reset_color_btn.pack(side="left")
+
+        # 👑 「線属性ボタンってどこで設定するんだっけ」「中の話だね」への
+        # 対応。箱の中身が補助線系(kind="auto_attr")の場合だけ、外の画面
+        # (SidePanel)と同じ線色/線種/線幅/水平垂直/レイヤ/対象コマンドの
+        # 設定欄を出す(単一選択時のみ、複数選択では出さない)。
+        self.detail_separator = ttk.Separator(detail, orient="horizontal")
+        self.detail_separator.grid(row=4, column=0, columnspan=2, sticky="ew", padx=6, pady=(2, 4))
+
+        auto_attr_frame = ttk.Frame(detail)
+        self.auto_attr_frame = auto_attr_frame
+        ttk.Label(auto_attr_frame, text="線色:").pack(side="left")
+        self.auto_attr_color_var = tk.StringVar()
+        self.auto_attr_color_combo = ttk.Combobox(
+            auto_attr_frame, textvariable=self.auto_attr_color_var, values=palette_config.LINE_COLOR_LABELS,
+            state="readonly", width=7,
+        )
+        self.auto_attr_color_combo.pack(side="left", padx=(2, 8))
+        self.auto_attr_color_combo.bind("<<ComboboxSelected>>", self._on_auto_attr_changed)
+
+        ttk.Label(auto_attr_frame, text="線種:").pack(side="left")
+        self.auto_attr_type_var = tk.StringVar()
+        self.auto_attr_type_combo = ttk.Combobox(
+            auto_attr_frame, textvariable=self.auto_attr_type_var, values=palette_config.LINE_TYPE_LABELS,
+            state="readonly", width=7,
+        )
+        self.auto_attr_type_combo.pack(side="left", padx=(2, 8))
+        self.auto_attr_type_combo.bind("<<ComboboxSelected>>", self._on_auto_attr_changed)
+
+        ttk.Label(auto_attr_frame, text="線幅:").pack(side="left")
+        self.auto_attr_width_var = tk.StringVar()
+        self.auto_attr_width_entry = ttk.Entry(auto_attr_frame, textvariable=self.auto_attr_width_var, width=5)
+        self.auto_attr_width_entry.pack(side="left", padx=(2, 8))
+        self.auto_attr_width_var.trace_add("write", self._on_auto_attr_width_changed)
+
+        self.auto_attr_hv_var = tk.BooleanVar()
+        self.auto_attr_hv_check = ttk.Checkbutton(
+            auto_attr_frame, text="水平･垂直もON", variable=self.auto_attr_hv_var, command=self._on_auto_attr_changed,
+        )
+        self.auto_attr_hv_check.pack(side="left", padx=(0, 8))
+
+        # 👑 「見本で選ぶ…」等の設定用ボタンは行末(右側)へ(ユーザー要望:
+        # 「右に設定ボタンをいろいろ持ってきたらいいんじゃない？」)。読み込み
+        # は画面を開いた後にボタンを押した時だけ走るようになったため、
+        # 「(5秒待つ)」の事前注記は不要になった(削除)。
+        ttk.Button(auto_attr_frame, text="見本で選ぶ…", command=self._on_pick_swatches).pack(side="left", padx=(0, 8))
+
+        auto_attr_frame2 = ttk.Frame(detail)
+        self.auto_attr_frame2 = auto_attr_frame2
+        ttk.Label(auto_attr_frame2, text="レイヤG:").pack(side="left")
+        self.auto_attr_layer_group_var = tk.StringVar()
+        self.auto_attr_layer_group_combo = ttk.Combobox(
+            auto_attr_frame2, textvariable=self.auto_attr_layer_group_var,
+            values=palette_config.LAYER_NUMBER_LABELS, state="readonly", width=7,
+        )
+        self.auto_attr_layer_group_combo.pack(side="left", padx=(2, 8))
+        self.auto_attr_layer_group_combo.bind("<<ComboboxSelected>>", self._on_auto_attr_changed)
+
+        ttk.Label(auto_attr_frame2, text="レイヤ:").pack(side="left")
+        self.auto_attr_layer_number_var = tk.StringVar()
+        self.auto_attr_layer_number_combo = ttk.Combobox(
+            auto_attr_frame2, textvariable=self.auto_attr_layer_number_var,
+            values=palette_config.LAYER_NUMBER_LABELS, state="readonly", width=7,
+        )
+        self.auto_attr_layer_number_combo.pack(side="left", padx=(2, 8))
+        self.auto_attr_layer_number_combo.bind("<<ComboboxSelected>>", self._on_auto_attr_changed)
+
+        ttk.Label(auto_attr_frame2, text="対象:").pack(side="left")
+        # 👑 対象を「メイン」種別(線・矩形・連続線等)だけに絞る。
+        # ファイル操作/一発系コマンドはCHECKED状態を持たず、「離脱したら
+        # 自動で戻す」の検知ができないため選ばせない(ユーザー指摘:
+        # 「コマンド全部いれたら問題おきないかな。クラッシュしそうじゃ
+        # ない？」→ クラッシュはしないが、選ぶと線属性が戻らなくなる
+        # 実害があるため制限した)。
+        self._target_command_options = [
+            (row["command_id"], f"{row['command_id']} {row['toolbar_name']}")
+            for row in command_master.list_available_commands()
+            if row["command_id"] in palette_config.AUTO_ATTR_DRAW_TARGET_COMMAND_IDS
+        ]
+        self.auto_attr_target_var = tk.StringVar()
+        self.auto_attr_target_combo = ttk.Combobox(
+            auto_attr_frame2, textvariable=self.auto_attr_target_var,
+            values=[label for _cid, label in self._target_command_options], state="readonly", width=12,
+        )
+        self.auto_attr_target_combo.pack(side="left", padx=(2, 0))
+        self.auto_attr_target_combo.bind("<<ComboboxSelected>>", self._on_auto_attr_changed)
 
         ttk.Label(self, text="(複数選択してまとめてアイコン・色を変更できます)",
                   foreground="#888888").pack(side="top", anchor="w", padx=8)
@@ -556,6 +979,8 @@ class GroupContentsDialog(tk.Toplevel):
 
         self.protocol("WM_DELETE_WINDOW", self._on_cancel)
         self._rebuild_list()
+        self._set_detail_enabled(False, False)
+        self._load_detail()
         self.grab_set()
 
     def _rebuild_list(self, reselect=None):
@@ -566,16 +991,174 @@ class GroupContentsDialog(tk.Toplevel):
         for i in (reselect or []):
             if 0 <= i < len(self._buttons):
                 self.listbox.selection_set(i)
+        self._load_detail()
 
     def _selected_indices(self):
         return list(self.listbox.curselection())
 
+    def _set_detail_enabled(self, name_enabled, batch_enabled):
+        self.name_entry.configure(state=("normal" if name_enabled else "disabled"))
+        batch_state = "normal" if batch_enabled else "disabled"
+        self.pick_icon_btn.configure(state=batch_state)
+        self.pick_color_btn.configure(state=batch_state)
+        self.reset_color_btn.configure(state=batch_state)
+
+    def _update_icon_preview(self, icon_name):
+        self.icon_preview.delete("all")
+        self._icon_preview_refs = []
+        if icon_name:
+            draw_icon_thumbnail(self.icon_preview, icon_name, self._icon_preview_refs, size=28)
+        self.icon_name_label.configure(text=icon_name if icon_name else ICON_NONE_LABEL)
+
+    def _set_auto_attr_section_visible(self, visible):
+        if visible:
+            self.detail_separator.grid()
+            self.auto_attr_frame.grid(row=5, column=0, columnspan=2, sticky="w", padx=6, pady=(0, 2))
+            self.auto_attr_frame2.grid(row=6, column=0, columnspan=2, sticky="w", padx=6, pady=(0, 4))
+        else:
+            self.detail_separator.grid_remove()
+            self.auto_attr_frame.grid_remove()
+            self.auto_attr_frame2.grid_remove()
+
+    def _load_detail(self):
+        self._loading_detail = True
+        try:
+            indices = self._selected_indices()
+            if not indices:
+                self.cmd_var.set("")
+                self.name_var.set("")
+                self._update_icon_preview("")
+                self.color_swatch.configure(bg=palette_config.DEFAULT_COLOR)
+                self._set_detail_enabled(False, False)
+                self._set_auto_attr_section_visible(False)
+                return
+            first = self._buttons[indices[0]]
+            is_auto_attr = len(indices) == 1 and first.get("kind") == palette_config.BUTTON_KIND_AUTO_ATTR
+            if len(indices) == 1:
+                if is_auto_attr:
+                    target_cid = first.get("target_command") or palette_config.DEFAULT_AUTO_ATTR_TARGET_COMMAND
+                    target_label = next((lbl for cid, lbl in self._target_command_options if cid == target_cid), target_cid)
+                    self.cmd_var.set(f"(線属性・{target_label})")
+                    color_idx = palette_config.LINE_COLOR_CTRL_IDS.index(first["line_color"])
+                    type_idx = palette_config.LINE_TYPE_CTRL_IDS.index(first["line_type"])
+                    self.auto_attr_color_var.set(palette_config.LINE_COLOR_LABELS[color_idx])
+                    self.auto_attr_type_var.set(palette_config.LINE_TYPE_LABELS[type_idx])
+                    self.auto_attr_width_var.set(first.get("line_width") or "")
+                    self.auto_attr_hv_var.set(bool(first.get("horizontal_vertical")))
+
+                    def _layer_value_to_label(value):
+                        return palette_config.LAYER_NUMBER_LABELS[0] if value is None else palette_config.LAYER_NUMBER_LABELS[value + 1]
+
+                    self.auto_attr_layer_group_var.set(_layer_value_to_label(first.get("layer_group")))
+                    self.auto_attr_layer_number_var.set(_layer_value_to_label(first.get("layer_number")))
+                    self.auto_attr_target_var.set(target_label)
+                else:
+                    row = command_master.get_by_command_id(first["command_id"]) or {}
+                    category = (row.get("category") or "").strip()
+                    self.cmd_var.set(f"{first['command_id']} ({category})" if category else first["command_id"])
+                self.name_var.set(first["name"])
+                self._set_detail_enabled(True, True)
+            else:
+                self.cmd_var.set(f"{len(indices)}個選択中")
+                self.name_var.set("")
+                self._set_detail_enabled(False, True)
+            self._update_icon_preview(first.get("icon", ""))
+            self.color_swatch.configure(bg=first.get("color") or palette_config.DEFAULT_COLOR)
+            self._set_auto_attr_section_visible(is_auto_attr)
+        finally:
+            self._loading_detail = False
+
+    def _on_auto_attr_changed(self, event=None):
+        if self._loading_detail:
+            return
+        indices = self._selected_indices()
+        if len(indices) != 1 or self._buttons[indices[0]].get("kind") != palette_config.BUTTON_KIND_AUTO_ATTR:
+            return
+        btn = self._buttons[indices[0]]
+        try:
+            color_idx = palette_config.LINE_COLOR_LABELS.index(self.auto_attr_color_var.get())
+            btn["line_color"] = palette_config.LINE_COLOR_CTRL_IDS[color_idx]
+        except ValueError:
+            pass
+        try:
+            type_idx = palette_config.LINE_TYPE_LABELS.index(self.auto_attr_type_var.get())
+            btn["line_type"] = palette_config.LINE_TYPE_CTRL_IDS[type_idx]
+        except ValueError:
+            pass
+        btn["horizontal_vertical"] = self.auto_attr_hv_var.get()
+
+        def _label_to_layer_value(label):
+            try:
+                idx = palette_config.LAYER_NUMBER_LABELS.index(label)
+            except ValueError:
+                return None
+            return None if idx == 0 else idx - 1
+
+        btn["layer_group"] = _label_to_layer_value(self.auto_attr_layer_group_var.get())
+        btn["layer_number"] = _label_to_layer_value(self.auto_attr_layer_number_var.get())
+
+        selected_label = self.auto_attr_target_var.get()
+        for cid, label in self._target_command_options:
+            if label == selected_label:
+                btn["target_command"] = cid
+                break
+
+    def _on_auto_attr_width_changed(self, *args):
+        if self._loading_detail:
+            return
+        indices = self._selected_indices()
+        if len(indices) != 1 or self._buttons[indices[0]].get("kind") != palette_config.BUTTON_KIND_AUTO_ATTR:
+            return
+        self._buttons[indices[0]]["line_width"] = self.auto_attr_width_var.get()
+
+    def _on_pick_swatches(self):
+        indices = self._selected_indices()
+        if len(indices) != 1 or self._buttons[indices[0]].get("kind") != palette_config.BUTTON_KIND_AUTO_ATTR:
+            return
+        hwnd = _get_jw_hwnd(self.manager_ref)
+        if not hwnd:
+            messagebox.showwarning("見本を読み取れません", "jw_cadのウィンドウが見つかりません。", parent=self)
+            return
+        btn = self._buttons[indices[0]]
+        dlg = LineAttrSwatchDialog(
+            self, hwnd, current_color=btn.get("line_color"), current_type=btn.get("line_type"),
+            swatch_cache=self.swatch_cache,
+        )
+        self.wait_window(dlg)
+        if dlg.result_color is not None:
+            btn["line_color"] = dlg.result_color
+        if dlg.result_type is not None:
+            btn["line_type"] = dlg.result_type
+        self._load_detail()
+
+    def _on_name_changed(self, *args):
+        if self._loading_detail:
+            return
+        indices = self._selected_indices()
+        if len(indices) != 1:
+            return
+        self._buttons[indices[0]]["name"] = self.name_var.get()
+        sel = list(self.listbox.curselection())
+        self._rebuild_list(reselect=sel)
+
+    def _on_reset_color(self):
+        indices = self._selected_indices()
+        if not indices:
+            return
+        for i in indices:
+            self._buttons[i]["color"] = palette_config.DEFAULT_COLOR
+        self.color_swatch.configure(bg=palette_config.DEFAULT_COLOR)
+
     def _on_add(self):
+        # 👑 「グループボタンの中には線属性ボタン作れますか？」への対応。
+        # 箱(box)は入れ子禁止だがauto_attrは中身自体が入れ物を持たない
+        # ので許可する(palette_config._normalize_button側でも許可済み)。
         existing_ids = {b["command_id"] for b in self._buttons}
-        dlg = CommandPickerDialog(self, existing_ids=existing_ids)
+        dlg = CommandPickerDialog(self, existing_ids=existing_ids, special_kinds=("auto_attr",))
         self.wait_window(dlg)
         rows = dlg.result
-        if not rows:
+        specials = dlg.result_specials
+        if not rows and not specials:
             return
         known_icons = set(palette_config.list_all_icon_names())
         for row in rows:
@@ -593,6 +1176,13 @@ class GroupContentsDialog(tk.Toplevel):
                 row["command_id"], row["toolbar_name"], icon=default_icon, color=default_color
             ))
             existing_ids.add(row["command_id"])
+        for key in specials:
+            if key != "auto_attr":
+                continue
+            name_dlg = TextInputDialog(self, title="線属性ボタンを追加", label="名前:", initial="補助線")
+            self.wait_window(name_dlg)
+            if name_dlg.result:
+                self._buttons.append(palette_config.new_auto_attr_button(name_dlg.result, horizontal_vertical=True))
         self._rebuild_list()
 
     def _on_remove(self):
@@ -651,10 +1241,12 @@ class GroupContentsDialog(tk.Toplevel):
 
 
 class SidePanel(ttk.Frame):
-    def __init__(self, master, side, side_cfg):
+    def __init__(self, master, side, side_cfg, manager_ref=None, swatch_cache=None):
         super().__init__(master)
         self.side = side
         self.side_cfg = side_cfg
+        self.manager_ref = manager_ref
+        self.swatch_cache = swatch_cache if swatch_cache is not None else {"data": None}
         self.selected = None
         self._selected_group = None
         self._selected_indices = []
@@ -711,10 +1303,13 @@ class SidePanel(ttk.Frame):
         ttk.Button(ops, text="◀", width=6, command=self._move_prev_group).pack(pady=2)
         ttk.Button(ops, text="▶", width=6, command=self._move_next_group).pack(pady=2)
         ttk.Separator(ops, orient="horizontal").pack(fill="x", pady=6)
+        # 👑 「追加」「箱追加」「線属性追加」の3ボタンを1つに集約(ユーザー
+        # 要望: 「箱と線属性を追加の中に入れたら？」)。操作列の縦の長さが
+        # 設定ウィンドウ全体の高さの下限になっていた(ボタン配置エリアが
+        # これより縮められない主因)ため、統合してその分を削れるように
+        # した。
         ttk.Button(ops, text="追加", width=6, command=self._on_add).pack(pady=2)
         ttk.Button(ops, text="削除", width=6, command=self._on_remove).pack(pady=2)
-        ttk.Separator(ops, orient="horizontal").pack(fill="x", pady=6)
-        ttk.Button(ops, text="箱追加", width=6, command=self._on_add_box).pack(pady=2)
         ttk.Separator(ops, orient="horizontal").pack(fill="x", pady=6)
         self.add_group_btn = ttk.Button(ops, text="＋列", width=6, command=self._on_add_group)
         self.add_group_btn.pack(pady=2)
@@ -755,23 +1350,208 @@ class SidePanel(ttk.Frame):
         ttk.Label(lf, text="(リストでCtrl/Shiftクリックすると複数選択してまとめて色・アイコン変更できます)",
                   foreground="#888888").grid(row=4, column=0, columnspan=2, sticky="w", padx=6, pady=(0, 4))
 
-        # 👑 フライアウト/マクロの「箱」ボタンを選んだ時だけ使う操作。
-        # 普通のコマンドボタンでは常に無効(disabled)のまま。
-        ttk.Separator(lf, orient="horizontal").grid(row=5, column=0, columnspan=2, sticky="ew", padx=6, pady=(2, 4))
+        # 👑 フライアウト/マクロの「箱」ボタン用の操作と、補助線系
+        # (kind="auto_attr")ボタン用の線属性/レイヤ設定は、同じボタンで
+        # 両方使われることは無い(排他)。以前は両方を常時grid配置して
+        # disabled状態で表示していたため、選んでいない方の分もずっと
+        # 縦スペースを占有し続け、設定ウィンドウが必要以上に縦長になって
+        # 保存/キャンセルが枠外に押し出される不具合を繰り返していた
+        # (ユーザー指摘)。selectedなkindに応じてgrid()/grid_remove()で
+        # 実際に出し入れし、同じ行位置(row=6)を使い回す。
+        self._detail_extra_row = 6
+        self.detail_separator = ttk.Separator(lf, orient="horizontal")
+        self.detail_separator.grid(row=5, column=0, columnspan=2, sticky="ew", padx=6, pady=(2, 4))
+
+        # 👑 「線属性ボタンだけボタン詳細が中央ぞろえになってる」への対応。
+        # 以前はcolumnspan=2で1枠を丸ごと使っていたため、他の行(ラベルが
+        # column0・中身がcolumn1)と揃わず中央寄りに見えていた。他の行と
+        # 同じくcolumn0にラベル、column1に中身、という形に統一する
+        # (箱用/補助線系用でラベルの出し分けが要るので共有のLabelを使う)。
+        self.extra_row_label = ttk.Label(lf, text="")
+        self.extra_row_label.grid(row=6, column=0, sticky="ne", padx=6, pady=4)
+
         group_frame = ttk.Frame(lf)
-        group_frame.grid(row=6, column=0, columnspan=2, sticky="w", padx=6, pady=(0, 4))
         self.edit_group_btn = ttk.Button(group_frame, text="中身を編集…", command=self._on_edit_group)
         self.edit_group_btn.pack(side="left")
         self.ungroup_btn = ttk.Button(group_frame, text="グループ解除", command=self._on_ungroup)
         self.ungroup_btn.pack(side="left", padx=(6, 0))
+        self.group_frame = group_frame
+
+        # 👑 「補助線」「配線」等(kind="auto_attr")用: 線色・線種・線幅・
+        # 水平垂直・レイヤグループ・レイヤを、幅に余裕があるので1行に
+        # まとめる(ユーザー要望: 「並べれるところは並べて」)。
+        auto_attr_frame = ttk.Frame(lf)
+        self.auto_attr_frame = auto_attr_frame
+        ttk.Label(auto_attr_frame, text="線色:").pack(side="left")
+        self.auto_attr_color_var = tk.StringVar()
+        self.auto_attr_color_combo = ttk.Combobox(
+            auto_attr_frame, textvariable=self.auto_attr_color_var, values=palette_config.LINE_COLOR_LABELS,
+            state="readonly", width=7,
+        )
+        self.auto_attr_color_combo.pack(side="left", padx=(2, 8))
+        self.auto_attr_color_combo.bind("<<ComboboxSelected>>", self._on_auto_attr_changed)
+
+        ttk.Label(auto_attr_frame, text="線種:").pack(side="left")
+        self.auto_attr_type_var = tk.StringVar()
+        self.auto_attr_type_combo = ttk.Combobox(
+            auto_attr_frame, textvariable=self.auto_attr_type_var, values=palette_config.LINE_TYPE_LABELS,
+            state="readonly", width=7,
+        )
+        self.auto_attr_type_combo.pack(side="left", padx=(2, 8))
+        self.auto_attr_type_combo.bind("<<ComboboxSelected>>", self._on_auto_attr_changed)
+
+        ttk.Label(auto_attr_frame, text="線幅:").pack(side="left")
+        self.auto_attr_width_var = tk.StringVar()
+        self.auto_attr_width_entry = ttk.Entry(auto_attr_frame, textvariable=self.auto_attr_width_var, width=5)
+        self.auto_attr_width_entry.pack(side="left", padx=(2, 8))
+        self.auto_attr_width_var.trace_add("write", self._on_auto_attr_width_changed)
+
+        self.auto_attr_hv_var = tk.BooleanVar()
+        self.auto_attr_hv_check = ttk.Checkbutton(
+            auto_attr_frame, text="水平･垂直もON", variable=self.auto_attr_hv_var,
+            command=self._on_auto_attr_changed,
+        )
+        self.auto_attr_hv_check.pack(side="left", padx=(0, 8))
+
+        # 👑 「見本で選ぶ…」等の設定用ボタンは行末(右側)へ(ユーザー要望:
+        # 「右に設定ボタンをいろいろ持ってきたらいいんじゃない？」)。読み込み
+        # は画面を開いた後にボタンを押した時だけ走るようになったため、
+        # 「(5秒待つ)」の事前注記は不要になった(削除)。
+        ttk.Button(auto_attr_frame, text="見本で選ぶ…", command=self._on_pick_swatches).pack(side="left", padx=(0, 8))
+
+        # 👑 幅overflow対策で2行目に分ける(実機でレイヤ系の設定と保存/
+        # キャンセルが右に切れる不具合が出た)。GroupContentsDialogの
+        # auto_attr_frame/auto_attr_frame2と同じ構成に揃える。
+        auto_attr_frame2 = ttk.Frame(lf)
+        self.auto_attr_frame2 = auto_attr_frame2
+        ttk.Label(auto_attr_frame2, text="レイヤG:").pack(side="left")
+        self.auto_attr_layer_group_var = tk.StringVar()
+        self.auto_attr_layer_group_combo = ttk.Combobox(
+            auto_attr_frame2, textvariable=self.auto_attr_layer_group_var,
+            values=palette_config.LAYER_NUMBER_LABELS, state="readonly", width=7,
+        )
+        self.auto_attr_layer_group_combo.pack(side="left", padx=(2, 8))
+        self.auto_attr_layer_group_combo.bind("<<ComboboxSelected>>", self._on_auto_attr_changed)
+
+        ttk.Label(auto_attr_frame2, text="レイヤ:").pack(side="left")
+        self.auto_attr_layer_number_var = tk.StringVar()
+        self.auto_attr_layer_number_combo = ttk.Combobox(
+            auto_attr_frame2, textvariable=self.auto_attr_layer_number_var,
+            values=palette_config.LAYER_NUMBER_LABELS, state="readonly", width=7,
+        )
+        self.auto_attr_layer_number_combo.pack(side="left", padx=(2, 8))
+        self.auto_attr_layer_number_combo.bind("<<ComboboxSelected>>", self._on_auto_attr_changed)
+
+        # 👑 切替先コマンド(既定は直線)。「他のコマンド選択することできる？
+        # 連続線とか」というユーザー要望への対応。
+        ttk.Label(auto_attr_frame2, text="対象:").pack(side="left")
+        # 👑 対象を「メイン」種別(線・矩形・連続線等)だけに絞る。
+        # ファイル操作/一発系コマンドはCHECKED状態を持たず、「離脱したら
+        # 自動で戻す」の検知ができないため選ばせない(ユーザー指摘:
+        # 「コマンド全部いれたら問題おきないかな。クラッシュしそうじゃ
+        # ない？」→ クラッシュはしないが、選ぶと線属性が戻らなくなる
+        # 実害があるため制限した)。
+        self._target_command_options = [
+            (row["command_id"], f"{row['command_id']} {row['toolbar_name']}")
+            for row in command_master.list_available_commands()
+            if row["command_id"] in palette_config.AUTO_ATTR_DRAW_TARGET_COMMAND_IDS
+        ]
+        self.auto_attr_target_var = tk.StringVar()
+        self.auto_attr_target_combo = ttk.Combobox(
+            auto_attr_frame2, textvariable=self.auto_attr_target_var,
+            values=[label for _cid, label in self._target_command_options], state="readonly", width=12,
+        )
+        self.auto_attr_target_combo.pack(side="left", padx=(2, 0))
+        self.auto_attr_target_combo.bind("<<ComboboxSelected>>", self._on_auto_attr_changed)
 
         self._set_detail_enabled(False, False)
-        self._set_group_buttons_enabled(False)
+        self._set_detail_extra_section(None)
 
-    def _set_group_buttons_enabled(self, enabled):
-        state = "normal" if enabled else "disabled"
-        self.edit_group_btn.configure(state=state)
-        self.ungroup_btn.configure(state=state)
+    def _set_detail_extra_section(self, section):
+        # 👑 group_frame(箱用)とauto_attr_frame(補助線系用)は排他なので、
+        # 選ばれた方だけ実際にgrid()して表示し、他方はgrid_remove()で
+        # 完全に外す(disabled表示のまま常時場所だけ取っていた以前の
+        # 実装だと、使わない方の分まで縦に伸び続けていた)。
+        # 👑 他の行(ラベルがcolumn0・中身がcolumn1)と揃える(以前は
+        # columnspan=2で1枠を丸ごと使っていて中央寄りに見えていた)。
+        # section: None(何も出さない)/"group"/"auto_attr"
+        self.group_frame.grid_remove()
+        self.auto_attr_frame.grid_remove()
+        self.auto_attr_frame2.grid_remove()
+        self.extra_row_label.grid_remove()
+        if section is None:
+            self.detail_separator.grid_remove()
+            return
+        self.detail_separator.grid()
+        self.extra_row_label.grid()
+        if section == "group":
+            self.extra_row_label.configure(text="中身:")
+            self.group_frame.grid(row=self._detail_extra_row, column=1, sticky="w", padx=6, pady=4)
+        elif section == "auto_attr":
+            self.extra_row_label.configure(text="線属性:")
+            self.auto_attr_frame.grid(row=self._detail_extra_row, column=1, sticky="w", padx=6, pady=(4, 0))
+            self.auto_attr_frame2.grid(row=self._detail_extra_row + 1, column=1, sticky="w", padx=6, pady=(0, 4))
+
+    def _on_auto_attr_changed(self, event=None):
+        if self._loading_detail:
+            return
+        btn = self._selected_button()
+        if btn is None or btn.get("kind") != palette_config.BUTTON_KIND_AUTO_ATTR:
+            return
+        try:
+            color_idx = palette_config.LINE_COLOR_LABELS.index(self.auto_attr_color_var.get())
+            btn["line_color"] = palette_config.LINE_COLOR_CTRL_IDS[color_idx]
+        except ValueError:
+            pass
+        try:
+            type_idx = palette_config.LINE_TYPE_LABELS.index(self.auto_attr_type_var.get())
+            btn["line_type"] = palette_config.LINE_TYPE_CTRL_IDS[type_idx]
+        except ValueError:
+            pass
+        btn["horizontal_vertical"] = self.auto_attr_hv_var.get()
+
+        def _label_to_layer_value(label):
+            try:
+                idx = palette_config.LAYER_NUMBER_LABELS.index(label)
+            except ValueError:
+                return None
+            return None if idx == 0 else idx - 1
+
+        btn["layer_group"] = _label_to_layer_value(self.auto_attr_layer_group_var.get())
+        btn["layer_number"] = _label_to_layer_value(self.auto_attr_layer_number_var.get())
+
+        selected_label = self.auto_attr_target_var.get()
+        for cid, label in self._target_command_options:
+            if label == selected_label:
+                btn["target_command"] = cid
+                break
+
+    def _on_auto_attr_width_changed(self, *args):
+        if self._loading_detail:
+            return
+        btn = self._selected_button()
+        if btn is None or btn.get("kind") != palette_config.BUTTON_KIND_AUTO_ATTR:
+            return
+        btn["line_width"] = self.auto_attr_width_var.get()
+
+    def _on_pick_swatches(self):
+        btn = self._selected_button()
+        if btn is None or btn.get("kind") != palette_config.BUTTON_KIND_AUTO_ATTR:
+            return
+        hwnd = _get_jw_hwnd(self.manager_ref)
+        if not hwnd:
+            messagebox.showwarning("見本を読み取れません", "jw_cadのウィンドウが見つかりません。", parent=self.winfo_toplevel())
+            return
+        dlg = LineAttrSwatchDialog(
+            self.winfo_toplevel(), hwnd, current_color=btn.get("line_color"), current_type=btn.get("line_type"),
+            swatch_cache=self.swatch_cache,
+        )
+        self.winfo_toplevel().wait_window(dlg)
+        if dlg.result_color is not None:
+            btn["line_color"] = dlg.result_color
+        if dlg.result_type is not None:
+            btn["line_type"] = dlg.result_type
+        self._load_detail()
 
     # ---- 選択・表示 ----
 
@@ -824,20 +1604,39 @@ class SidePanel(ttk.Frame):
                 self._update_icon_preview("")
                 self.color_swatch.configure(bg=palette_config.DEFAULT_COLOR)
                 self._set_detail_enabled(False, False)
-                self._set_group_buttons_enabled(False)
+                self._set_detail_extra_section(None)
                 return
             if btn is not None:
-                is_group = btn.get("kind") in (palette_config.BUTTON_KIND_FLYOUT, palette_config.BUTTON_KIND_MACRO)
+                kind = btn.get("kind")
+                is_group = kind in (palette_config.BUTTON_KIND_FLYOUT, palette_config.BUTTON_KIND_MACRO)
+                is_auto_attr = kind == palette_config.BUTTON_KIND_AUTO_ATTR
                 if is_group:
                     # 👑 「中身5個」という個数だけでは何が入っているか分からない
                     # という指摘のため、コマンド欄に中身の名前も並べて表示する
                     # (専用の行を別途足すと縦に伸びて設定ウィンドウ下端の
                     # 保存ボタンが枠外に押し出されてしまったため、既存の
                     # 「コマンド:」行に折り返し表示でまとめる形にした)。
-                    kind_label = "フライアウト" if btn["kind"] == palette_config.BUTTON_KIND_FLYOUT else "マクロ"
+                    kind_label = "フライアウト" if kind == palette_config.BUTTON_KIND_FLYOUT else "マクロ"
                     sub_buttons = btn.get("sub_buttons") or []
                     contents = "、".join(sb["name"] for sb in sub_buttons) if sub_buttons else "(まだ何もありません)"
                     self.cmd_var.set(f"({kind_label}) {contents}")
+                elif is_auto_attr:
+                    target_cid = btn.get("target_command") or palette_config.DEFAULT_AUTO_ATTR_TARGET_COMMAND
+                    target_label = next((lbl for cid, lbl in self._target_command_options if cid == target_cid), target_cid)
+                    self.cmd_var.set(f"(線属性・{target_label})")
+                    self.auto_attr_target_var.set(target_label)
+                    color_idx = palette_config.LINE_COLOR_CTRL_IDS.index(btn["line_color"])
+                    type_idx = palette_config.LINE_TYPE_CTRL_IDS.index(btn["line_type"])
+                    self.auto_attr_color_var.set(palette_config.LINE_COLOR_LABELS[color_idx])
+                    self.auto_attr_type_var.set(palette_config.LINE_TYPE_LABELS[type_idx])
+                    self.auto_attr_width_var.set(btn.get("line_width") or "")
+                    self.auto_attr_hv_var.set(bool(btn.get("horizontal_vertical")))
+
+                    def _layer_value_to_label(value):
+                        return palette_config.LAYER_NUMBER_LABELS[0] if value is None else palette_config.LAYER_NUMBER_LABELS[value + 1]
+
+                    self.auto_attr_layer_group_var.set(_layer_value_to_label(btn.get("layer_group")))
+                    self.auto_attr_layer_number_var.set(_layer_value_to_label(btn.get("layer_number")))
                 else:
                     row = command_master.get_by_command_id(btn["command_id"]) or {}
                     category = (row.get("category") or "").strip()
@@ -846,7 +1645,7 @@ class SidePanel(ttk.Frame):
                 self._update_icon_preview(btn["icon"])
                 self.color_swatch.configure(bg=btn["color"])
                 self._set_detail_enabled(True, True)
-                self._set_group_buttons_enabled(is_group)
+                self._set_detail_extra_section("group" if is_group else ("auto_attr" if is_auto_attr else None))
             else:
                 # 複数選択中: 名前は編集不可、色・アイコンはまとめて変更可能
                 self.cmd_var.set(f"{len(multi)}個選択中")
@@ -854,7 +1653,7 @@ class SidePanel(ttk.Frame):
                 self._update_icon_preview(multi[0]["icon"])
                 self.color_swatch.configure(bg=multi[0]["color"])
                 self._set_detail_enabled(False, True)
-                self._set_group_buttons_enabled(False)
+                self._set_detail_extra_section(None)
         finally:
             self._loading_detail = False
 
@@ -903,7 +1702,7 @@ class SidePanel(ttk.Frame):
         for i, group in enumerate(groups):
             gf = ttk.LabelFrame(self.groups_host, text=f"{noun} {i + 1}")
             gf.pack(side="left", fill="both", expand=True, padx=3)
-            lb = tk.Listbox(gf, exportselection=0, height=18, width=14, selectmode="extended",
+            lb = tk.Listbox(gf, exportselection=0, height=11, width=14, selectmode="extended",
                              font=("Meiryo UI", 9), activestyle="none")
             scroll = ttk.Scrollbar(gf, orient="vertical", command=lb.yview)
             lb.configure(yscrollcommand=scroll.set)
@@ -1067,39 +1866,66 @@ class SidePanel(ttk.Frame):
         return ids
 
     def _on_add(self):
-        dlg = CommandPickerDialog(self.winfo_toplevel(), existing_ids=self._existing_ids())
+        # 👑 「箱を作る」「線属性ボタンを作る」を別メニューに分けたら、
+        # コマンドをたくさん追加したい時に毎回そのメニューが挟まって
+        # 邪魔という指摘があったため、同じCommandPickerDialogのリストに
+        # special_kindsとして混ぜて出す方式にした(常に直接コマンド一覧が
+        # 開く、特殊行も同じ多重選択でまとめて拾える)。
+        dlg = CommandPickerDialog(
+            self.winfo_toplevel(), existing_ids=self._existing_ids(), special_kinds=("box", "auto_attr"),
+        )
         self.winfo_toplevel().wait_window(dlg)
         rows = dlg.result
-        if not rows:
+        specials = dlg.result_specials
+        if not rows and not specials:
             return
 
-        groups = self.side_cfg["groups"]
-        if not groups:
-            groups.append(palette_config.new_group())
-        gi = self.selected[0] if self.selected is not None else 0
-        gi = min(gi, len(groups) - 1)
-        insert_at = self.selected[1] + 1 if self.selected is not None and self.selected[0] == gi else len(groups[gi]["buttons"])
+        if rows:
+            groups = self.side_cfg["groups"]
+            if not groups:
+                groups.append(palette_config.new_group())
+            gi = self.selected[0] if self.selected is not None else 0
+            gi = min(gi, len(groups) - 1)
+            insert_at = self.selected[1] + 1 if self.selected is not None and self.selected[0] == gi else len(groups[gi]["buttons"])
 
-        last_index = insert_at
-        known_icons = set(palette_config.list_all_icon_names())
-        for row in rows:
-            default_color = (
-                palette_config.SUB_COMMAND_DEFAULT_COLOR
-                if row.get("command_kind") == "サブ"
-                else palette_config.DEFAULT_COLOR
-            )
-            default_icon = row.get("default_icon") or palette_config.NO_ICON
-            if default_icon not in known_icons:
-                default_icon = palette_config.NO_ICON
-            new_btn = palette_config.new_button(
-                row["command_id"], row["toolbar_name"], icon=default_icon, color=default_color
-            )
-            groups[gi]["buttons"].insert(insert_at, new_btn)
-            insert_at += 1
-            last_index = insert_at - 1
+            last_index = insert_at
+            known_icons = set(palette_config.list_all_icon_names())
+            for row in rows:
+                default_color = (
+                    palette_config.SUB_COMMAND_DEFAULT_COLOR
+                    if row.get("command_kind") == "サブ"
+                    else palette_config.DEFAULT_COLOR
+                )
+                default_icon = row.get("default_icon") or palette_config.NO_ICON
+                if default_icon not in known_icons:
+                    default_icon = palette_config.NO_ICON
+                new_btn = palette_config.new_button(
+                    row["command_id"], row["toolbar_name"], icon=default_icon, color=default_color
+                )
+                groups[gi]["buttons"].insert(insert_at, new_btn)
+                insert_at += 1
+                last_index = insert_at - 1
 
-        self.selected = (gi, last_index)
-        self._rebuild_groups()
+            # 👑 self.selectedだけ更新しても_rebuild_groups()が古い
+            # self._selected_group/_selected_indicesを元に選択を復元して
+            # 上書きしてしまう不具合があったため、3つとも合わせて更新する
+            # (ユーザー報告: 「すべてが前の状態に戻ってるよ」)。
+            # 👑 複数個まとめて選択状態にすると_select_multi()が
+            # self.selectedをNoneにしてしまう(単一タプルで表せないため)。
+            # このあと特殊行(箱/線属性ボタン)の追加がself.selectedに
+            # 依存するので、最後の1個だけを単一選択にしておく。
+            self.selected = (gi, last_index)
+            self._selected_group = gi
+            self._selected_indices = [last_index]
+            self._rebuild_groups()
+
+        # 👑 実コマンドの追加を終えてから、特殊行(箱/線属性ボタン)を順に
+        # 作る(名前入力を挟むため、まとめての多重選択とは別処理になる)。
+        for key in specials:
+            if key == "box":
+                self._on_add_box()
+            elif key == "auto_attr":
+                self._on_add_auto_attr()
 
     def _on_remove(self):
         if self._selected_group is None or not self._selected_indices:
@@ -1127,7 +1953,7 @@ class SidePanel(ttk.Frame):
         # 👑 「先に空のフライアウト箱を作って、あとから中身を詰める」
         # フロー。マクロ型は後回しなので、ここでは種別を聞かずフライアウト
         # 固定にする(ユーザー決定: 2026-08-31/2026-09-01)。
-        dlg = TextInputDialog(self.winfo_toplevel(), title="フライアウトを追加", label="名前:", initial="新しい箱")
+        dlg = TextInputDialog(self.winfo_toplevel(), title="グループボタンを追加", label="名前:", initial="新しいグループ")
         self.winfo_toplevel().wait_window(dlg)
         name = dlg.result
         if not name:
@@ -1142,14 +1968,54 @@ class SidePanel(ttk.Frame):
 
         new_btn = palette_config.new_group_button(name, palette_config.BUTTON_KIND_FLYOUT, [])
         groups[gi]["buttons"].insert(insert_at, new_btn)
+        # 👑 self.selectedだけ更新しても、_rebuild_groups()は
+        # self._selected_group/_selected_indices(以前の選択)を元に選択を
+        # 復元してしまい、せっかく指したはずの新規ボタンが元の選択に
+        # 上書きされて消えてしまう不具合があった(ユーザー報告:「新しい
+        # グループつくっても設定画面開かないよ」「すべてが前の状態に
+        # 戻ってるよ」)。3つとも合わせて更新する。
         self.selected = (gi, insert_at)
+        self._selected_group = gi
+        self._selected_indices = [insert_at]
+        self._rebuild_groups()
+        # 👑 「中身を編集…」ボタンの位置が分かりにくいという指摘のため、
+        # 箱を作った流れのまま、名前を決めたら続けて中身編集を開く。
+        self._on_edit_group()
+
+    def _on_add_auto_attr(self):
+        # 👑 「補助線」「配線」等(kind="auto_attr")の追加。既定値は補助線色/
+        # 補助線種(jw_cad標準プリセット)にしておき、配線等で使う場合は
+        # 追加後に詳細パネルの線色・線種から選び直してもらう想定
+        # (doc/補助線ボタン_要件書.md参照: 標準プリセットが無いので
+        # ユーザーが決める方針)。
+        dlg = TextInputDialog(self.winfo_toplevel(), title="線属性ボタンを追加", label="名前:", initial="補助線")
+        self.winfo_toplevel().wait_window(dlg)
+        name = dlg.result
+        if not name:
+            return
+
+        groups = self.side_cfg["groups"]
+        if not groups:
+            groups.append(palette_config.new_group())
+        gi = self.selected[0] if self.selected is not None else 0
+        gi = min(gi, len(groups) - 1)
+        insert_at = self.selected[1] + 1 if self.selected is not None and self.selected[0] == gi else len(groups[gi]["buttons"])
+
+        new_btn = palette_config.new_auto_attr_button(name, horizontal_vertical=True)
+        groups[gi]["buttons"].insert(insert_at, new_btn)
+        self.selected = (gi, insert_at)
+        self._selected_group = gi
+        self._selected_indices = [insert_at]
         self._rebuild_groups()
 
     def _on_edit_group(self):
         btn = self._selected_button()
         if btn is None or btn.get("kind") not in (palette_config.BUTTON_KIND_FLYOUT, palette_config.BUTTON_KIND_MACRO):
             return
-        dlg = GroupContentsDialog(self.winfo_toplevel(), btn.get("sub_buttons") or [])
+        dlg = GroupContentsDialog(
+            self.winfo_toplevel(), btn.get("sub_buttons") or [], manager_ref=self.manager_ref,
+            swatch_cache=self.swatch_cache,
+        )
         self.winfo_toplevel().wait_window(dlg)
         if dlg.result is not None:
             btn["sub_buttons"] = dlg.result
@@ -1230,20 +2096,33 @@ class SettingsWindow(tk.Toplevel):
         super().__init__(master)
         self.manager_ref = manager_ref
         self.title("⚙️ JwNavigator パレット設定")
-        self.geometry("800x700")
+        # 👑 group_frame(箱用)とauto_attr_frame(補助線系用)を排他的に
+        # grid()/grid_remove()する方式に変更し、選んでいない方の分の
+        # 無駄な縦スペースが無くなった(以前は両方を常時disabled表示で
+        # 確保していたため、ボタンを選ぶたびに設定ウィンドウが必要以上に
+        # 縦長になり、保存/キャンセルが枠外に押し出される不具合を繰り返
+        # していた)。auto_attr側も1行に集約したため、以前の800x700より
+        # 低くできる。
+        self.geometry("800x680")
         self.minsize(720, 620)
         self.configure(bg="#f0f0f0")
         self.attributes("-topmost", True)
 
         self.config_data = palette_config.clone_config(palette_config.load_config())
         self.panels = {}
+        # 👑 「見本で選ぶ…」の直近の読み込み結果をこの設定画面セッション
+        # 中だけ覚えておく受動的キャッシュ({"data": ...}の共有可変dict)。
+        # バックグラウンド先読みは行わない(ユーザーが読み込みボタンを
+        # 押した時にのみ書き込まれる)。左右パレット・箱の中身編集の
+        # どこからでも同じ結果を使い回せる。
+        self.swatch_cache = {"data": None}
 
         self.notebook = ttk.Notebook(self)
         self.notebook.pack(side="top", fill="both", expand=True, padx=8, pady=(8, 0))
 
         for side in palette_config.SIDES:
             side_cfg = palette_config.side_config(self.config_data, side)
-            panel = SidePanel(self.notebook, side, side_cfg)
+            panel = SidePanel(self.notebook, side, side_cfg, manager_ref=self.manager_ref, swatch_cache=self.swatch_cache)
             self.notebook.add(panel, text=f"{side}パレット")
             self.panels[side] = panel
 

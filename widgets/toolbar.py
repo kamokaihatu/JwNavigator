@@ -161,6 +161,8 @@ class Toolbar(tk.Toplevel):
                     command = None  # 生成後、btn自身を参照するために下で差し替える
                 elif kind == palette_config.BUTTON_KIND_MACRO:
                     command = lambda e=entry: self.execute_macro(e)
+                elif kind == palette_config.BUTTON_KIND_AUTO_ATTR:
+                    command = None  # 生成後、btn自身を参照するために下で差し替える
                 else:
                     command = lambda k=entry["command_id"]: self.execute_command(k)
 
@@ -171,6 +173,8 @@ class Toolbar(tk.Toplevel):
                 )
                 if kind == palette_config.BUTTON_KIND_FLYOUT:
                     btn.command = lambda b=btn, e=entry: self.toggle_flyout(b, e)
+                elif kind == palette_config.BUTTON_KIND_AUTO_ATTR:
+                    btn.command = lambda b=btn, e=entry: self.execute_auto_attr(b, e)
                 btn.command_key = entry["command_id"]
                 btn.hwnd = self.target_hwnd
                 btn.icon_name = entry["icon"]
@@ -216,7 +220,10 @@ class Toolbar(tk.Toplevel):
             self._open_flyout = None
 
         on_pick = lambda sub_entry: self._on_flyout_pick(trigger_btn, sub_entry)
-        self._open_flyout = FlyoutPopup(trigger_btn, entry, on_pick=on_pick, on_close=_clear)
+        on_pick_auto_attr = lambda sub_entry: self._on_flyout_pick_auto_attr(trigger_btn, sub_entry)
+        self._open_flyout = FlyoutPopup(
+            trigger_btn, entry, on_pick=on_pick, on_pick_auto_attr=on_pick_auto_attr, on_close=_clear,
+        )
 
     def _on_flyout_pick(self, trigger_btn, sub_entry):
         # 👑 選んだ中身の見た目(アイコン/名前)を起動ボタン自身にも反映する
@@ -234,11 +241,38 @@ class Toolbar(tk.Toplevel):
         trigger_btn.load_and_draw()
         self.execute_command(command_id)
 
+    def _on_flyout_pick_auto_attr(self, trigger_btn, sub_entry):
+        # 👑 箱の中身が補助線系(kind="auto_attr")の場合の選択。顔を借りる
+        # のは_on_flyout_pickと同じだが、command_keyは使わない(auto_attr
+        # は独自のハイライト管理のため)。既に別の中身を選んでいた場合に
+        # 備えて念のためクリアしておく。
+        trigger_btn.name = sub_entry.get("name") or trigger_btn.name
+        trigger_btn.icon_name = sub_entry.get("icon", "")
+        trigger_btn.icon_module = _import_icon_module(trigger_btn.icon_name)
+        trigger_btn.command_key = ""
+        trigger_btn.update_tooltip_text(trigger_btn.name)
+        trigger_btn.load_and_draw()
+        if self.manager_ref and hasattr(self.manager_ref, "start_auto_attr_sequence"):
+            self.manager_ref.start_auto_attr_sequence(self.target_hwnd, sub_entry, trigger_btn)
+
     def execute_macro(self, entry):
         sub_buttons = entry.get("sub_buttons") or []
         command_ids = [b["command_id"] for b in sub_buttons if b.get("command_id")]
         if self.manager_ref and hasattr(self.manager_ref, "execute_macro_sequence"):
             self.manager_ref.execute_macro_sequence(self.target_hwnd, command_ids)
+
+    def execute_auto_attr(self, trigger_btn, entry):
+        # 👑 「補助線モードで書いてる間は補助線ボタンへこませといて」
+        # (ユーザー要望)。当初はcommand_keyを直線コマンドに借りて既存の
+        # CHECKEDビット監視に相乗りさせていたが、本物の「線」ボタンと
+        # command_keyが競合し、locked_intent(名前ベースの先行点灯)が
+        # 「線」の方を凹ませてしまう不具合が実機で発覚(2026-09-02)。
+        # command_keyは""のまま変えず、このボタンの凹み表示は完全に
+        # main.py側(start_auto_attr_sequence/_revert_auto_attr)が
+        # 直接set_selected()/clear_selected()で管理する、独立した仕組みに
+        # した方が確実。
+        if self.manager_ref and hasattr(self.manager_ref, "start_auto_attr_sequence"):
+            self.manager_ref.start_auto_attr_sequence(self.target_hwnd, entry, trigger_btn)
 
     def select_button(self, target_btn):
         if self.current_selected_button and self.current_selected_button != target_btn:
