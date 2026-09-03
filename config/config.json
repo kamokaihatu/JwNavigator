@@ -24,8 +24,37 @@
               "line_type": 2457,
               "line_width": "",
               "horizontal_vertical": true,
-              "layer_group": null,
-              "layer_number": null
+              "layer_group": 15,
+              "layer_number": 15,
+              "target_command": "C001"
+            },
+            {
+              "command_id": "",
+              "name": "寸法",
+              "icon": "",
+              "color": "#f0f0f0",
+              "kind": "auto_attr",
+              "line_color": 1406,
+              "line_type": 2449,
+              "line_width": "",
+              "horizontal_vertical": true,
+              "layer_group": 1,
+              "layer_number": 1,
+              "target_command": "C005"
+            },
+            {
+              "command_id": "",
+              "name": "円",
+              "icon": "",
+              "color": "#f0f0f0",
+              "kind": "auto_attr",
+              "line_color": 1405,
+              "line_type": 2449,
+              "line_width": "",
+              "horizontal_vertical": true,
+              "layer_group": 2,
+              "layer_number": 2,
+              "target_command": "C003"
             },
             {
               "command_id": "C002",

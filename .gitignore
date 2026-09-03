@@ -45,6 +45,7 @@ JwNavigator_Log.txt
 JwNavigator_StateCollection_Log.txt
 data/_collector_control.txt
 config/window_state.json
+config/auto_attr_pending.json
 config/menu_prefs.json
 tools/JwNavigator_UsageLog.txt
 tools/JwNavigator_UsageLog_進行中.txt

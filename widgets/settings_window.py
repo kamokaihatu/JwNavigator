@@ -2110,12 +2110,16 @@ class SettingsWindow(tk.Toplevel):
 
         self.config_data = palette_config.clone_config(palette_config.load_config())
         self.panels = {}
-        # 👑 「見本で選ぶ…」の直近の読み込み結果をこの設定画面セッション
-        # 中だけ覚えておく受動的キャッシュ({"data": ...}の共有可変dict)。
-        # バックグラウンド先読みは行わない(ユーザーが読み込みボタンを
-        # 押した時にのみ書き込まれる)。左右パレット・箱の中身編集の
-        # どこからでも同じ結果を使い回せる。
-        self.swatch_cache = {"data": None}
+        # 👑 「見本で選ぶ…」の直近の読み込み結果のキャッシュ。以前は
+        # このSettingsWindow自身が{"data": None}を毎回新規に持っていた
+        # ため、設定画面を閉じて開き直すとキャッシュが消えていた(「2回目
+        # に線属性設定するとき、見本から選ぶがキャッシュされてないよ」)。
+        # manager_ref(main.pyのアプリ本体、app全体で1つだけ生きている)
+        # 側のキャッシュをそのまま参照することで、設定画面を開き直しても
+        # 前回の読み込み結果を使い回せるようにする。
+        self.swatch_cache = getattr(self.manager_ref, "swatch_cache", None)
+        if self.swatch_cache is None:
+            self.swatch_cache = {"data": None}
 
         self.notebook = ttk.Notebook(self)
         self.notebook.pack(side="top", fill="both", expand=True, padx=8, pady=(8, 0))

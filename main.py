@@ -73,6 +73,7 @@ from utils.state_collection import StateCollectionLogger
 from utils.win_event_watcher import WinEventWatcher
 from utils.palette_layout import compute_palette_geometry
 from utils import window_state
+from utils import auto_attr_state
 from utils import menu_prefs
 from utils.tray_icon import TrayIcon
 
@@ -300,7 +301,26 @@ class JwNavigatorManager:
         # 一度だけ行う（config.jsonが既にあれば即座に何もせず戻る）。
         run_first_launch_setup_if_needed(self.root)
         self.active_launchers = {}
-        self._auto_attr_pending = {}  # hwnd -> {"original": {...}, "confirmed": bool}
+        # 👑 「補助線のまま再起動かかって、直線から始まったときに補助線
+        # 属性になっちゃう」への対応。JwNavigator自体が(開発中の再起動や
+        # クラッシュ等で)補助線モードの途中で終了しても、jw_cadは別
+        # プロセスとして補助線色/線種のまま動き続ける。前回終了時点の
+        # originalをここで読み直しておくことで、次に対象コマンドから
+        # 離脱した時に正しい「元の線属性」へ戻せるようにする(trigger_btn
+        # は再起動後まだウィジェットが無いのでNoneのまま。_revert_auto_attr
+        # 側は既にtrigger_btnがNoneでも動く作りになっている)。
+        self._auto_attr_pending = {
+            hwnd: {**entry, "trigger_btn": None}
+            for hwnd, entry in auto_attr_state.load_pending().items()
+        }  # hwnd -> {"original": {...}, "confirmed": bool}
+        # 👑 「見本で選ぶ…」の直近の読み込み結果を覚えておく受動的キャッシュ
+        # ({"data": ...}の共有可変dict)。バックグラウンド先読みは行わない
+        # (ユーザーが読み込みボタンを押した時だけ書き込まれる)。以前は
+        # SettingsWindow側だけで保持していたため、設定画面を閉じて開き
+        # 直すたびにキャッシュが消えていた(「2回目に線属性設定するとき、
+        # 見本から選ぶがキャッシュされてないよ」)。app全体で持つことで
+        # 設定画面を開き直しても前回の読み込み結果を使い回せる。
+        self.swatch_cache = {"data": None}
         self.settings_window = None
         self.last_jww_state = "STATE_IDLE"
         self.event_engines = {}  # 👑 ウィンドウ個別の安定判定エンジン管理辞書
@@ -703,9 +723,16 @@ class JwNavigatorManager:
                 if hwnd in self.locked_intent:
                     del self.locked_intent[hwnd]
                 self._auto_attr_pending.pop(hwnd, None)
+                auto_attr_state.save_pending(self._auto_attr_pending)
                 pid = self._win_event_watch_pids.pop(hwnd, None)
                 if pid:
                     self.win_event_watcher.unwatch_pid(pid)
+                # 👑 「jwを再起動するまではキャッシュ保持しといてほしい」。
+                # jw_cadが閉じられた(=再起動されうる)タイミングで見本
+                # キャッシュを破棄し、次にjw_cadが起動して「見本で選ぶ…」を
+                # 使う時は改めて実物を読み取り直す(基本設定が変わっている
+                # 可能性があるため)。
+                self.swatch_cache["data"] = None
                 self.write_system_log(
                     f"🧹 閉じられたJww [HWND:{hwnd}] のパレットを道連れ消滅させました。"
                 )
@@ -910,8 +937,16 @@ class JwNavigatorManager:
             if locked_name:
                 # 👑 送信直後の一瞬、jw_cad側のCHECKED反映がまだ間に合って
                 # いない場合があるため、ロック中はそちらを優先する。
+                # 👑 【重大】ボタン名の文字列一致だけで探すため、線属性
+                # ボタン(kind=auto_attr)にユーザーが本物のコマンドと同じ
+                # 名前(例:「寸法」)を付けると衝突する(実機で発覚:
+                # 「線属性の寸法はへこまずに、元の寸法コマンドがへこんで
+                # いる」)。command_keyを持たない(=実コマンドに対応しない)
+                # ボタンは、名前が一致してもここでの対象から除外する。
                 for side_key, tb in sides:
                     for btn in tb.buttons:
+                        if not btn.command_key:
+                            continue
                         if btn.name == locked_name or (locked_name == "面取" and btn.name == "面取り"):
                             matched_side, matched_btn = side_key, btn
                             break
@@ -945,6 +980,17 @@ class JwNavigatorManager:
                                     ):
                                         matched_side, matched_btn = side_key, btn
                                         break
+
+            # 👑 「それは解除できないんだっけ？」への対応。線属性ボタン
+            # (補助線等)が有効な間は、対応する本物のコマンドボタン側の
+            # 凹み表示は出さず、トリガー側の凹みだけで表す(二重凹みの
+            # 解除)。トリガー自身のハイライトはstart_auto_attr_sequence/
+            # _revert_auto_attrが別途独立管理しているので、ここでは本物側を
+            # 単に「マッチなし」扱いにするだけでよい。
+            pending = self._auto_attr_pending.get(hwnd)
+            if pending and matched_btn is not None and matched_btn.command_key == pending.get("target_command"):
+                matched_btn = None
+                matched_side = None
 
             for side_key, tb in sides:
                 if tb.current_selected_button and tb.current_selected_button is not matched_btn:
@@ -1122,6 +1168,14 @@ class JwNavigatorManager:
         # しまう(ユーザー報告: 「もう一度押すと逃がした線種情報が消える」)。
         # 既にpendingがあれば、その"original"を引き継ぐ。
         existing = self._auto_attr_pending.get(hwnd)
+        # 👑 「補助線2回目押したときに水平垂直のチェック外すのお願いする
+        # の忘れてた」→「そこは直線と同じ挙動にしたい」。jw_cadは同じ
+        # 描画ツールを再選択すると水平・垂直チェックを自分で外す(実機
+        # 確認済み、_check_auto_attr_revert付近の既存コメント参照)。
+        # 初回押下時だけJwNavigator側で明示的にONへ再アサートし、同じ
+        # 補助線ボタンの2回目以降の押下ではその上書きをせず、直線を
+        # 再選択した時と同じ(jw_cad任せの)挙動に任せる。
+        same_button_repress = bool(existing and existing.get("trigger_btn") is trigger_btn)
         if existing:
             original = existing["original"]
             old_trigger = existing.get("trigger_btn")
@@ -1155,6 +1209,7 @@ class JwNavigatorManager:
             "horizontal_vertical": bool(entry.get("horizontal_vertical")),
             "target_command": target_command,
         }
+        auto_attr_state.save_pending(self._auto_attr_pending)
         if trigger_btn:
             # 👑 「凹むの遅い」という指摘のため、tickでのCHECKEDビット監視を
             # 待たず即座に凹ませる。この凹み表示は独立管理(トリガー自身の
@@ -1162,10 +1217,13 @@ class JwNavigatorManager:
             # 一切影響しない。
             trigger_btn.set_selected()
         self.logged_execute_command(hwnd, target_command)
-        if entry.get("horizontal_vertical"):
+        if entry.get("horizontal_vertical") and not same_button_repress:
             # 👑 「水平･垂直」は直線コマンドの条件設定バー上のコントロール
             # で、切替直後は反映がまだ間に合っていないことがあるため、
-            # 少し待ってからクリックする(実機調整の値)。
+            # 少し待ってからクリックする(実機調整の値)。ただし同じ補助線
+            # ボタンの2回目以降の押下では強制ONし直さない(「そこは直線と
+            # 同じ挙動にしたい」＝jw_cad自身が同じツール再選択時に外す
+            # 動きへ任せる)。
             self.root.after(200, lambda: line_attr_dialog.set_horizontal_vertical(hwnd, True))
 
     def _check_auto_attr_revert(self, hwnd):
@@ -1179,7 +1237,9 @@ class JwNavigatorManager:
             # 「まだ切り替わっていないだけ」の可能性があるので戻し判定に
             # 入らない(切替直後の1tick目でFalse/Noneを誤って「離脱した」と
             # 判定してしまう競合を避けるため)。
-            pending["confirmed"] = True
+            if not pending["confirmed"]:
+                pending["confirmed"] = True
+                auto_attr_state.save_pending(self._auto_attr_pending)
             # 👑 「補助線から抜ける時、jw_cad本体の直線ボタンでは抜けられ
             # ないのか」への対応。C001は既にCHECKEDのままなので上のFalse
             # 判定では検知できないが、jw_cad自身のツールバーを物理的に
@@ -1198,6 +1258,7 @@ class JwNavigatorManager:
         pending = self._auto_attr_pending.pop(hwnd, None)
         if not pending:
             return
+        auto_attr_state.save_pending(self._auto_attr_pending)
         trigger_btn = pending.get("trigger_btn")
         if trigger_btn:
             try:
