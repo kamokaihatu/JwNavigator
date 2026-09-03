@@ -340,7 +340,7 @@ class JwNavigatorManager:
         self._pending_pin_restore = {}
         self.tray_icon = None
         self.root.withdraw()
-        self.write_system_log("--- JwNavigator Ver2.0 メインシステム始動 ---")
+        self.write_system_log("--- JwNavigator Ver3.5 メインシステム始動 ---")
 
     LOG_MAX_BYTES = 5 * 1024 * 1024  # 5MB
 
