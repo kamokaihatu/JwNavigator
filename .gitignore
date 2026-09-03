@@ -36,6 +36,10 @@ MANIFEST
 !JwNavigator.spec
 !UsageLogger.spec
 
+# Distribution-ready copy (config.json reset, zipped for release uploads).
+# Regenerated from dist/ each time; not source.
+dist_release/
+
 # Installer logs
 pip-log.txt
 pip-delete-this-directory.txt

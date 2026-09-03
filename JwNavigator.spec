@@ -18,7 +18,17 @@ a = Analysis(
     # iter_modules()が常に空を返すことを確認、2026-08-31）。同じ内容を
     # datasとしても実体コピーし、sys._MEIPASS配下から通常のglobで
     # 一覧取得できるようにする。
-    datas=[('icons', 'icons'), ('data/app_icon.ico', 'data'), ('data/starter_presets', 'data/starter_presets')],
+    # 👑 「コマンドを追加」画面が使うdata/commands_master.csv(全コマンド
+    # 一覧の元データ)がここに無く、パッケージ版でutils/command_master.py
+    # が何も読み込めず「種別」チェックボックスも追加候補のコマンドも
+    # 空になっていた(実機で発覚:「コマンドなくなっちゃったよ？」)。
+    # app_icon.ico等と同じ要領でdata/配下に同梱する。
+    datas=[
+        ('icons', 'icons'),
+        ('data/app_icon.ico', 'data'),
+        ('data/starter_presets', 'data/starter_presets'),
+        ('data/commands_master.csv', 'data'),
+    ],
     hiddenimports=collect_submodules('icons'),
     hookspath=[],
     hooksconfig={},

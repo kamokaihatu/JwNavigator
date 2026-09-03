@@ -568,7 +568,8 @@ class LineAttrSwatchDialog(tk.Toplevel):
             load_row, text="📥 線色・線種の読み込み", command=self._load_and_build,
         ).pack(fill="x", ipady=6)
         ttk.Label(
-            body, text="(10秒程度かかります。)", font=("Meiryo UI", 8), foreground="#888888",
+            body, text="(10秒程度かかります。線属性ウィンドウが開きますが、触らないでください。)",
+            font=("Meiryo UI", 8), foreground="#000000",
         ).pack(side="top", pady=(2, 2))
 
         footer = ttk.Frame(body)
@@ -685,7 +686,7 @@ class CommandPickerDialog(tk.Toplevel):
 
     SPECIAL_LABELS = {
         "box": "➕ グループボタンを作る…",
-        "auto_attr": "➕ 線属性ボタンを作る…",
+        "auto_attr": "➕ モードボタンを作る…",
     }
 
     def __init__(self, master, existing_ids=None, special_kinds=()):
@@ -1038,7 +1039,7 @@ class GroupContentsDialog(tk.Toplevel):
                 if is_auto_attr:
                     target_cid = first.get("target_command") or palette_config.DEFAULT_AUTO_ATTR_TARGET_COMMAND
                     target_label = next((lbl for cid, lbl in self._target_command_options if cid == target_cid), target_cid)
-                    self.cmd_var.set(f"(線属性・{target_label})")
+                    self.cmd_var.set(f"(モード・{target_label})")
                     color_idx = palette_config.LINE_COLOR_CTRL_IDS.index(first["line_color"])
                     type_idx = palette_config.LINE_TYPE_CTRL_IDS.index(first["line_type"])
                     self.auto_attr_color_var.set(palette_config.LINE_COLOR_LABELS[color_idx])
@@ -1179,7 +1180,7 @@ class GroupContentsDialog(tk.Toplevel):
         for key in specials:
             if key != "auto_attr":
                 continue
-            name_dlg = TextInputDialog(self, title="線属性ボタンを追加", label="名前:", initial="補助線")
+            name_dlg = TextInputDialog(self, title="モードボタンを追加", label="名前:", initial="補助線")
             self.wait_window(name_dlg)
             if name_dlg.result:
                 self._buttons.append(palette_config.new_auto_attr_button(name_dlg.result, horizontal_vertical=True))
@@ -1488,7 +1489,7 @@ class SidePanel(ttk.Frame):
             self.extra_row_label.configure(text="中身:")
             self.group_frame.grid(row=self._detail_extra_row, column=1, sticky="w", padx=6, pady=4)
         elif section == "auto_attr":
-            self.extra_row_label.configure(text="線属性:")
+            self.extra_row_label.configure(text="モード:")
             self.auto_attr_frame.grid(row=self._detail_extra_row, column=1, sticky="w", padx=6, pady=(4, 0))
             self.auto_attr_frame2.grid(row=self._detail_extra_row + 1, column=1, sticky="w", padx=6, pady=(0, 4))
 
@@ -1623,7 +1624,7 @@ class SidePanel(ttk.Frame):
                 elif is_auto_attr:
                     target_cid = btn.get("target_command") or palette_config.DEFAULT_AUTO_ATTR_TARGET_COMMAND
                     target_label = next((lbl for cid, lbl in self._target_command_options if cid == target_cid), target_cid)
-                    self.cmd_var.set(f"(線属性・{target_label})")
+                    self.cmd_var.set(f"(モード・{target_label})")
                     self.auto_attr_target_var.set(target_label)
                     color_idx = palette_config.LINE_COLOR_CTRL_IDS.index(btn["line_color"])
                     type_idx = palette_config.LINE_TYPE_CTRL_IDS.index(btn["line_type"])
@@ -1988,7 +1989,7 @@ class SidePanel(ttk.Frame):
         # 追加後に詳細パネルの線色・線種から選び直してもらう想定
         # (doc/補助線ボタン_要件書.md参照: 標準プリセットが無いので
         # ユーザーが決める方針)。
-        dlg = TextInputDialog(self.winfo_toplevel(), title="線属性ボタンを追加", label="名前:", initial="補助線")
+        dlg = TextInputDialog(self.winfo_toplevel(), title="モードボタンを追加", label="名前:", initial="補助線")
         self.winfo_toplevel().wait_window(dlg)
         name = dlg.result
         if not name:
@@ -2124,10 +2125,16 @@ class SettingsWindow(tk.Toplevel):
         self.notebook = ttk.Notebook(self)
         self.notebook.pack(side="top", fill="both", expand=True, padx=8, pady=(8, 0))
 
+        # 👑 「N枚パレット見越してパレット名だけ変えとこうか」への対応。
+        # 内部の"左"/"右"(config構造・ドッキング側の判定にそのまま使う
+        # 実データ)は変えず、この設定画面のタブ表示名だけ「パレット1」
+        # 「パレット2」に変える(将来N枚に増えても番号がそのまま使える)。
+        tab_labels = {side: f"パレット{i + 1}" for i, side in enumerate(palette_config.SIDES)}
+
         for side in palette_config.SIDES:
             side_cfg = palette_config.side_config(self.config_data, side)
             panel = SidePanel(self.notebook, side, side_cfg, manager_ref=self.manager_ref, swatch_cache=self.swatch_cache)
-            self.notebook.add(panel, text=f"{side}パレット")
+            self.notebook.add(panel, text=tab_labels[side])
             self.panels[side] = panel
 
         self.menu_panel = RightClickMenuPanel(self.notebook)
