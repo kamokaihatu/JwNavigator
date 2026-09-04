@@ -416,7 +416,7 @@ class TextInputDialog(tk.Toplevel):
         entry.bind("<Return>", lambda e: self._on_ok())
 
         if note:
-            ttk.Label(self, text=note).pack(padx=12, pady=(0, 8), fill="x")
+            ttk.Label(self, text=note, anchor="center", justify="center").pack(padx=12, pady=(0, 8), fill="x")
 
         footer = ttk.Frame(self)
         footer.pack(fill="x", padx=12, pady=(0, 12))
