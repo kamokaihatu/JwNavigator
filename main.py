@@ -75,6 +75,8 @@ from utils.palette_layout import compute_palette_geometry
 from utils import window_state
 from utils import auto_attr_state
 from utils import menu_prefs
+from utils import palette_config
+from utils import layer_snapshot
 from utils.tray_icon import TrayIcon
 
 WH_MOUSE_LL = 14
@@ -321,6 +323,11 @@ class JwNavigatorManager:
         # 見本から選ぶがキャッシュされてないよ」)。app全体で持つことで
         # 設定画面を開き直しても前回の読み込み結果を使い回せる。
         self.swatch_cache = {"data": None}
+        # 👑 レイヤ保存ボタン: Ctrl+<キー>送出でA_SAVE.bat起動後、ユーザーが
+        # 範囲選択→確定を終えてLAYER_RESTORE.JWLが更新されるのを待つ状態。
+        # hwnd -> {"pending": layer_snapshot.trigger_save()の戻り値,
+        #          "dest_path": .., "started_at": time.time(), "button": entry}
+        self._pending_layer_saves = {}
         self.settings_window = None
         self.last_jww_state = "STATE_IDLE"
         self.event_engines = {}  # 👑 ウィンドウ個別の安定判定エンジン管理辞書
@@ -695,6 +702,7 @@ class JwNavigatorManager:
         if self._shutdown_requested:
             return
         t_loop_start = time.perf_counter()
+        self._check_pending_layer_saves()
         current_jw_hwnds = self.find_all_jw_cad_windows()
         if len(current_jw_hwnds) > 0:
             self.write_system_log(f"[監視] 検出HWND数={len(current_jw_hwnds)}")
@@ -1151,6 +1159,78 @@ class JwNavigatorManager:
             self.MACRO_STEP_DELAY_MS,
             lambda: self.execute_macro_sequence(hwnd, command_ids, index + 1),
         )
+
+    # 👑 「電灯配線図」のようなレイヤ状態の保存/復元ボタン(kind=
+    # "layer_snapshot")。ボタン専用のJWLファイル(config/layer_snapshots/
+    # <snapshot_id>.jwl)が無ければ保存フロー、あれば復元フローへ分岐する。
+    # 詳細はdoc/シート管理_設計メモ.md、doc/HANDOFF_layer_control.md参照。
+    def handle_layer_snapshot_click(self, hwnd, entry, trigger_btn=None):
+        dest_path = palette_config.layer_snapshot_path(entry.get("snapshot_id", ""))
+        if os.path.isfile(dest_path):
+            self._restore_layer_snapshot(hwnd, dest_path, entry)
+        else:
+            self._start_layer_snapshot_save(hwnd, dest_path, entry)
+
+    def _start_layer_snapshot_save(self, hwnd, dest_path, entry):
+        if hwnd in self._pending_layer_saves:
+            self.write_system_log(f"[レイヤ保存] 既に保存待機中です name={entry.get('name')}")
+            return
+        pending = layer_snapshot.trigger_save(hwnd)
+        if not pending:
+            self.write_system_log(f"❌ [レイヤ保存] jw_cadの実行フォルダが特定できず開始できませんでした name={entry.get('name')}")
+            return
+        self._pending_layer_saves[hwnd] = {
+            "pending": pending, "dest_path": dest_path, "started_at": time.time(), "name": entry.get("name"),
+        }
+        self.write_system_log(
+            f"[レイヤ保存] 外部変形を起動しました name={entry.get('name')}。"
+            f"jw_cad上で小さい範囲を1回ドラッグして選択確定してください。"
+        )
+
+    def _restore_layer_snapshot(self, hwnd, jwl_path, entry):
+        ok = layer_snapshot.trigger_restore(hwnd, jwl_path)
+        if ok:
+            self.write_system_log(f"[レイヤ復元] {entry.get('name')} を適用しました")
+        else:
+            self.write_system_log(f"❌ [レイヤ復元] {entry.get('name')} の適用に失敗しました(ダイアログが見つかりませんでした)")
+
+    def _check_pending_layer_saves(self):
+        # 👑 monitor_loop()から毎秒呼ばれる。範囲選択→確定はユーザーの
+        # 手動操作なので、完了(LAYER_RESTORE.JWLの更新)をここで監視する。
+        if not self._pending_layer_saves:
+            return
+        LAYER_SAVE_TIMEOUT_SEC = 120
+        now = time.time()
+        for hwnd in list(self._pending_layer_saves.keys()):
+            state = self._pending_layer_saves[hwnd]
+            if now - state["started_at"] > LAYER_SAVE_TIMEOUT_SEC:
+                self.write_system_log(f"❌ [レイヤ保存] {state['name']} がタイムアウトしました(選択確定されなかった可能性があります)")
+                del self._pending_layer_saves[hwnd]
+                continue
+            if layer_snapshot.check_save_complete(state["pending"]):
+                try:
+                    layer_snapshot.finalize_save(state["pending"], state["dest_path"])
+                    self.write_system_log(f"[レイヤ保存] {state['name']} を保存しました")
+                    self._refresh_toolbar_buttons(hwnd)
+                except Exception as exc:
+                    self.write_system_log(f"❌ [レイヤ保存] {state['name']} の保存に失敗しました: {exc}")
+                del self._pending_layer_saves[hwnd]
+
+    def _refresh_toolbar_buttons(self, hwnd):
+        # 👑 _manage_palette_lifecycle()はhwndの出現/消滅しか見ておらず、
+        # 既存ツールバーの再描画はしないため、レイヤ保存ボタンの「保存済」
+        # 表示切替のように「configは変わったがhwnd自体は変わっていない」
+        # ケースでは明示的にload_and_build_buttons()を呼ぶ必要がある。
+        launcher = self.active_launchers.get(hwnd)
+        if not launcher:
+            return
+        for side in ("左", "右"):
+            toolbar = launcher.get(side)
+            if toolbar:
+                try:
+                    toolbar.load_and_build_buttons()
+                except Exception as exc:
+                    self.write_system_log(f"❌ ツールバー再描画失敗: {exc}")
 
     # 👑 「補助線」「配線」等(kind="auto_attr")。押した瞬間の線属性を覚えて
     # 指定の線属性へ切替→切替先コマンドへ移動、その後hwndごとに監視して

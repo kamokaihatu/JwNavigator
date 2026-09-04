@@ -1,4 +1,5 @@
 # ===== ✂️ widgets/toolbar.py START ✂️ =====
+import os
 import tkinter as tk
 from widgets.button import NavButton, import_icon_module as _import_icon_module
 from widgets.flyout_popup import FlyoutPopup
@@ -163,11 +164,20 @@ class Toolbar(tk.Toplevel):
                     command = lambda e=entry: self.execute_macro(e)
                 elif kind == palette_config.BUTTON_KIND_AUTO_ATTR:
                     command = None  # 生成後、btn自身を参照するために下で差し替える
+                elif kind == palette_config.BUTTON_KIND_LAYER_SNAPSHOT:
+                    command = None  # 生成後、btn自身を参照するために下で差し替える
                 else:
                     command = lambda k=entry["command_id"]: self.execute_command(k)
 
+                display_name = entry["name"]
+                if kind == palette_config.BUTTON_KIND_LAYER_SNAPSHOT:
+                    # 👑 保存済みかどうかをボタンの表示名に一目でわかるよう付記する
+                    # (専用の描画を新設する時間が無いため、名前ラベルで代用)。
+                    snap_path = palette_config.layer_snapshot_path(entry.get("snapshot_id", ""))
+                    display_name = entry["name"] + ("\n💾保存済" if os.path.isfile(snap_path) else "\n(未保存)")
+
                 btn = NavButton(
-                    master=frame, name=entry["name"], icon_module=icon_module, cmd_color=entry["color"],
+                    master=frame, name=display_name, icon_module=icon_module, cmd_color=entry["color"],
                     command=command, manager_ref=self.manager_ref,
                     size=self.button_size,
                 )
@@ -175,6 +185,8 @@ class Toolbar(tk.Toplevel):
                     btn.command = lambda b=btn, e=entry: self.toggle_flyout(b, e)
                 elif kind == palette_config.BUTTON_KIND_AUTO_ATTR:
                     btn.command = lambda b=btn, e=entry: self.execute_auto_attr(b, e)
+                elif kind == palette_config.BUTTON_KIND_LAYER_SNAPSHOT:
+                    btn.command = lambda b=btn, e=entry: self.execute_layer_snapshot(b, e)
                 btn.command_key = entry["command_id"]
                 btn.hwnd = self.target_hwnd
                 btn.icon_name = entry["icon"]
@@ -273,6 +285,13 @@ class Toolbar(tk.Toplevel):
         # した方が確実。
         if self.manager_ref and hasattr(self.manager_ref, "start_auto_attr_sequence"):
             self.manager_ref.start_auto_attr_sequence(self.target_hwnd, entry, trigger_btn)
+
+    def execute_layer_snapshot(self, trigger_btn, entry):
+        # 👑 「電灯配線図」のようなレイヤ状態の保存/復元ボタン。押した時に
+        # 専用JWLファイルが無ければ保存フロー、あれば復元フローへ分岐する
+        # 判定自体はmain.py側(handle_layer_snapshot_click)で行う。
+        if self.manager_ref and hasattr(self.manager_ref, "handle_layer_snapshot_click"):
+            self.manager_ref.handle_layer_snapshot_click(self.target_hwnd, entry, trigger_btn)
 
     def select_button(self, target_btn):
         if self.current_selected_button and self.current_selected_button != target_btn:

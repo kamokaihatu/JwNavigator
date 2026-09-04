@@ -8,6 +8,7 @@ import glob
 import json
 import os
 import sys
+import uuid
 
 SIDES = ("左", "右")
 ORIENTATION_PORTRAIT = "portrait"
@@ -38,6 +39,14 @@ BUTTON_KINDS_GROUP = (BUTTON_KIND_FLYOUT, BUTTON_KIND_MACRO)
 # sub_buttonsを持たない点でBUTTON_KINDS_GROUPとは別枠(中身を持つ「箱」
 # ではなく、単発の設定型ボタン)。doc/補助線ボタン_要件書.md参照。
 BUTTON_KIND_AUTO_ATTR = "auto_attr"
+
+# 👑 「電灯配線図」のようなレイヤ状態の保存/復元ボタン。押すたびに
+# 「未保存→保存(Jw_cadのレイヤ設定を1回分記録)→以後は押すたびに復元」
+# と切り替わる。実体はボタンごとに専用の.JWLファイル(config/layer_
+# snapshots/<snapshot_id>.jwl)を持つだけで、状態(保存済みか)は
+# そのファイルの有無で判定する(config.json側にフラグを二重管理しない)。
+# doc/シート管理_設計メモ.md参照。
+BUTTON_KIND_LAYER_SNAPSHOT = "layer_snapshot"
 
 _COLOR_RE_LEN = 7  # "#RRGGBB"
 
@@ -219,6 +228,29 @@ def new_auto_attr_button(
     }
 
 
+def layer_snapshots_dir():
+    d = os.path.join(os.path.dirname(config_path()), "layer_snapshots")
+    os.makedirs(d, exist_ok=True)
+    return d
+
+
+def layer_snapshot_path(snapshot_id):
+    return os.path.join(layer_snapshots_dir(), f"{snapshot_id}.jwl")
+
+
+def new_layer_snapshot_button(name, snapshot_id=None, icon=NO_ICON, color=DEFAULT_COLOR):
+    # 👑 snapshot_id省略時はここでuuidを自動生成する(ボタン名は後から
+    # 変更されうるため、ファイル名には使わない)。
+    return {
+        "command_id": "",
+        "name": name,
+        "icon": icon or NO_ICON,
+        "color": color or DEFAULT_COLOR,
+        "kind": BUTTON_KIND_LAYER_SNAPSHOT,
+        "snapshot_id": snapshot_id or uuid.uuid4().hex,
+    }
+
+
 def new_group(buttons=None):
     return {"buttons": list(buttons) if buttons else []}
 
@@ -254,8 +286,8 @@ def _normalize_button(raw, known_icons, allow_group=True):
 
     requested_kind = raw.get("kind")
     if allow_group:
-        # 最上位のボタンはflyout/macro/auto_attrいずれも可。
-        allowed_kinds = BUTTON_KINDS_GROUP + (BUTTON_KIND_AUTO_ATTR,)
+        # 最上位のボタンはflyout/macro/auto_attr/layer_snapshotいずれも可。
+        allowed_kinds = BUTTON_KINDS_GROUP + (BUTTON_KIND_AUTO_ATTR, BUTTON_KIND_LAYER_SNAPSHOT)
     else:
         # 👑 sub_buttons(箱の中身)は入れ子の箱(flyout/macro)は禁止だが、
         # auto_attrは中身自体がsub_buttonsを持たないので入れ子にならず
@@ -317,6 +349,9 @@ def _normalize_button(raw, known_icons, allow_group=True):
         button["layer_number"] = layer_number if isinstance(layer_number, int) and 0 <= layer_number <= 15 else None
         target_command = str(raw.get("target_command") or "").strip()
         button["target_command"] = target_command or DEFAULT_AUTO_ATTR_TARGET_COMMAND
+    elif kind == BUTTON_KIND_LAYER_SNAPSHOT:
+        snapshot_id = str(raw.get("snapshot_id") or "").strip()
+        button["snapshot_id"] = snapshot_id or uuid.uuid4().hex
 
     return button
 

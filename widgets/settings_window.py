@@ -687,6 +687,7 @@ class CommandPickerDialog(tk.Toplevel):
     SPECIAL_LABELS = {
         "box": "➕ グループボタンを作る…",
         "auto_attr": "➕ モードボタンを作る…",
+        "layer_snapshot": "➕ レイヤ保存ボタンを作る…",
     }
 
     def __init__(self, master, existing_ids=None, special_kinds=()):
@@ -1873,7 +1874,8 @@ class SidePanel(ttk.Frame):
         # special_kindsとして混ぜて出す方式にした(常に直接コマンド一覧が
         # 開く、特殊行も同じ多重選択でまとめて拾える)。
         dlg = CommandPickerDialog(
-            self.winfo_toplevel(), existing_ids=self._existing_ids(), special_kinds=("box", "auto_attr"),
+            self.winfo_toplevel(), existing_ids=self._existing_ids(),
+            special_kinds=("box", "auto_attr", "layer_snapshot"),
         )
         self.winfo_toplevel().wait_window(dlg)
         rows = dlg.result
@@ -1927,6 +1929,8 @@ class SidePanel(ttk.Frame):
                 self._on_add_box()
             elif key == "auto_attr":
                 self._on_add_auto_attr()
+            elif key == "layer_snapshot":
+                self._on_add_layer_snapshot()
 
     def _on_remove(self):
         if self._selected_group is None or not self._selected_indices:
@@ -2003,6 +2007,30 @@ class SidePanel(ttk.Frame):
         insert_at = self.selected[1] + 1 if self.selected is not None and self.selected[0] == gi else len(groups[gi]["buttons"])
 
         new_btn = palette_config.new_auto_attr_button(name, horizontal_vertical=True)
+        groups[gi]["buttons"].insert(insert_at, new_btn)
+        self.selected = (gi, insert_at)
+        self._selected_group = gi
+        self._selected_indices = [insert_at]
+        self._rebuild_groups()
+
+    def _on_add_layer_snapshot(self):
+        # 👑 「電灯配線図」のようなレイヤ状態の保存/復元ボタン(kind=
+        # "layer_snapshot")の追加。1個目は未保存の状態で作られ、押すと
+        # 保存フローに入る(main.py: handle_layer_snapshot_click)。
+        dlg = TextInputDialog(self.winfo_toplevel(), title="レイヤ保存ボタンを追加", label="名前:", initial="電灯配線図")
+        self.winfo_toplevel().wait_window(dlg)
+        name = dlg.result
+        if not name:
+            return
+
+        groups = self.side_cfg["groups"]
+        if not groups:
+            groups.append(palette_config.new_group())
+        gi = self.selected[0] if self.selected is not None else 0
+        gi = min(gi, len(groups) - 1)
+        insert_at = self.selected[1] + 1 if self.selected is not None and self.selected[0] == gi else len(groups[gi]["buttons"])
+
+        new_btn = palette_config.new_layer_snapshot_button(name)
         groups[gi]["buttons"].insert(insert_at, new_btn)
         self.selected = (gi, insert_at)
         self._selected_group = gi
