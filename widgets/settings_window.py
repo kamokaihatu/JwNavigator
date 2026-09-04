@@ -382,12 +382,16 @@ class TextInputDialog(tk.Toplevel):
     （このマシンの高DPI環境で標準ダイアログが崩れる既知の問題を避ける方針
     を踏襲）。結果はself.result(文字列、キャンセル時はNone)に残る。"""
 
-    def __init__(self, master, title, label, initial=""):
+    def __init__(self, master, title, label, initial="", note=None):
         super().__init__(master)
         self.result = None
         self.title(title)
         self.configure(bg="#f0f0f0")
         self.resizable(False, False)
+        # 👑 タイトルバーがラベル文字列より狭いと表示が切れる
+        # (ユーザー報告)。本文側の最小幅を確保してタイトルも収まりやすく
+        # する(内容に応じてTkが自動で広げる分にはこの値を下回らない)。
+        self.minsize(260, 1)
         self.attributes("-topmost", True)
         # 👑 masterが非表示(withdraw済み、常駐トレイアプリのroot等)だと、
         # transient()で結び付けた瞬間にこのダイアログも「非表示の親を
@@ -410,6 +414,9 @@ class TextInputDialog(tk.Toplevel):
         entry = ttk.Entry(body, textvariable=self.name_var, width=24)
         entry.pack(side="left")
         entry.bind("<Return>", lambda e: self._on_ok())
+
+        if note:
+            ttk.Label(self, text=note, foreground="#555555").pack(padx=12, pady=(0, 8), anchor="w")
 
         footer = ttk.Frame(self)
         footer.pack(fill="x", padx=12, pady=(0, 12))

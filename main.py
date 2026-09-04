@@ -1195,7 +1195,10 @@ class JwNavigatorManager:
                 trigger_btn.clear_selected()
             return
 
-        dlg = TextInputDialog(self.root, title="レイヤ情報を保存", label="名前:", initial="")
+        dlg = TextInputDialog(
+            self.root, title="レイヤ情報を保存", label="名前:", initial="",
+            note="（保存には10秒程度かかります）",
+        )
         self.root.wait_window(dlg)
         name = dlg.result
         if not name:
