@@ -705,9 +705,9 @@ class CommandPickerDialog(tk.Toplevel):
     実コマンド行のみ)。"""
 
     SPECIAL_LABELS = {
-        "box": "➕ グループボタンを作る…",
-        "auto_attr": "➕ モードボタンを作る…",
-        "layer_snapshot": "レイヤ保存",
+        "box": "➕ グループボタン",
+        "auto_attr": "➕ モードボタン",
+        "layer_snapshot": "➕ レイヤ保存",
     }
 
     def __init__(self, master, existing_ids=None, special_kinds=()):
