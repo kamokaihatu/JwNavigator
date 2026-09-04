@@ -243,24 +243,27 @@ LAYER_SNAPSHOT_ROLE_RESTORE = "restore"
 LAYER_SNAPSHOT_ROLES = (LAYER_SNAPSHOT_ROLE_SAVE, LAYER_SNAPSHOT_ROLE_RESTORE)
 
 
-def new_layer_snapshot_button(name, role, snapshot_id=None, icon=NO_ICON, color=DEFAULT_COLOR):
-    # 👑 snapshot_id省略時はここでuuidを自動生成する(ボタン名は後から
-    # 変更されうるため、ファイル名には使わない)。
-    # 👑 「右クリック=保存」は直感的でないというユーザー判断(2026-09-04)
-    # により、保存用・復元用を別々のボタン(role)に分けた。同じ
-    # snapshot_idを共有する2個のボタンを設定画面がペアで作る想定
-    # (widgets/settings_window.py: _on_add_layer_snapshot)。
+def new_layer_snapshot_button(name, role, snapshot_id=None, snapshot_name=None, icon=NO_ICON, color=DEFAULT_COLOR):
+    # 👑 2026-09-04設計: 保存ボタン(role=save)は名前もsnapshot_idも
+    # 持たない汎用の1個のみを想定する(押すたびに動的に名前を聞き、
+    # 対象を解決する。main.py: _start_layer_snapshot_save)。
+    # 復元ボタン(role=restore)だけが特定のsnapshot_id/snapshot_name
+    # (検索用の正式名、表示名`name`とは独立)に固定で紐付く。復元ボタンは
+    # 保存の度に名前が新しければmain.pyが動的に生成・追加する。
     if role not in LAYER_SNAPSHOT_ROLES:
         role = LAYER_SNAPSHOT_ROLE_RESTORE
-    return {
+    button = {
         "command_id": "",
         "name": name,
         "icon": icon or NO_ICON,
         "color": color or DEFAULT_COLOR,
         "kind": BUTTON_KIND_LAYER_SNAPSHOT,
-        "snapshot_id": snapshot_id or uuid.uuid4().hex,
         "role": role,
     }
+    if role == LAYER_SNAPSHOT_ROLE_RESTORE:
+        button["snapshot_id"] = snapshot_id or uuid.uuid4().hex
+        button["snapshot_name"] = snapshot_name or name
+    return button
 
 
 def new_group(buttons=None):
@@ -362,10 +365,13 @@ def _normalize_button(raw, known_icons, allow_group=True):
         target_command = str(raw.get("target_command") or "").strip()
         button["target_command"] = target_command or DEFAULT_AUTO_ATTR_TARGET_COMMAND
     elif kind == BUTTON_KIND_LAYER_SNAPSHOT:
-        snapshot_id = str(raw.get("snapshot_id") or "").strip()
-        button["snapshot_id"] = snapshot_id or uuid.uuid4().hex
         role = raw.get("role")
-        button["role"] = role if role in LAYER_SNAPSHOT_ROLES else LAYER_SNAPSHOT_ROLE_RESTORE
+        role = role if role in LAYER_SNAPSHOT_ROLES else LAYER_SNAPSHOT_ROLE_RESTORE
+        button["role"] = role
+        if role == LAYER_SNAPSHOT_ROLE_RESTORE:
+            snapshot_id = str(raw.get("snapshot_id") or "").strip()
+            button["snapshot_id"] = snapshot_id or uuid.uuid4().hex
+            button["snapshot_name"] = str(raw.get("snapshot_name") or "").strip() or name
 
     return button
 

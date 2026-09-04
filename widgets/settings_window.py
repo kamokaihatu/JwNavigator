@@ -6,7 +6,6 @@ import re
 import threading
 import time
 import tkinter as tk
-import uuid
 from tkinter import ttk, messagebox
 
 from utils import palette_config, command_master, menu_prefs, line_attr_dialog
@@ -417,56 +416,6 @@ class TextInputDialog(tk.Toplevel):
             messagebox.showwarning("入力エラー", "名前を入力してください。", parent=self)
             return
         self.result = val
-        self.destroy()
-
-    def _on_cancel(self):
-        self.result = None
-        self.destroy()
-
-
-class ListChoiceDialog(tk.Toplevel):
-    """選択肢の一覧から1つ選ぶだけの汎用ダイアログ。結果はself.result
-    (選んだ項目のインデックス、キャンセル時はNone)に残る。既存の保存
-    ボタンから紐付け先を選ぶ用途(_on_add_layer_snapshot)向けに新設。"""
-
-    def __init__(self, master, title, label, choices):
-        super().__init__(master)
-        self.result = None
-        self.title(title)
-        self.configure(bg="#f0f0f0")
-        self.resizable(False, False)
-        self.attributes("-topmost", True)
-        self.transient(master)
-
-        ttk.Label(self, text=label).pack(padx=12, pady=(12, 4), anchor="w")
-
-        list_frame = ttk.Frame(self)
-        list_frame.pack(padx=12, fill="both", expand=True)
-        self.listbox = tk.Listbox(list_frame, exportselection=0, height=min(8, max(3, len(choices))), width=30)
-        self.listbox.pack(side="left", fill="both", expand=True)
-        scroll = ttk.Scrollbar(list_frame, orient="vertical", command=self.listbox.yview)
-        self.listbox.configure(yscrollcommand=scroll.set)
-        scroll.pack(side="right", fill="y")
-        for c in choices:
-            self.listbox.insert(tk.END, c)
-        if choices:
-            self.listbox.selection_set(0)
-        self.listbox.bind("<Double-Button-1>", lambda e: self._on_ok())
-
-        footer = ttk.Frame(self)
-        footer.pack(fill="x", padx=12, pady=12)
-        ttk.Button(footer, text="OK", command=self._on_ok, width=10).pack(side="right")
-        ttk.Button(footer, text="キャンセル", command=self._on_cancel, width=10).pack(side="right", padx=(0, 6))
-
-        self.protocol("WM_DELETE_WINDOW", self._on_cancel)
-        self.grab_set()
-
-    def _on_ok(self):
-        sel = self.listbox.curselection()
-        if not sel:
-            self._on_cancel()
-            return
-        self.result = sel[0]
         self.destroy()
 
     def _on_cancel(self):
@@ -2064,22 +2013,17 @@ class SidePanel(ttk.Frame):
         self._selected_indices = [insert_at]
         self._rebuild_groups()
 
-    def _existing_layer_snapshot_saves(self):
-        # 👑 「保存ボタンは1個で、復元ボタンをたくさん」という要望
-        # (2026-09-04)に対応するため、既存の保存ボタン(role="save")を
-        # このパレット面から探す(同じ面に限定。別面をまたぐ紐付けは
-        # 現状未対応)。戻り値: [(表示名, snapshot_id), ...]
-        found = []
-        for group in self.side_cfg["groups"]:
-            for btn in group.get("buttons") or []:
-                if (
-                    btn.get("kind") == palette_config.BUTTON_KIND_LAYER_SNAPSHOT
-                    and btn.get("role") == palette_config.LAYER_SNAPSHOT_ROLE_SAVE
-                ):
-                    found.append((btn.get("name", ""), btn.get("snapshot_id", "")))
-        return found
-
-    def _insert_button(self, new_btn):
+    def _on_add_layer_snapshot(self):
+        # 👑 「電灯配線図」のようなレイヤ状態の保存/復元ボタン(kind=
+        # "layer_snapshot")の追加。2026-09-04の設計変更: 保存ボタンは
+        # 名前を持たない汎用の1個のみをここで作る(「保存ボタんは1個で
+        # 復元ボタンをたくさん」「保存の度に名前を付けたい」という
+        # ユーザー要望)。名前を聞くのも、名前ごとに復元ボタンを新設
+        # するのも、押した瞬間(main.py: _start_layer_snapshot_save)に
+        # 動的に行う。
+        new_btn = palette_config.new_layer_snapshot_button(
+            "ﾚｲﾔ\n保存", palette_config.LAYER_SNAPSHOT_ROLE_SAVE,
+        )
         groups = self.side_cfg["groups"]
         if not groups:
             groups.append(palette_config.new_group())
@@ -2090,78 +2034,6 @@ class SidePanel(ttk.Frame):
         self.selected = (gi, insert_at)
         self._selected_group = gi
         self._selected_indices = [insert_at]
-        self._rebuild_groups()
-
-    def _on_add_layer_snapshot(self):
-        # 👑 「電灯配線図」のようなレイヤ状態の保存/復元ボタン(kind=
-        # "layer_snapshot")の追加。右クリックで保存は直感的でないという
-        # ユーザー判断(2026-09-04)により、通常は「保存」「復元」の2個の
-        # ボタンをペアで作る(同じsnapshot_idを共有、どちらも左クリックで
-        # 完結)。既存の保存ボタンがあれば、そこへ紐付く復元ボタンだけを
-        # 追加で作る選択肢も出す(ユーザー要望:「保存ボタンは1個で復元
-        # ボタンをたくさん」)。
-        existing_saves = self._existing_layer_snapshot_saves()
-        add_restore_only = False
-        chosen_snapshot_id = None
-        base_name = "レイヤ情報"
-
-        if existing_saves:
-            add_restore_only = not messagebox.askyesno(
-                "レイヤ保存ボタンを追加",
-                "新しく「保存」「復元」のペアを作りますか?\n\n"
-                "はい: 新しいペアを作る\n"
-                "いいえ: 既存の保存ボタンに、復元ボタンだけ追加する",
-                parent=self.winfo_toplevel(),
-            )
-
-        if add_restore_only:
-            dlg = ListChoiceDialog(
-                self.winfo_toplevel(), title="復元ボタンを追加",
-                label="どの保存ボタンに紐付けますか?",
-                choices=[name for name, _sid in existing_saves],
-            )
-            self.winfo_toplevel().wait_window(dlg)
-            if dlg.result is None:
-                return
-            picked_name, chosen_snapshot_id = existing_saves[dlg.result]
-            base_name = picked_name[:-3] if picked_name.endswith("を保存") else picked_name
-
-        dlg = TextInputDialog(
-            self.winfo_toplevel(),
-            title="レイヤ保存ボタンを追加",
-            label="名前:" if not add_restore_only else "復元ボタンの名前:",
-            initial=base_name if add_restore_only else base_name,
-        )
-        self.winfo_toplevel().wait_window(dlg)
-        name = dlg.result
-        if not name:
-            return
-
-        if add_restore_only:
-            restore_btn = palette_config.new_layer_snapshot_button(
-                name, palette_config.LAYER_SNAPSHOT_ROLE_RESTORE, snapshot_id=chosen_snapshot_id,
-            )
-            self._insert_button(restore_btn)
-            return
-
-        snapshot_id = uuid.uuid4().hex
-        save_btn = palette_config.new_layer_snapshot_button(
-            f"{name}を保存", palette_config.LAYER_SNAPSHOT_ROLE_SAVE, snapshot_id=snapshot_id,
-        )
-        restore_btn = palette_config.new_layer_snapshot_button(
-            f"{name}を復元", palette_config.LAYER_SNAPSHOT_ROLE_RESTORE, snapshot_id=snapshot_id,
-        )
-        groups = self.side_cfg["groups"]
-        if not groups:
-            groups.append(palette_config.new_group())
-        gi = self.selected[0] if self.selected is not None else 0
-        gi = min(gi, len(groups) - 1)
-        insert_at = self.selected[1] + 1 if self.selected is not None and self.selected[0] == gi else len(groups[gi]["buttons"])
-        groups[gi]["buttons"].insert(insert_at, save_btn)
-        groups[gi]["buttons"].insert(insert_at + 1, restore_btn)
-        self.selected = (gi, insert_at + 1)
-        self._selected_group = gi
-        self._selected_indices = [insert_at, insert_at + 1]
         self._rebuild_groups()
 
     def _on_edit_group(self):

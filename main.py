@@ -11,6 +11,7 @@ import re
 import threading
 import queue
 import logging
+import uuid
 
 try:
     import win32gui
@@ -60,7 +61,7 @@ except Exception:
         pass
 
 from widgets.toolbar import Toolbar
-from widgets.settings_window import SettingsWindow
+from widgets.settings_window import SettingsWindow, TextInputDialog
 from widgets.first_launch_dialog import run_first_launch_setup_if_needed, run_preset_reset
 from utils.send_key import send_key_to_hwnd
 from utils.send_command import send_command_to_hwnd, is_command_enabled, get_command_states, get_command_checked_states, get_command_pressed_states
@@ -1164,42 +1165,118 @@ class JwNavigatorManager:
     # "layer_snapshot")。ボタン専用のJWLファイル(config/layer_snapshots/
     # <snapshot_id>.jwl)が無ければ保存フロー、あれば復元フローへ分岐する。
     # 詳細はdoc/シート管理_設計メモ.md、doc/HANDOFF_layer_control.md参照。
-    def handle_layer_snapshot_click(self, hwnd, entry, trigger_btn=None):
+    def handle_layer_snapshot_click(self, hwnd, entry, trigger_btn=None, side_type=None):
         # 👑 保存/復元は別ボタン(entry["role"])に分かれている(右クリック=
         # 保存は直感的でないというユーザー判断、2026-09-04)。
         # 👑 trigger_btnはtoolbar.py側で押した瞬間にset_selected()済み
         # (「押した瞬間に時間がかかる旨を表示したい」への対応、既存の
         # 凹み表示を流用)。この関数の全ての出口でclear_selected()を
         # 呼び戻す必要がある(即座に終わる分岐も含む)。
-        dest_path = palette_config.layer_snapshot_path(entry.get("snapshot_id", ""))
         if entry.get("role") == palette_config.LAYER_SNAPSHOT_ROLE_SAVE:
-            self._start_layer_snapshot_save(hwnd, dest_path, entry, trigger_btn)
-        elif os.path.isfile(dest_path):
+            self._start_layer_snapshot_save(hwnd, trigger_btn, side_type)
+            return
+        dest_path = palette_config.layer_snapshot_path(entry.get("snapshot_id", ""))
+        if os.path.isfile(dest_path):
             self._restore_layer_snapshot(hwnd, dest_path, entry, trigger_btn)
         else:
             self.write_system_log(f"❌ [レイヤ復元] {entry.get('name')} はまだ保存されていません(対応する保存ボタンを先に押してください)")
             if trigger_btn:
                 trigger_btn.clear_selected()
 
-    def _start_layer_snapshot_save(self, hwnd, dest_path, entry, trigger_btn):
-        # 👑 layer_snapshot.trigger_save()はBM_CLICK待ちのポーリングや
-        # time.sleep()を含み、最大数秒メインスレッドをブロックしうる
-        # (ユーザー報告:「naviが落ちた気がする」→実際はUIが数秒固まって
-        # いただけと判明)。UI(tkinterメインループ)を止めないよう、win32
-        # 自動化本体は別スレッドで実行し、結果だけroot.after(0, ...)で
-        # メインスレッドへ戻す。
+    def _start_layer_snapshot_save(self, hwnd, trigger_btn, side_type):
+        # 👑 2026-09-04設計: 保存ボタンは汎用の1個のみで、押すたびに名前を
+        # 聞く(「保存の度に名前を付けたい」)。既存の復元ボタンに同名の
+        # ものがあれば上書き確認、無ければ新しい復元ボタンをこの保存
+        # ボタンのすぐ後ろに自動で追加する(「保存ボタンは1個で復元
+        # ボタンをたくさん」)。
         if hwnd in self._pending_layer_saves:
-            self.write_system_log(f"[レイヤ保存] 既に保存待機中です name={entry.get('name')}")
+            self.write_system_log("[レイヤ保存] 既に保存待機中です")
             if trigger_btn:
                 trigger_btn.clear_selected()
             return
-        self.write_system_log(f"[レイヤ保存] {entry.get('name')} を保存中です(7〜10秒程度かかります)…")
+
+        dlg = TextInputDialog(self.root, title="レイヤ情報を保存", label="名前:", initial="")
+        self.root.wait_window(dlg)
+        name = dlg.result
+        if not name:
+            if trigger_btn:
+                trigger_btn.clear_selected()
+            return
+
+        config = palette_config.load_config()
+        existing_id = None
+        for side in palette_config.SIDES:
+            for group in palette_config.side_config(config, side)["groups"]:
+                for btn in group.get("buttons") or []:
+                    if (
+                        btn.get("kind") == palette_config.BUTTON_KIND_LAYER_SNAPSHOT
+                        and btn.get("role") == palette_config.LAYER_SNAPSHOT_ROLE_RESTORE
+                        and btn.get("snapshot_name") == name
+                    ):
+                        existing_id = btn.get("snapshot_id")
+                        break
+                if existing_id:
+                    break
+            if existing_id:
+                break
+
+        if existing_id:
+            if not messagebox.askyesno(
+                "レイヤ情報を保存", f"「{name}」は既に保存されています。上書きしますか?", parent=self.root,
+            ):
+                if trigger_btn:
+                    trigger_btn.clear_selected()
+                return
+            snapshot_id = existing_id
+        else:
+            snapshot_id = uuid.uuid4().hex
+            save_name = (trigger_btn.entry.get("name") if trigger_btn and trigger_btn.entry else None) or "ﾚｲﾔ\n保存"
+            target_side, gi, insert_at = self._find_layer_save_insert_position(config, side_type, save_name)
+            restore_btn = palette_config.new_layer_snapshot_button(
+                f"{name}を復元", palette_config.LAYER_SNAPSHOT_ROLE_RESTORE,
+                snapshot_id=snapshot_id, snapshot_name=name,
+            )
+            palette_config.side_config(config, target_side)["groups"][gi]["buttons"].insert(insert_at, restore_btn)
+            palette_config.save_config(config)
+            self._refresh_all_toolbar_buttons()
+
+        dest_path = palette_config.layer_snapshot_path(snapshot_id)
+        self.write_system_log(f"[レイヤ保存] {name} を保存中です(7〜10秒程度かかります)…")
 
         def worker():
             pending = layer_snapshot.trigger_save(hwnd)
-            self.root.after(0, lambda: self._on_layer_save_triggered(hwnd, dest_path, entry, pending, trigger_btn))
+            self.root.after(0, lambda: self._on_layer_save_triggered(hwnd, dest_path, {"name": name}, pending, trigger_btn))
 
         threading.Thread(target=worker, daemon=True).start()
+
+    def _find_layer_save_insert_position(self, config, preferred_side, save_name):
+        # 👑 新しい復元ボタンは、押された保存ボタンのすぐ後ろに挿入する
+        # (ユーザー決定: 「置き場所は保存ボタンのすぐ後ろが自然」)。
+        # 同名の保存ボタンが複数ある場合はpreferred_side側を優先する。
+        sides_order = [preferred_side] + [s for s in palette_config.SIDES if s != preferred_side] if preferred_side else list(palette_config.SIDES)
+        for side in sides_order:
+            groups = palette_config.side_config(config, side)["groups"]
+            for gi, group in enumerate(groups):
+                buttons = group.get("buttons") or []
+                for bi, btn in enumerate(buttons):
+                    if (
+                        btn.get("kind") == palette_config.BUTTON_KIND_LAYER_SNAPSHOT
+                        and btn.get("role") == palette_config.LAYER_SNAPSHOT_ROLE_SAVE
+                        and btn.get("name") == save_name
+                    ):
+                        return side, gi, bi + 1
+        # 見つからなければ、優先サイドの末尾グループの末尾へ
+        side = preferred_side or palette_config.SIDES[0]
+        groups = palette_config.side_config(config, side)["groups"]
+        if not groups:
+            groups.append(palette_config.new_group())
+        return side, len(groups) - 1, len(groups[-1]["buttons"])
+
+    def _refresh_all_toolbar_buttons(self):
+        # 👑 新しい復元ボタンの追加はconfig.json全体(両面)に影響するため、
+        # 開いている全てのjw_cadウィンドウのパレットを更新する。
+        for hwnd in list(self.active_launchers.keys()):
+            self._refresh_toolbar_buttons(hwnd)
 
     def _on_layer_save_triggered(self, hwnd, dest_path, entry, pending, trigger_btn):
         if not pending:

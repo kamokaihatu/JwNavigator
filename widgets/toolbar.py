@@ -294,7 +294,7 @@ class Toolbar(tk.Toplevel):
         # 完了したらmain.py側でclear_selected()して戻す。
         trigger_btn.set_selected()
         if self.manager_ref and hasattr(self.manager_ref, "handle_layer_snapshot_click"):
-            self.manager_ref.handle_layer_snapshot_click(self.target_hwnd, entry, trigger_btn)
+            self.manager_ref.handle_layer_snapshot_click(self.target_hwnd, entry, trigger_btn, side_type=self.side_type)
 
     def select_button(self, target_btn):
         if self.current_selected_button and self.current_selected_button != target_btn:
