@@ -4,13 +4,21 @@ import os
 import re
 import tkinter as tk
 
-from utils.palette_config import png_icon_path, BUTTON_KIND_FLYOUT, BUTTON_KIND_MACRO, BUTTON_KIND_AUTO_ATTR
+from utils.palette_config import (
+    png_icon_path, BUTTON_KIND_FLYOUT, BUTTON_KIND_MACRO, BUTTON_KIND_AUTO_ATTR,
+    BUTTON_KIND_LAYER_SNAPSHOT, layer_snapshot_path,
+)
 
 _GROUP_BADGE_COLOR = {
     BUTTON_KIND_FLYOUT: "#2b6fd4",     # 青系
     BUTTON_KIND_MACRO: "#e08a1e",      # オレンジ系
     BUTTON_KIND_AUTO_ATTR: "#3fa34d",  # 緑系
 }
+# 👑 レイヤ保存ボタン(kind="layer_snapshot")は文字を増やさず、他の箱型
+# ボタンと同じ右下バッジで保存済みかどうかだけを示す(ユーザー指摘:
+# 「ボタンの文字が多すぎて見た目が悪い」「絵文字入れる余裕はない」)。
+LAYER_SNAPSHOT_BADGE_SAVED = "#9c27b0"    # 紫系: 保存済み
+LAYER_SNAPSHOT_BADGE_UNSAVED = "#b0b0b0"  # 灰色: 未保存
 
 # 👑 icons/*.pyの動的インポート＋キャッシュ。以前はtoolbar.py/flyout_popup.py
 # にそれぞれ同じ内容を複製していたが、フライアウトの「顔の入れ替え」機能で
@@ -300,7 +308,12 @@ class NavButton(tk.Frame):
                 justify="center",
             )
 
-        badge_color = _GROUP_BADGE_COLOR.get((self.entry or {}).get("kind"))
+        entry_kind = (self.entry or {}).get("kind")
+        if entry_kind == BUTTON_KIND_LAYER_SNAPSHOT:
+            saved = os.path.isfile(layer_snapshot_path((self.entry or {}).get("snapshot_id", "")))
+            badge_color = LAYER_SNAPSHOT_BADGE_SAVED if saved else LAYER_SNAPSHOT_BADGE_UNSAVED
+        else:
+            badge_color = _GROUP_BADGE_COLOR.get(entry_kind)
         if badge_color:
             # 👑 フライアウト/マクロを普通のボタンと見分けるための小さな
             # 三角バッジ（右下）。種別ごとに色を変える。

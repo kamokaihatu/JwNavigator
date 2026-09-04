@@ -1,5 +1,4 @@
 # ===== ✂️ widgets/toolbar.py START ✂️ =====
-import os
 import tkinter as tk
 from widgets.button import NavButton, import_icon_module as _import_icon_module
 from widgets.flyout_popup import FlyoutPopup
@@ -169,15 +168,11 @@ class Toolbar(tk.Toplevel):
                 else:
                     command = lambda k=entry["command_id"]: self.execute_command(k)
 
-                display_name = entry["name"]
-                if kind == palette_config.BUTTON_KIND_LAYER_SNAPSHOT:
-                    # 👑 保存済みかどうかをボタンの表示名に一目でわかるよう付記する
-                    # (専用の描画を新設する時間が無いため、名前ラベルで代用)。
-                    snap_path = palette_config.layer_snapshot_path(entry.get("snapshot_id", ""))
-                    display_name = entry["name"] + ("\n💾保存済" if os.path.isfile(snap_path) else "\n(未保存)")
-
+                # 👑 レイヤ保存ボタンの保存状態は、名前ラベルではなく
+                # widgets/button.py側の右下バッジ(他の箱型ボタンと同じ
+                # 仕組み)で示す(ユーザー指摘:「文字が多すぎて見た目が悪い」)。
                 btn = NavButton(
-                    master=frame, name=display_name, icon_module=icon_module, cmd_color=entry["color"],
+                    master=frame, name=entry["name"], icon_module=icon_module, cmd_color=entry["color"],
                     command=command, manager_ref=self.manager_ref,
                     size=self.button_size,
                 )
@@ -187,6 +182,13 @@ class Toolbar(tk.Toplevel):
                     btn.command = lambda b=btn, e=entry: self.execute_auto_attr(b, e)
                 elif kind == palette_config.BUTTON_KIND_LAYER_SNAPSHOT:
                     btn.command = lambda b=btn, e=entry: self.execute_layer_snapshot(b, e)
+                    # 👑 「固定」ボタンの再保存用。トップレベル(Toolbar)側の
+                    # 右クリック(終了ポップアップ)より優先させるため"break"で
+                    # 伝播を止める。
+                    btn.canvas.bind(
+                        "<Button-3>",
+                        lambda e, b=btn, en=entry: (self.execute_layer_snapshot(b, en, force_save=True), "break")[-1],
+                    )
                 btn.command_key = entry["command_id"]
                 btn.hwnd = self.target_hwnd
                 btn.icon_name = entry["icon"]
@@ -286,12 +288,14 @@ class Toolbar(tk.Toplevel):
         if self.manager_ref and hasattr(self.manager_ref, "start_auto_attr_sequence"):
             self.manager_ref.start_auto_attr_sequence(self.target_hwnd, entry, trigger_btn)
 
-    def execute_layer_snapshot(self, trigger_btn, entry):
+    def execute_layer_snapshot(self, trigger_btn, entry, force_save=False):
         # 👑 「電灯配線図」のようなレイヤ状態の保存/復元ボタン。押した時に
         # 専用JWLファイルが無ければ保存フロー、あれば復元フローへ分岐する
         # 判定自体はmain.py側(handle_layer_snapshot_click)で行う。
+        # force_save=True(右クリック、「固定」ボタンの再保存用)は保存済み
+        # でも構わず新しい保存フローへ入る。
         if self.manager_ref and hasattr(self.manager_ref, "handle_layer_snapshot_click"):
-            self.manager_ref.handle_layer_snapshot_click(self.target_hwnd, entry, trigger_btn)
+            self.manager_ref.handle_layer_snapshot_click(self.target_hwnd, entry, trigger_btn, force_save=force_save)
 
     def select_button(self, target_btn):
         if self.current_selected_button and self.current_selected_button != target_btn:

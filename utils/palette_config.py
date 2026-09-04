@@ -238,9 +238,13 @@ def layer_snapshot_path(snapshot_id):
     return os.path.join(layer_snapshots_dir(), f"{snapshot_id}.jwl")
 
 
-def new_layer_snapshot_button(name, snapshot_id=None, icon=NO_ICON, color=DEFAULT_COLOR):
+def new_layer_snapshot_button(name, snapshot_id=None, persistent=True, icon=NO_ICON, color=DEFAULT_COLOR):
     # 👑 snapshot_id省略時はここでuuidを自動生成する(ボタン名は後から
     # 変更されうるため、ファイル名には使わない)。
+    # persistent: True=固定(復元してもファイルを残し続ける、再保存は
+    # 右クリック)。False=一時保存(1保存1復元。復元した瞬間にファイルを
+    # 消し、次に押した時はまた保存フローから始まる)。ユーザー要望:
+    # 「一時保存は1読み込み1復元でいい」「固定はずっとパレットに残す」。
     return {
         "command_id": "",
         "name": name,
@@ -248,6 +252,7 @@ def new_layer_snapshot_button(name, snapshot_id=None, icon=NO_ICON, color=DEFAUL
         "color": color or DEFAULT_COLOR,
         "kind": BUTTON_KIND_LAYER_SNAPSHOT,
         "snapshot_id": snapshot_id or uuid.uuid4().hex,
+        "persistent": bool(persistent),
     }
 
 
@@ -352,6 +357,7 @@ def _normalize_button(raw, known_icons, allow_group=True):
     elif kind == BUTTON_KIND_LAYER_SNAPSHOT:
         snapshot_id = str(raw.get("snapshot_id") or "").strip()
         button["snapshot_id"] = snapshot_id or uuid.uuid4().hex
+        button["persistent"] = bool(raw.get("persistent", True))
 
     return button
 

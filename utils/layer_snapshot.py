@@ -55,8 +55,38 @@ def restore_jwl_path(hwnd):
     return os.path.join(d, "LAYER_RESTORE.JWL")
 
 
+def _find_button_by_text(hwnd, text, timeout=1.5):
+    # 👑 範囲選択中に現れる「全選択」「選択確定」はowner-drawではない
+    # 普通のButtonコントロールで、BM_CLICKに反応することを実機確認済み
+    # (2026-09-04)。出現が選択モード開始と非同期のため、少し待って
+    # ポーリングする。
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        found = []
+
+        def cb(h, _extra):
+            try:
+                if win32gui.GetClassName(h) == "Button" and win32gui.GetWindowText(h) == text:
+                    found.append(h)
+            except Exception:
+                pass
+            return True
+
+        try:
+            win32gui.EnumChildWindows(hwnd, cb, None)
+        except Exception:
+            pass
+        if found:
+            return found[0]
+        time.sleep(0.1)
+    return None
+
+
 def trigger_save(hwnd):
-    """Ctrl+<SAVE_KEY>を送ってA_SAVE.batを起動する(選択待ち状態になる)。
+    """Ctrl+<SAVE_KEY>を送ってA_SAVE.batを起動し、続けて「全選択」→
+    「選択確定」を自動クリックする(ユーザーのドラッグ操作を不要にする、
+    2026-09-04実機確認済み)。図面全体が対象になるため、大きい図面では
+    jwc_temp.txtの書き出しに時間がかかる可能性がある。
     戻り値: {"jwl_path":.., "baseline_mtime":..} (完了検知に使う)。
     jwl_pathが取得できなければNoneを返す。"""
     path = restore_jwl_path(hwnd)
@@ -77,6 +107,15 @@ def trigger_save(hwnd):
     win32api.keybd_event(SAVE_KEY_VK, 0, 0, 0)
     win32api.keybd_event(SAVE_KEY_VK, 0, win32con.KEYEVENTF_KEYUP, 0)
     win32api.keybd_event(VK_CONTROL, 0, win32con.KEYEVENTF_KEYUP, 0)
+
+    select_all_btn = _find_button_by_text(hwnd, "全選択")
+    if select_all_btn:
+        win32gui.PostMessage(select_all_btn, win32con.BM_CLICK, 0, 0)
+        time.sleep(0.3)
+        confirm_btn = _find_button_by_text(hwnd, "選択確定")
+        if confirm_btn:
+            win32gui.PostMessage(confirm_btn, win32con.BM_CLICK, 0, 0)
+
     return {"jwl_path": path, "baseline_mtime": baseline}
 
 

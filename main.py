@@ -1164,9 +1164,11 @@ class JwNavigatorManager:
     # "layer_snapshot")。ボタン専用のJWLファイル(config/layer_snapshots/
     # <snapshot_id>.jwl)が無ければ保存フロー、あれば復元フローへ分岐する。
     # 詳細はdoc/シート管理_設計メモ.md、doc/HANDOFF_layer_control.md参照。
-    def handle_layer_snapshot_click(self, hwnd, entry, trigger_btn=None):
+    def handle_layer_snapshot_click(self, hwnd, entry, trigger_btn=None, force_save=False):
+        # 👑 force_save=True(右クリック)は、保存済みでも構わず新しい保存
+        # フローへ入る(「固定」ボタンの再保存用)。
         dest_path = palette_config.layer_snapshot_path(entry.get("snapshot_id", ""))
-        if os.path.isfile(dest_path):
+        if not force_save and os.path.isfile(dest_path):
             self._restore_layer_snapshot(hwnd, dest_path, entry)
         else:
             self._start_layer_snapshot_save(hwnd, dest_path, entry)
@@ -1189,10 +1191,20 @@ class JwNavigatorManager:
 
     def _restore_layer_snapshot(self, hwnd, jwl_path, entry):
         ok = layer_snapshot.trigger_restore(hwnd, jwl_path)
-        if ok:
-            self.write_system_log(f"[レイヤ復元] {entry.get('name')} を適用しました")
-        else:
+        if not ok:
             self.write_system_log(f"❌ [レイヤ復元] {entry.get('name')} の適用に失敗しました(ダイアログが見つかりませんでした)")
+            return
+        self.write_system_log(f"[レイヤ復元] {entry.get('name')} を適用しました")
+        if not entry.get("persistent", True):
+            # 👑 一時保存ボタン: 「1保存1復元でいい」というユーザー要望通り、
+            # 復元した瞬間に保存内容をクリアし、次に押した時はまた保存
+            # フローから始まるようにする。
+            try:
+                os.remove(jwl_path)
+            except OSError:
+                pass
+            self.write_system_log(f"[レイヤ保存] {entry.get('name')} (一時保存)をクリアしました")
+            self._refresh_toolbar_buttons(hwnd)
 
     def _check_pending_layer_saves(self):
         # 👑 monitor_loop()から毎秒呼ばれる。範囲選択→確定はユーザーの
