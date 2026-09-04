@@ -225,16 +225,34 @@ class NavButton(tk.Frame):
 
     @staticmethod
     def _wrap_label(name, size=48):
+        scale = size / 48.0
+
+        def _f(base):
+            return max(6, int(round(base * scale)))
+
+        # 👑 名前自体に改行(\n)が含まれる場合、呼び出し側が意図した行分け
+        # として扱い、以下の自動2文字グループ化はしない(例:「ﾚｲﾔ\n保存」
+        # を「ﾚｲ」「ﾔ保」「存」のように機械的に割ってしまうと意図が
+        # 崩れる。レイヤ保存ボタンのデフォルト名で発生、2026-09-04)。
+        if "\n" in name:
+            rows = name.split("\n")
+            num_rows = len(rows)
+            if num_rows == 1:
+                base = 18
+            elif num_rows == 2:
+                base = 14
+            elif num_rows == 3:
+                base = 11
+            else:
+                base = 9
+            return name, _f(base)
+
         # 「1/4」のような分数表記や、半角ｶﾀｶﾅの濁点/半濁点(前の文字と
         # 離れて改行されると読めなくなる)が行の途中で切れないよう、
         # それぞれひとかたまりのトークンとして抜き出し、それ以外は
         # 1文字ずつのトークンにする。
         tokens = re.findall(r"\d+/\d+|[ｦ-ﾝ][ﾞﾟ]?|.", name)
         n = len(tokens)
-        scale = size / 48.0
-
-        def _f(base):
-            return max(6, int(round(base * scale)))
 
         if n <= 1:
             return name, _f(18)
