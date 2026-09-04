@@ -1233,7 +1233,7 @@ class JwNavigatorManager:
             save_name = (trigger_btn.entry.get("name") if trigger_btn and trigger_btn.entry else None) or "ﾚｲﾔ\n保存"
             target_side, gi, insert_at = self._find_layer_save_insert_position(config, side_type, save_name)
             restore_btn = palette_config.new_layer_snapshot_button(
-                f"{name}を復元", palette_config.LAYER_SNAPSHOT_ROLE_RESTORE,
+                name, palette_config.LAYER_SNAPSHOT_ROLE_RESTORE,
                 snapshot_id=snapshot_id, snapshot_name=name,
             )
             palette_config.side_config(config, target_side)["groups"][gi]["buttons"].insert(insert_at, restore_btn)

@@ -389,7 +389,18 @@ class TextInputDialog(tk.Toplevel):
         self.configure(bg="#f0f0f0")
         self.resizable(False, False)
         self.attributes("-topmost", True)
-        self.transient(master)
+        # 👑 masterが非表示(withdraw済み、常駐トレイアプリのroot等)だと、
+        # transient()で結び付けた瞬間にこのダイアログも「非表示の親を
+        # 持つtransientウィンドウ」としてTkに扱われ、後段のdeiconify()が
+        # 「it is a transient window whose master is not deiconified」で
+        # 例外になり、ダイアログごと固まって二度と表示されない不具合が
+        # 実機で発生した(main.py: レイヤ保存ボタンの名前入力、2026-09-04)。
+        # 親が実際に見えている時だけtransient化する。
+        try:
+            if master.winfo_viewable():
+                self.transient(master)
+        except Exception:
+            pass
 
         self.name_var = tk.StringVar(value=initial)
 
@@ -406,6 +417,15 @@ class TextInputDialog(tk.Toplevel):
         ttk.Button(footer, text="キャンセル", command=self._on_cancel, width=10).pack(side="right", padx=(0, 6))
 
         self.protocol("WM_DELETE_WINDOW", self._on_cancel)
+        # 👑 masterが非表示(withdraw済み)のウィンドウだと、transient()の
+        # 影響でこのダイアログ自体も非表示のまま生成され、grab_set()が
+        # 「window not viewable」で失敗して以降のコードごと固まる不具合が
+        # 実機で発生した(main.py側からself.root=トレイ用の隠しrootを
+        # 親にして呼んだ時に発覚、2026-09-04)。表示状態を確定させてから
+        # grab_set()する。
+        self.deiconify()
+        self.lift()
+        self.update_idletasks()
         entry.focus_set()
         entry.select_range(0, tk.END)
         self.grab_set()
