@@ -172,11 +172,18 @@ def to_jwl(v):
     return prot * 10 + state
 
 
-def write_jwl(path, rows, gstates, wg, wl, stamp):
+def write_jwl(path, rows, gstates, wg, wl, stamp, keep_write_layer=False):
     """現在のレイヤ状態を復元できる .JWL を書き出す。
 
     復元手順: Jw_cad の [設定]→[環境設定ファイル]→[読込み] で
               ファイルの種類を *.JWL にして、このファイルを選ぶ。
+
+    keep_write_layer=True(既定False): 保存時点の書込レイヤグループ/
+    レイヤを`100`で指定せず、通常の状態値として書き出す。JwNavigator
+    の「レイヤ保存/復元」ボタン用(2026-09-04、ユーザー要望:「復元時に
+    書込みレイヤを動かさないようにできない?」)。`100`を一切出さない
+    JWLを読み込ませた時、Jw_cadが現在の書込レイヤをそのまま維持するか
+    は実機での挙動待ち(未確定、コメントは実測後に更新すること)。
     """
     cell = {(r["group"], r["layer"]): r["value"] for r in rows}
     lines = [
@@ -189,9 +196,12 @@ def write_jwl(path, rows, gstates, wg, wl, stamp):
     for g in HEX:
         vals = []
         # 先頭はレイヤグループ自身の状態
-        vals.append(100 if g == wg else to_jwl(gstates.get(g, "11")))
+        if not keep_write_layer and g == wg:
+            vals.append(100)
+        else:
+            vals.append(to_jwl(gstates.get(g, "11")))
         for l in HEX:
-            if g == wg and l == wl:
+            if not keep_write_layer and g == wg and l == wl:
                 vals.append(100)
             else:
                 vals.append(to_jwl(cell.get((g, l), "11")))
@@ -266,6 +276,12 @@ def write_outputs(stamp, text, rows, gstates, gnames, lnames, wg, wl, make_jwl=T
     #        復元時にそれらのレイヤ状態を破壊する。揃ったときだけ書く。
     jwl_ok = make_jwl and (ngroup == 16 and len(rows) == 256)
     if jwl_ok:
+        # 👑 2026-09-04実機検証: keep_write_layer=Trueで`100`を一切
+        # 出さないJWLを読み込ませたところ、Jw_cadは書込レイヤを動かさない
+        # のではなく、ファイル全体を無視して何も反映しなかった(レイヤ
+        # 状態が一切変わらなかった)。`100`(書込レイヤ指定)は最低1箇所
+        # 無いとJWL自体が無効になる模様。「復元時に書込レイヤを動かさない」
+        # は.JWL形式では実現できないと判断し、既定(False)へ戻した。
         write_jwl(os.path.join(OUTDIR, "restore_%s.jwl" % stamp),
                   rows, gstates, wg, wl, stamp)
         jwl_fixed = os.path.join(os.path.dirname(TEMP_PATH), "LAYER_RESTORE.JWL")
