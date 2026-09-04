@@ -707,7 +707,7 @@ class CommandPickerDialog(tk.Toplevel):
     SPECIAL_LABELS = {
         "box": "➕ グループボタンを作る…",
         "auto_attr": "➕ モードボタンを作る…",
-        "layer_snapshot": "➕ レイヤ保存ボタンを作る…",
+        "layer_snapshot": "レイヤ保存",
     }
 
     def __init__(self, master, existing_ids=None, special_kinds=()):
@@ -802,7 +802,10 @@ class CommandPickerDialog(tk.Toplevel):
         self._visible_specials = self._special_kinds if self.show_specials_var.get() else []
         self.listbox.delete(0, tk.END)
         for key in self._visible_specials:
-            self.listbox.insert(tk.END, self.SPECIAL_LABELS[key])
+            # 👑 下に並ぶ一般コマンド行(◯◯ (種別/分類))と見た目を揃え、
+            # 実コマンドと区別しやすいよう「(特殊)」を付ける
+            # (ユーザー提案、2026-09-04)。
+            self.listbox.insert(tk.END, f"{self.SPECIAL_LABELS[key]} (特殊)")
         for row in self.filtered:
             suffix = " ※配置済" if row["command_id"] in self._existing_ids else ""
             text = f"{row['command_id']}  {row['toolbar_name']}  ({row['command_kind']}/{row['category']}){suffix}"
@@ -2089,7 +2092,16 @@ class SidePanel(ttk.Frame):
         self._rebuild_groups()
 
     def _on_add_group(self):
-        self.side_cfg["groups"].append(palette_config.new_group())
+        # 👑 新しい列を作った直後、選択状態(self.selected等)を更新して
+        # いなかったため、そのままボタンを追加すると古い(前から選択中の)
+        # 列に入ってしまっていた(ユーザー報告:「新しい列にボタンを直接
+        # 配置できない」)。新しい列を選択済み状態にする。
+        groups = self.side_cfg["groups"]
+        groups.append(palette_config.new_group())
+        new_gi = len(groups) - 1
+        self.selected = (new_gi, -1)
+        self._selected_group = new_gi
+        self._selected_indices = []
         self._rebuild_groups()
 
     def _on_remove_group(self):
