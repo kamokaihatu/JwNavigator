@@ -238,13 +238,20 @@ def layer_snapshot_path(snapshot_id):
     return os.path.join(layer_snapshots_dir(), f"{snapshot_id}.jwl")
 
 
-def new_layer_snapshot_button(name, snapshot_id=None, icon=NO_ICON, color=DEFAULT_COLOR):
+LAYER_SNAPSHOT_ROLE_SAVE = "save"
+LAYER_SNAPSHOT_ROLE_RESTORE = "restore"
+LAYER_SNAPSHOT_ROLES = (LAYER_SNAPSHOT_ROLE_SAVE, LAYER_SNAPSHOT_ROLE_RESTORE)
+
+
+def new_layer_snapshot_button(name, role, snapshot_id=None, icon=NO_ICON, color=DEFAULT_COLOR):
     # 👑 snapshot_id省略時はここでuuidを自動生成する(ボタン名は後から
     # 変更されうるため、ファイル名には使わない)。
-    # 👑 「右クリック=保存、左クリック=復元」で統一(ユーザー決定:
-    # 2026-09-04)。当初あった一時保存/固定の区別・復元後の自動クリアは、
-    # このクリック規則の下では不要と判断し廃止した(右クリックでいつでも
-    # 保存し直せるため)。
+    # 👑 「右クリック=保存」は直感的でないというユーザー判断(2026-09-04)
+    # により、保存用・復元用を別々のボタン(role)に分けた。同じ
+    # snapshot_idを共有する2個のボタンを設定画面がペアで作る想定
+    # (widgets/settings_window.py: _on_add_layer_snapshot)。
+    if role not in LAYER_SNAPSHOT_ROLES:
+        role = LAYER_SNAPSHOT_ROLE_RESTORE
     return {
         "command_id": "",
         "name": name,
@@ -252,6 +259,7 @@ def new_layer_snapshot_button(name, snapshot_id=None, icon=NO_ICON, color=DEFAUL
         "color": color or DEFAULT_COLOR,
         "kind": BUTTON_KIND_LAYER_SNAPSHOT,
         "snapshot_id": snapshot_id or uuid.uuid4().hex,
+        "role": role,
     }
 
 
@@ -356,6 +364,8 @@ def _normalize_button(raw, known_icons, allow_group=True):
     elif kind == BUTTON_KIND_LAYER_SNAPSHOT:
         snapshot_id = str(raw.get("snapshot_id") or "").strip()
         button["snapshot_id"] = snapshot_id or uuid.uuid4().hex
+        role = raw.get("role")
+        button["role"] = role if role in LAYER_SNAPSHOT_ROLES else LAYER_SNAPSHOT_ROLE_RESTORE
 
     return button
 

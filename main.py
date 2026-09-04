@@ -1164,19 +1164,24 @@ class JwNavigatorManager:
     # "layer_snapshot")。ボタン専用のJWLファイル(config/layer_snapshots/
     # <snapshot_id>.jwl)が無ければ保存フロー、あれば復元フローへ分岐する。
     # 詳細はdoc/シート管理_設計メモ.md、doc/HANDOFF_layer_control.md参照。
-    def handle_layer_snapshot_click(self, hwnd, entry, trigger_btn=None, force_save=False):
-        # 👑 「右クリック=保存、左クリック=復元」で統一(ユーザー決定:
-        # 2026-09-04)。左クリック時に保存済みかどうかで分岐する必要が
-        # 無くなったため、一時保存/固定の区別・復元後の自動クリアも廃止。
+    def handle_layer_snapshot_click(self, hwnd, entry, trigger_btn=None):
+        # 👑 保存/復元は別ボタン(entry["role"])に分かれている(右クリック=
+        # 保存は直感的でないというユーザー判断、2026-09-04)。
+        # 👑 trigger_btnはtoolbar.py側で押した瞬間にset_selected()済み
+        # (「押した瞬間に時間がかかる旨を表示したい」への対応、既存の
+        # 凹み表示を流用)。この関数の全ての出口でclear_selected()を
+        # 呼び戻す必要がある(即座に終わる分岐も含む)。
         dest_path = palette_config.layer_snapshot_path(entry.get("snapshot_id", ""))
-        if force_save:
-            self._start_layer_snapshot_save(hwnd, dest_path, entry)
+        if entry.get("role") == palette_config.LAYER_SNAPSHOT_ROLE_SAVE:
+            self._start_layer_snapshot_save(hwnd, dest_path, entry, trigger_btn)
         elif os.path.isfile(dest_path):
-            self._restore_layer_snapshot(hwnd, dest_path, entry)
+            self._restore_layer_snapshot(hwnd, dest_path, entry, trigger_btn)
         else:
-            self.write_system_log(f"❌ [レイヤ復元] {entry.get('name')} はまだ保存されていません(右クリックで保存)")
+            self.write_system_log(f"❌ [レイヤ復元] {entry.get('name')} はまだ保存されていません(対応する保存ボタンを先に押してください)")
+            if trigger_btn:
+                trigger_btn.clear_selected()
 
-    def _start_layer_snapshot_save(self, hwnd, dest_path, entry):
+    def _start_layer_snapshot_save(self, hwnd, dest_path, entry, trigger_btn):
         # 👑 layer_snapshot.trigger_save()はBM_CLICK待ちのポーリングや
         # time.sleep()を含み、最大数秒メインスレッドをブロックしうる
         # (ユーザー報告:「naviが落ちた気がする」→実際はUIが数秒固まって
@@ -1185,41 +1190,48 @@ class JwNavigatorManager:
         # メインスレッドへ戻す。
         if hwnd in self._pending_layer_saves:
             self.write_system_log(f"[レイヤ保存] 既に保存待機中です name={entry.get('name')}")
+            if trigger_btn:
+                trigger_btn.clear_selected()
             return
-        self.write_system_log(f"[レイヤ保存] {entry.get('name')} を保存中です…")
+        self.write_system_log(f"[レイヤ保存] {entry.get('name')} を保存中です(7〜10秒程度かかります)…")
 
         def worker():
             pending = layer_snapshot.trigger_save(hwnd)
-            self.root.after(0, lambda: self._on_layer_save_triggered(hwnd, dest_path, entry, pending))
+            self.root.after(0, lambda: self._on_layer_save_triggered(hwnd, dest_path, entry, pending, trigger_btn))
 
         threading.Thread(target=worker, daemon=True).start()
 
-    def _on_layer_save_triggered(self, hwnd, dest_path, entry, pending):
+    def _on_layer_save_triggered(self, hwnd, dest_path, entry, pending, trigger_btn):
         if not pending:
             self.write_system_log(f"❌ [レイヤ保存] jw_cadの実行フォルダが特定できず開始できませんでした name={entry.get('name')}")
+            if trigger_btn:
+                trigger_btn.clear_selected()
             return
         self._pending_layer_saves[hwnd] = {
             "pending": pending, "dest_path": dest_path, "started_at": time.time(), "name": entry.get("name"),
+            "trigger_btn": trigger_btn,
         }
         # 👑 monitor_loop()の1秒周期だけに頼ると検知が最大1秒近く遅れる
         # ため、保存待ちの間だけ短い周期(0.3秒)で追加ポーリングする
         # (ユーザー要望:「保存もう少し早くならないかな」)。
         self.root.after(300, self._check_pending_layer_saves)
 
-    def _restore_layer_snapshot(self, hwnd, jwl_path, entry):
+    def _restore_layer_snapshot(self, hwnd, jwl_path, entry, trigger_btn):
         # 👑 保存側と同じ理由でtrigger_restore()も別スレッドで実行する。
 
         def worker():
             ok = layer_snapshot.trigger_restore(hwnd, jwl_path)
-            self.root.after(0, lambda: self._on_layer_restore_done(entry, ok))
+            self.root.after(0, lambda: self._on_layer_restore_done(entry, ok, trigger_btn))
 
         threading.Thread(target=worker, daemon=True).start()
 
-    def _on_layer_restore_done(self, entry, ok):
+    def _on_layer_restore_done(self, entry, ok, trigger_btn):
         if ok:
             self.write_system_log(f"[レイヤ復元] {entry.get('name')} を適用しました")
         else:
             self.write_system_log(f"❌ [レイヤ復元] {entry.get('name')} の適用に失敗しました(ダイアログが見つかりませんでした)")
+        if trigger_btn:
+            trigger_btn.clear_selected()
 
     def _check_pending_layer_saves(self):
         # 👑 monitor_loop()(1秒周期)に加え、保存待ちの間は_start_layer_
@@ -1231,17 +1243,25 @@ class JwNavigatorManager:
         now = time.time()
         for hwnd in list(self._pending_layer_saves.keys()):
             state = self._pending_layer_saves[hwnd]
+            trigger_btn = state.get("trigger_btn")
             if now - state["started_at"] > LAYER_SAVE_TIMEOUT_SEC:
                 self.write_system_log(f"❌ [レイヤ保存] {state['name']} がタイムアウトしました(選択確定されなかった可能性があります)")
+                if trigger_btn:
+                    trigger_btn.clear_selected()
                 del self._pending_layer_saves[hwnd]
                 continue
             if layer_snapshot.check_save_complete(state["pending"]):
                 try:
                     layer_snapshot.finalize_save(state["pending"], state["dest_path"])
                     self.write_system_log(f"[レイヤ保存] {state['name']} を保存しました")
+                    # 👑 _refresh_toolbar_buttons()はNavButtonを作り直す
+                    # ため、古いtrigger_btnへのclear_selected()は不要
+                    # (新しいボタンは最初から非選択状態で生成される)。
                     self._refresh_toolbar_buttons(hwnd)
                 except Exception as exc:
                     self.write_system_log(f"❌ [レイヤ保存] {state['name']} の保存に失敗しました: {exc}")
+                    if trigger_btn:
+                        trigger_btn.clear_selected()
                 del self._pending_layer_saves[hwnd]
         if self._pending_layer_saves and not self._shutdown_requested:
             self.root.after(300, self._check_pending_layer_saves)

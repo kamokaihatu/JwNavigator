@@ -181,14 +181,10 @@ class Toolbar(tk.Toplevel):
                 elif kind == palette_config.BUTTON_KIND_AUTO_ATTR:
                     btn.command = lambda b=btn, e=entry: self.execute_auto_attr(b, e)
                 elif kind == palette_config.BUTTON_KIND_LAYER_SNAPSHOT:
+                    # 👑 保存/復元は別ボタン(entry["role"])に分かれている
+                    # (右クリック=保存は直感的でないというユーザー判断、
+                    # 2026-09-04)。どちらも通常の左クリックで完結する。
                     btn.command = lambda b=btn, e=entry: self.execute_layer_snapshot(b, e)
-                    # 👑 「固定」ボタンの再保存用。トップレベル(Toolbar)側の
-                    # 右クリック(終了ポップアップ)より優先させるため"break"で
-                    # 伝播を止める。
-                    btn.canvas.bind(
-                        "<Button-3>",
-                        lambda e, b=btn, en=entry: (self.execute_layer_snapshot(b, en, force_save=True), "break")[-1],
-                    )
                 btn.command_key = entry["command_id"]
                 btn.hwnd = self.target_hwnd
                 btn.icon_name = entry["icon"]
@@ -288,14 +284,17 @@ class Toolbar(tk.Toplevel):
         if self.manager_ref and hasattr(self.manager_ref, "start_auto_attr_sequence"):
             self.manager_ref.start_auto_attr_sequence(self.target_hwnd, entry, trigger_btn)
 
-    def execute_layer_snapshot(self, trigger_btn, entry, force_save=False):
-        # 👑 「電灯配線図」のようなレイヤ状態の保存/復元ボタン。押した時に
-        # 専用JWLファイルが無ければ保存フロー、あれば復元フローへ分岐する
-        # 判定自体はmain.py側(handle_layer_snapshot_click)で行う。
-        # force_save=True(右クリック、「固定」ボタンの再保存用)は保存済み
-        # でも構わず新しい保存フローへ入る。
+    def execute_layer_snapshot(self, trigger_btn, entry):
+        # 👑 「電灯配線図を保存」「電灯配線図を復元」のような、レイヤ状態の
+        # 保存/復元ボタン。entry["role"]("save"/"restore")でどちらを行うか
+        # が確定しており、main.py側(handle_layer_snapshot_click)の分岐は
+        # 不要になった。
+        # 👑 保存/復元とも数秒かかる(ユーザー要望:「押した瞬間に時間が
+        # かかる旨を表示したい」)。押した瞬間にボタンを凹ませ、
+        # 完了したらmain.py側でclear_selected()して戻す。
+        trigger_btn.set_selected()
         if self.manager_ref and hasattr(self.manager_ref, "handle_layer_snapshot_click"):
-            self.manager_ref.handle_layer_snapshot_click(self.target_hwnd, entry, trigger_btn, force_save=force_save)
+            self.manager_ref.handle_layer_snapshot_click(self.target_hwnd, entry, trigger_btn)
 
     def select_button(self, target_btn):
         if self.current_selected_button and self.current_selected_button != target_btn:
