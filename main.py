@@ -1177,31 +1177,54 @@ class JwNavigatorManager:
             self.write_system_log(f"❌ [レイヤ復元] {entry.get('name')} はまだ保存されていません(右クリックで保存)")
 
     def _start_layer_snapshot_save(self, hwnd, dest_path, entry):
+        # 👑 layer_snapshot.trigger_save()はBM_CLICK待ちのポーリングや
+        # time.sleep()を含み、最大数秒メインスレッドをブロックしうる
+        # (ユーザー報告:「naviが落ちた気がする」→実際はUIが数秒固まって
+        # いただけと判明)。UI(tkinterメインループ)を止めないよう、win32
+        # 自動化本体は別スレッドで実行し、結果だけroot.after(0, ...)で
+        # メインスレッドへ戻す。
         if hwnd in self._pending_layer_saves:
             self.write_system_log(f"[レイヤ保存] 既に保存待機中です name={entry.get('name')}")
             return
-        pending = layer_snapshot.trigger_save(hwnd)
+        self.write_system_log(f"[レイヤ保存] {entry.get('name')} を保存中です…")
+
+        def worker():
+            pending = layer_snapshot.trigger_save(hwnd)
+            self.root.after(0, lambda: self._on_layer_save_triggered(hwnd, dest_path, entry, pending))
+
+        threading.Thread(target=worker, daemon=True).start()
+
+    def _on_layer_save_triggered(self, hwnd, dest_path, entry, pending):
         if not pending:
             self.write_system_log(f"❌ [レイヤ保存] jw_cadの実行フォルダが特定できず開始できませんでした name={entry.get('name')}")
             return
         self._pending_layer_saves[hwnd] = {
             "pending": pending, "dest_path": dest_path, "started_at": time.time(), "name": entry.get("name"),
         }
-        self.write_system_log(
-            f"[レイヤ保存] 外部変形を起動しました name={entry.get('name')}。"
-            f"jw_cad上で小さい範囲を1回ドラッグして選択確定してください。"
-        )
+        # 👑 monitor_loop()の1秒周期だけに頼ると検知が最大1秒近く遅れる
+        # ため、保存待ちの間だけ短い周期(0.3秒)で追加ポーリングする
+        # (ユーザー要望:「保存もう少し早くならないかな」)。
+        self.root.after(300, self._check_pending_layer_saves)
 
     def _restore_layer_snapshot(self, hwnd, jwl_path, entry):
-        ok = layer_snapshot.trigger_restore(hwnd, jwl_path)
+        # 👑 保存側と同じ理由でtrigger_restore()も別スレッドで実行する。
+
+        def worker():
+            ok = layer_snapshot.trigger_restore(hwnd, jwl_path)
+            self.root.after(0, lambda: self._on_layer_restore_done(entry, ok))
+
+        threading.Thread(target=worker, daemon=True).start()
+
+    def _on_layer_restore_done(self, entry, ok):
         if ok:
             self.write_system_log(f"[レイヤ復元] {entry.get('name')} を適用しました")
         else:
             self.write_system_log(f"❌ [レイヤ復元] {entry.get('name')} の適用に失敗しました(ダイアログが見つかりませんでした)")
 
     def _check_pending_layer_saves(self):
-        # 👑 monitor_loop()から毎秒呼ばれる。範囲選択→確定はユーザーの
-        # 手動操作なので、完了(LAYER_RESTORE.JWLの更新)をここで監視する。
+        # 👑 monitor_loop()(1秒周期)に加え、保存待ちの間は_start_layer_
+        # snapshot_save()から0.3秒周期でも自発的に呼ばれる(下の再スケジュール
+        # 部分参照)。完了(LAYER_RESTORE.JWLの更新)をここで監視する。
         if not self._pending_layer_saves:
             return
         LAYER_SAVE_TIMEOUT_SEC = 120
@@ -1220,6 +1243,8 @@ class JwNavigatorManager:
                 except Exception as exc:
                     self.write_system_log(f"❌ [レイヤ保存] {state['name']} の保存に失敗しました: {exc}")
                 del self._pending_layer_saves[hwnd]
+        if self._pending_layer_saves and not self._shutdown_requested:
+            self.root.after(300, self._check_pending_layer_saves)
 
     def _refresh_toolbar_buttons(self, hwnd):
         # 👑 _manage_palette_lifecycle()はhwndの出現/消滅しか見ておらず、
