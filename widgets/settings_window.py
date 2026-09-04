@@ -2103,7 +2103,7 @@ class SidePanel(ttk.Frame):
         existing_saves = self._existing_layer_snapshot_saves()
         add_restore_only = False
         chosen_snapshot_id = None
-        base_name = "電灯配線図"
+        base_name = "レイヤ情報"
 
         if existing_saves:
             add_restore_only = not messagebox.askyesno(
