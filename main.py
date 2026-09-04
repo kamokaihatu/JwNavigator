@@ -1165,13 +1165,16 @@ class JwNavigatorManager:
     # <snapshot_id>.jwl)が無ければ保存フロー、あれば復元フローへ分岐する。
     # 詳細はdoc/シート管理_設計メモ.md、doc/HANDOFF_layer_control.md参照。
     def handle_layer_snapshot_click(self, hwnd, entry, trigger_btn=None, force_save=False):
-        # 👑 force_save=True(右クリック)は、保存済みでも構わず新しい保存
-        # フローへ入る(「固定」ボタンの再保存用)。
+        # 👑 「右クリック=保存、左クリック=復元」で統一(ユーザー決定:
+        # 2026-09-04)。左クリック時に保存済みかどうかで分岐する必要が
+        # 無くなったため、一時保存/固定の区別・復元後の自動クリアも廃止。
         dest_path = palette_config.layer_snapshot_path(entry.get("snapshot_id", ""))
-        if not force_save and os.path.isfile(dest_path):
+        if force_save:
+            self._start_layer_snapshot_save(hwnd, dest_path, entry)
+        elif os.path.isfile(dest_path):
             self._restore_layer_snapshot(hwnd, dest_path, entry)
         else:
-            self._start_layer_snapshot_save(hwnd, dest_path, entry)
+            self.write_system_log(f"❌ [レイヤ復元] {entry.get('name')} はまだ保存されていません(右クリックで保存)")
 
     def _start_layer_snapshot_save(self, hwnd, dest_path, entry):
         if hwnd in self._pending_layer_saves:
@@ -1191,20 +1194,10 @@ class JwNavigatorManager:
 
     def _restore_layer_snapshot(self, hwnd, jwl_path, entry):
         ok = layer_snapshot.trigger_restore(hwnd, jwl_path)
-        if not ok:
+        if ok:
+            self.write_system_log(f"[レイヤ復元] {entry.get('name')} を適用しました")
+        else:
             self.write_system_log(f"❌ [レイヤ復元] {entry.get('name')} の適用に失敗しました(ダイアログが見つかりませんでした)")
-            return
-        self.write_system_log(f"[レイヤ復元] {entry.get('name')} を適用しました")
-        if not entry.get("persistent", True):
-            # 👑 一時保存ボタン: 「1保存1復元でいい」というユーザー要望通り、
-            # 復元した瞬間に保存内容をクリアし、次に押した時はまた保存
-            # フローから始まるようにする。
-            try:
-                os.remove(jwl_path)
-            except OSError:
-                pass
-            self.write_system_log(f"[レイヤ保存] {entry.get('name')} (一時保存)をクリアしました")
-            self._refresh_toolbar_buttons(hwnd)
 
     def _check_pending_layer_saves(self):
         # 👑 monitor_loop()から毎秒呼ばれる。範囲選択→確定はユーザーの

@@ -2015,23 +2015,13 @@ class SidePanel(ttk.Frame):
 
     def _on_add_layer_snapshot(self):
         # 👑 「電灯配線図」のようなレイヤ状態の保存/復元ボタン(kind=
-        # "layer_snapshot")の追加。1個目は未保存の状態で作られ、押すと
-        # 保存フローに入る(main.py: handle_layer_snapshot_click)。
-        # ユーザー要望:「一時保存(1保存1復元)」と「固定(パレットに残る、
-        # 再保存できる)」の2種類が欲しい。
+        # "layer_snapshot")の追加。右クリック=保存、左クリック=復元
+        # (ユーザー決定: 2026-09-04)。
         dlg = TextInputDialog(self.winfo_toplevel(), title="レイヤ保存ボタンを追加", label="名前:", initial="電灯配線図")
         self.winfo_toplevel().wait_window(dlg)
         name = dlg.result
         if not name:
             return
-
-        persistent = messagebox.askyesno(
-            "レイヤ保存ボタンを追加",
-            "固定として作りますか?\n\n"
-            "はい: 固定(復元しても保存内容が残る。右クリックで再保存)\n"
-            "いいえ: 一時保存(1回保存→1回復元でクリアされる)",
-            parent=self.winfo_toplevel(),
-        )
 
         groups = self.side_cfg["groups"]
         if not groups:
@@ -2040,7 +2030,7 @@ class SidePanel(ttk.Frame):
         gi = min(gi, len(groups) - 1)
         insert_at = self.selected[1] + 1 if self.selected is not None and self.selected[0] == gi else len(groups[gi]["buttons"])
 
-        new_btn = palette_config.new_layer_snapshot_button(name, persistent=persistent)
+        new_btn = palette_config.new_layer_snapshot_button(name)
         groups[gi]["buttons"].insert(insert_at, new_btn)
         self.selected = (gi, insert_at)
         self._selected_group = gi
