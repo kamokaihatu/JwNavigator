@@ -1239,13 +1239,20 @@ class JwNavigatorManager:
         # 部分参照)。完了(LAYER_RESTORE.JWLの更新)をここで監視する。
         if not self._pending_layer_saves:
             return
-        LAYER_SAVE_TIMEOUT_SEC = 120
+        # 👑 編集可能なレイヤが無い等で外部変形が完了しない場合、以前は
+        # 120秒待たないとボタンが凹んだまま(=押せない)戻らなかった
+        # (ユーザー報告:「保存おしたら、レイヤ情報を保存が押せなくなった」)。
+        # 正常な保存は7〜10秒程度で終わるため、余裕を見て20秒で見切る。
+        LAYER_SAVE_TIMEOUT_SEC = 20
         now = time.time()
         for hwnd in list(self._pending_layer_saves.keys()):
             state = self._pending_layer_saves[hwnd]
             trigger_btn = state.get("trigger_btn")
             if now - state["started_at"] > LAYER_SAVE_TIMEOUT_SEC:
-                self.write_system_log(f"❌ [レイヤ保存] {state['name']} がタイムアウトしました(選択確定されなかった可能性があります)")
+                self.write_system_log(
+                    f"❌ [レイヤ保存] {state['name']} がタイムアウトしました"
+                    f"(編集可能なレイヤが無い等で、選択する図形が無かった可能性があります)"
+                )
                 if trigger_btn:
                     trigger_btn.clear_selected()
                 del self._pending_layer_saves[hwnd]
