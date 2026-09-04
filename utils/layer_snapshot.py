@@ -25,6 +25,8 @@ import win32con
 import win32gui
 import win32process
 
+from utils import line_attr_dialog
+
 VK_CONTROL = 0x11
 SAVE_KEY_VK = 0x4A  # 'J' (Ctrl+J、GCOM_100の10番目=Jに割り付け済み)
 LOAD_CONFIG_CMD_ID = 32923  # 設定→環境設定ファイル→読込み
@@ -188,9 +190,18 @@ def _find_children(hwnd, cls):
 def trigger_restore(hwnd, jwl_path):
     """「設定→環境設定ファイル→読込み」を自動実行し、jwl_pathを読み込ませる。
     実機確認済み(標準の「開く」コモンダイアログのため自動操作可能)。
+
+    👑 JWLは書込レイヤグループ/レイヤを保存時点の値へ強制的に動かして
+    しまう(`100`指定を省くと逆にファイル全体が無視されると実機で判明、
+    2026-09-04)。ユーザー提案により、適用直前の書込レイヤを記憶して
+    おき、適用後に`utils.line_attr_dialog.set_layer_group()`(右クリック
+    切替、既存の安全な仕組み)で元へ戻すことで、体感上は書込レイヤが
+    動かないようにする。
     戻り値: 成功したらTrue。"""
     if not jwl_path or not os.path.isfile(jwl_path):
         return False
+
+    orig_group, orig_layer = line_attr_dialog.read_current_layer_group(hwnd)
 
     before = set()
 
@@ -247,5 +258,14 @@ def trigger_restore(hwnd, jwl_path):
     if not open_btn:
         open_btn = buttons[0]
     win32gui.PostMessage(open_btn, win32con.BM_CLICK, 0, 0)
+
+    if orig_group is not None and orig_layer is not None:
+        # 👑 JWL読み込みが実際に反映されるまで一瞬かかるため、少し待って
+        # から元の書込レイヤへ戻す(早すぎるとread_current_layer_group()が
+        # 反映前の値を読んでしまい、set_layer_group()が「既に選択中」と
+        # 誤判定してレイヤ一覧ダイアログを開いてしまう恐れがある)。
+        time.sleep(0.8)
+        line_attr_dialog.set_layer_group(hwnd, group=orig_group, layer=orig_layer)
+
     return True
 # ===== ✂️ utils/layer_snapshot.py END ✂️ =====
