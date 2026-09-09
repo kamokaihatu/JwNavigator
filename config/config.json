@@ -43,20 +43,6 @@
               "target_command": "C005"
             },
             {
-              "command_id": "",
-              "name": "円",
-              "icon": "",
-              "color": "#f0f0f0",
-              "kind": "auto_attr",
-              "line_color": 1403,
-              "line_type": 2449,
-              "line_width": "",
-              "horizontal_vertical": true,
-              "layer_group": 2,
-              "layer_number": 2,
-              "target_command": "C003"
-            },
-            {
               "command_id": "C002",
               "name": "矩形",
               "icon": "rect",
@@ -169,6 +155,129 @@
               "kind": "single"
             }
           ]
+        },
+        {
+          "buttons": [
+            {
+              "command_id": "",
+              "name": "ﾚｲﾔ\n保存",
+              "icon": "sample_cute_cat",
+              "color": "#f0f0f0",
+              "kind": "layer_snapshot",
+              "role": "save",
+              "default_keep_write_layer": false
+            },
+            {
+              "command_id": "",
+              "name": "10",
+              "icon": "",
+              "color": "#f0f0f0",
+              "kind": "layer_snapshot",
+              "role": "restore",
+              "snapshot_id": "c10728b86d6748a5894796d9bfe8f2f8",
+              "snapshot_name": "10",
+              "keep_write_layer": false
+            },
+            {
+              "command_id": "",
+              "name": "9",
+              "icon": "",
+              "color": "#f0f0f0",
+              "kind": "layer_snapshot",
+              "role": "restore",
+              "snapshot_id": "e5e60ce346f24b7ea2813818f02ef328",
+              "snapshot_name": "9",
+              "keep_write_layer": false
+            },
+            {
+              "command_id": "",
+              "name": "8",
+              "icon": "",
+              "color": "#f0f0f0",
+              "kind": "layer_snapshot",
+              "role": "restore",
+              "snapshot_id": "66b4f666504644b3a294803438abd9a7",
+              "snapshot_name": "8",
+              "keep_write_layer": false
+            },
+            {
+              "command_id": "",
+              "name": "7",
+              "icon": "",
+              "color": "#f0f0f0",
+              "kind": "layer_snapshot",
+              "role": "restore",
+              "snapshot_id": "f16373c0c4bd417bb55ca56bf1af259e",
+              "snapshot_name": "7",
+              "keep_write_layer": false
+            },
+            {
+              "command_id": "",
+              "name": "6",
+              "icon": "",
+              "color": "#f0f0f0",
+              "kind": "layer_snapshot",
+              "role": "restore",
+              "snapshot_id": "e8901d9e071f47768eaf112b1690f008",
+              "snapshot_name": "6",
+              "keep_write_layer": false
+            },
+            {
+              "command_id": "",
+              "name": "5",
+              "icon": "",
+              "color": "#f0f0f0",
+              "kind": "layer_snapshot",
+              "role": "restore",
+              "snapshot_id": "fd9958aab35543dfac5c0e3c65700080",
+              "snapshot_name": "5",
+              "keep_write_layer": false
+            },
+            {
+              "command_id": "",
+              "name": "4",
+              "icon": "",
+              "color": "#f0f0f0",
+              "kind": "layer_snapshot",
+              "role": "restore",
+              "snapshot_id": "ef6291a8b6514c0382ba50f06b589f6a",
+              "snapshot_name": "4",
+              "keep_write_layer": false
+            },
+            {
+              "command_id": "",
+              "name": "3",
+              "icon": "",
+              "color": "#f0f0f0",
+              "kind": "layer_snapshot",
+              "role": "restore",
+              "snapshot_id": "7cff347bddee418183747503adecd556",
+              "snapshot_name": "3",
+              "keep_write_layer": false
+            },
+            {
+              "command_id": "",
+              "name": "2",
+              "icon": "",
+              "color": "#f0f0f0",
+              "kind": "layer_snapshot",
+              "role": "restore",
+              "snapshot_id": "018107e80707464b972babc945e20f76",
+              "snapshot_name": "2",
+              "keep_write_layer": false
+            },
+            {
+              "command_id": "",
+              "name": "1",
+              "icon": "",
+              "color": "#f0f0f0",
+              "kind": "layer_snapshot",
+              "role": "restore",
+              "snapshot_id": "63a0aeca7dff430b9a5f146c77c4e806",
+              "snapshot_name": "1",
+              "keep_write_layer": false
+            }
+          ]
         }
       ]
     },
@@ -191,6 +300,15 @@
               "icon": "center",
               "color": "#f0f0f0",
               "kind": "single"
+            },
+            {
+              "command_id": "",
+              "name": "ﾚｲﾔ\n保存",
+              "icon": "",
+              "color": "#f0f0f0",
+              "kind": "layer_snapshot",
+              "role": "save",
+              "default_keep_write_layer": true
             },
             {
               "command_id": "C008",
@@ -216,7 +334,7 @@
             {
               "command_id": "C013",
               "name": "ﾊｯﾁ",
-              "icon": "hatch",
+              "icon": "",
               "color": "#f0f0f0",
               "kind": "single"
             },

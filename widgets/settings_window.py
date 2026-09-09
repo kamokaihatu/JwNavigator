@@ -257,13 +257,62 @@ class IconPickerDialog(tk.Toplevel):
     THUMB_SIZE = 40
     COLS = 6
 
+    # 👑 2026-09-09: cowork製の追加アイコン(v2/汎用156個)を取り込んだ結果、
+    # 検索文字を打たないと選びづらいほど数が増えた。「コマンド追加ダイアログ
+    # みたいにチェックボックスで分類したい」という要望を受け、単発ボタン
+    # (検索文字を差し替えるだけ)だったカテゴリ絞り込みを、
+    # CommandPickerDialogの種別/分類チェックボックスと同じ方式
+    # (複数同時ON/OFF、BooleanVarを値ごとに持つ)に置き換えた。
+    # プレフィックスはファイル名の命名規則そのもの。
+    CATEGORY_PREFIXES = [
+        ("コマンド風", "sample_cmd_"),
+        ("派手", "sample_emoji_"),
+        ("落ち着いた", "sample_stylish_"),
+        ("かわいい", "sample_cute_"),
+        ("かっこいい", "sample_cool_"),
+        ("UI", "ui_"),
+        ("天気", "weather_"),
+        ("機器", "device_"),
+        ("物", "object_"),
+        ("文房具", "stationery_"),
+        ("動物", "animal_"),
+        ("食べ物", "food_"),
+        ("乗り物", "vehicle_"),
+        ("自然", "nature_"),
+    ]
+
+    # 👑 2026-09-09: コマンド専用アイコンのうち、今回cowork製で追加された
+    # 一式(既存の代替は"<元名>_v2"、ギャップ埋めは新規名)を「V2」として
+    # 明示的に分類する。プレフィックスでは判別できない(元の名前をそのまま
+    # 引き継ぐ新規分もあるため)ので、名前の集合で直接判定する。それ以外の
+    # コマンド専用アイコン(元からあったもの)は「V1」として一括りにする。
+    V2_ICON_NAMES = frozenset({
+        "auto_v2", "basic_settings_v2", "bl_break_v2", "bl_edit_v2", "bl_make_v2",
+        "center_point_v2", "center_v2", "chamfer_v2", "circle_v2", "cleanup_v2",
+        "clip_copy_v2", "coordinate", "copy_v2", "corner_v2", "curve_v2", "cut_v2",
+        "delete_v2", "dim_diagram", "dim_diagram_solve", "dimension_v2",
+        "distance_point", "divide_line_v2", "external_transform", "file_new_v2",
+        "file_open_v2", "file_overwrite_v2", "file_save_v2", "formula_calc",
+        "get_attribute_v2", "hatch_v2", "image_edit_v2", "interval", "line_2_v2",
+        "line_angle", "line_attribute", "line_length", "line_v2", "measure_v2",
+        "move_v2", "origin_v2", "parametric", "paste_v2", "point_on_line",
+        "point_v2", "polygon_v2", "polyline_v2", "print_out_v2",
+        "quarter_circle_point_v2", "range_v2", "rect_v2", "redo_v2",
+        "selection_diagram", "shadow_diagram_v2", "shape_register", "shape_v2",
+        "sky_diagram_v2", "solid_v2", "speed_v2", "spreadsheet_v2", "stretch_v2",
+        "tag_jump_v2", "text_v2", "two_point_angle", "two_point_five_d",
+        "two_point_length", "undo_v2", "vertical_angle", "x_axis_angle",
+    })
+    OTHER_CATEGORY_LABEL = "V1"
+    V2_CATEGORY_LABEL = "V2"
+
     def __init__(self, master, current_icon=None):
         super().__init__(master)
         self.result = None
         self._selected = current_icon or palette_config.NO_ICON
         self._image_refs = []
         self.title("アイコンを選ぶ")
-        self.geometry("420x520")
+        self.geometry("460x560")
         self.configure(bg="#f0f0f0")
         self.attributes("-topmost", True)
         self.transient(master)
@@ -276,26 +325,35 @@ class IconPickerDialog(tk.Toplevel):
         entry.pack(side="left", padx=4, fill="x", expand=True)
         self.query_var.trace_add("write", lambda *a: self._rebuild_grid())
 
-        # 👑 サンプルパック（png_icons/にsample_*で大量投入したアイコン群）を
-        # 検索欄に文字を打たなくてもワンクリックで絞り込めるようにする
-        # ショートカットボタン。「ざっくり入れると選ぶの難しい」という
-        # 指摘を受けて追加。プレフィックスはサンプル投入時の命名規則
-        # （sample_cmd_/emoji_/stylish_/cute_/cool_）に合わせてある。
-        category_bar = ttk.Frame(self)
-        category_bar.pack(side="top", fill="x", padx=8, pady=(0, 4))
-        categories = [
-            ("全部", ""),
-            ("コマンド風", "sample_cmd_"),
-            ("派手", "sample_emoji_"),
-            ("落ち着いた", "sample_stylish_"),
-            ("かわいい", "sample_cute_"),
-            ("かっこいい", "sample_cool_"),
-        ]
-        for label, prefix in categories:
-            ttk.Button(
-                category_bar, text=label, width=8,
-                command=lambda p=prefix: self.query_var.set(p),
-            ).pack(side="left", padx=(0, 3))
+        # 👑 分類チェックボックス(複数同時ON/OFF可能)。折り返しできるよう
+        # 複数行のFrameに詰める(カテゴリ数が多いため単一行だと入り切らない)。
+        # 数が増えて1個ずつ触るのが面倒という指摘があったため、全部ON/OFF
+        # ボタンも添えてある。
+        category_area = ttk.Frame(self)
+        category_area.pack(side="top", fill="x", padx=8, pady=(0, 4))
+
+        all_bar = ttk.Frame(category_area)
+        all_bar.pack(side="top", fill="x", pady=(0, 2))
+        ttk.Button(all_bar, text="全部ON", width=8, command=lambda: self._set_all_categories(True)).pack(side="left", padx=(0, 3))
+        ttk.Button(all_bar, text="全部OFF", width=8, command=lambda: self._set_all_categories(False)).pack(side="left")
+
+        # 👑 選択肢が一気に増えたため、開いた直後は見慣れた「V1」(元から
+        # あったコマンド用アイコン)だけに絞っておく(ユーザー要望、
+        # 2026-09-09)。他は必要な時だけチェックを入れて広げる想定。
+        self.category_vars = {}
+        row = None
+        per_row = 5
+        for i, (label, prefix) in enumerate(self.CATEGORY_PREFIXES):
+            if i % per_row == 0:
+                row = ttk.Frame(category_area)
+                row.pack(side="top", fill="x")
+            var = tk.BooleanVar(value=False)
+            self.category_vars[prefix] = var
+            ttk.Checkbutton(row, text=label, variable=var, command=self._rebuild_grid).pack(side="left", padx=3)
+        self.v2_var = tk.BooleanVar(value=False)
+        ttk.Checkbutton(row, text=self.V2_CATEGORY_LABEL, variable=self.v2_var, command=self._rebuild_grid).pack(side="left", padx=3)
+        self.other_var = tk.BooleanVar(value=True)
+        ttk.Checkbutton(row, text=self.OTHER_CATEGORY_LABEL, variable=self.other_var, command=self._rebuild_grid).pack(side="left", padx=3)
 
         container = ttk.Frame(self)
         container.pack(side="top", fill="both", expand=True, padx=8)
@@ -324,6 +382,21 @@ class IconPickerDialog(tk.Toplevel):
         entry.focus_set()
         self.grab_set()
 
+    def _set_all_categories(self, value):
+        for var in self.category_vars.values():
+            var.set(value)
+        self.v2_var.set(value)
+        self.other_var.set(value)
+        self._rebuild_grid()
+
+    def _category_visible(self, icon_name):
+        for prefix, var in self.category_vars.items():
+            if icon_name.startswith(prefix):
+                return var.get()
+        if icon_name in self.V2_ICON_NAMES:
+            return self.v2_var.get()
+        return self.other_var.get()
+
     def _rebuild_grid(self):
         for child in self.grid_frame.winfo_children():
             child.destroy()
@@ -331,7 +404,10 @@ class IconPickerDialog(tk.Toplevel):
         self._image_refs = []
 
         query = self.query_var.get().strip().lower()
-        names = [n for n in palette_config.list_all_icon_names() if query in n.lower()]
+        names = [
+            n for n in palette_config.list_all_icon_names()
+            if query in n.lower() and self._category_visible(n)
+        ]
         entries = [(palette_config.NO_ICON, ICON_NONE_LABEL)] + [(n, n) for n in names]
 
         for i, (icon_name, label) in enumerate(entries):
@@ -1496,6 +1572,34 @@ class SidePanel(ttk.Frame):
         self.auto_attr_target_combo.pack(side="left", padx=(2, 0))
         self.auto_attr_target_combo.bind("<<ComboboxSelected>>", self._on_auto_attr_changed)
 
+        # 👑 「電灯配線図を復元」等(kind="layer_snapshot", role="restore")用:
+        # 復元時に書込レイヤをどう扱うかのチェックボックス(ユーザー要望:
+        # 「入力レイヤをどうするかはチェックボックスで決めてもらったら
+        # いいかと」、2026-09-07)。既定はON(=復元後、押す直前にいた
+        # 書込レイヤへ自動で戻す。OFFにすると保存時点の書込レイヤへ
+        # 素直に切り替わる、元々の.JWLの挙動)。
+        layer_restore_frame = ttk.Frame(lf)
+        self.layer_restore_frame = layer_restore_frame
+        self.layer_restore_keep_var = tk.BooleanVar(value=True)
+        self.layer_restore_keep_check = ttk.Checkbutton(
+            layer_restore_frame, text="復元後も今の書込レイヤを維持する",
+            variable=self.layer_restore_keep_var, command=self._on_layer_restore_changed,
+        )
+        self.layer_restore_keep_check.pack(side="left")
+
+        # 👑 保存ボタン(role="save")用: 新しく作る復元ボタンの既定値
+        # (ユーザー指摘:「レイヤ保存したらこのボタンの設定には来ないと
+        # おもうんだ」→ 復元ボタン個別のチェックボックスは残しつつ、
+        # 保存ボタン側に既定値を持たせる、2026-09-07)。
+        layer_save_frame = ttk.Frame(lf)
+        self.layer_save_frame = layer_save_frame
+        self.layer_save_default_var = tk.BooleanVar(value=True)
+        self.layer_save_default_check = ttk.Checkbutton(
+            layer_save_frame, text="新しく作る復元ボタンも既定でONにする(復元後に今の書込レイヤを維持)",
+            variable=self.layer_save_default_var, command=self._on_layer_save_default_changed,
+        )
+        self.layer_save_default_check.pack(side="left")
+
         self._set_detail_enabled(False, False)
         self._set_detail_extra_section(None)
 
@@ -1506,10 +1610,12 @@ class SidePanel(ttk.Frame):
         # 実装だと、使わない方の分まで縦に伸び続けていた)。
         # 👑 他の行(ラベルがcolumn0・中身がcolumn1)と揃える(以前は
         # columnspan=2で1枠を丸ごと使っていて中央寄りに見えていた)。
-        # section: None(何も出さない)/"group"/"auto_attr"
+        # section: None(何も出さない)/"group"/"auto_attr"/"layer_restore"/"layer_save"
         self.group_frame.grid_remove()
         self.auto_attr_frame.grid_remove()
         self.auto_attr_frame2.grid_remove()
+        self.layer_restore_frame.grid_remove()
+        self.layer_save_frame.grid_remove()
         self.extra_row_label.grid_remove()
         if section is None:
             self.detail_separator.grid_remove()
@@ -1523,6 +1629,12 @@ class SidePanel(ttk.Frame):
             self.extra_row_label.configure(text="モード:")
             self.auto_attr_frame.grid(row=self._detail_extra_row, column=1, sticky="w", padx=6, pady=(4, 0))
             self.auto_attr_frame2.grid(row=self._detail_extra_row + 1, column=1, sticky="w", padx=6, pady=(0, 4))
+        elif section == "layer_restore":
+            self.extra_row_label.configure(text="復元設定:")
+            self.layer_restore_frame.grid(row=self._detail_extra_row, column=1, sticky="w", padx=6, pady=4)
+        elif section == "layer_save":
+            self.extra_row_label.configure(text="保存設定:")
+            self.layer_save_frame.grid(row=self._detail_extra_row, column=1, sticky="w", padx=6, pady=4)
 
     def _on_auto_attr_changed(self, event=None):
         if self._loading_detail:
@@ -1565,6 +1677,30 @@ class SidePanel(ttk.Frame):
         if btn is None or btn.get("kind") != palette_config.BUTTON_KIND_AUTO_ATTR:
             return
         btn["line_width"] = self.auto_attr_width_var.get()
+
+    def _on_layer_restore_changed(self):
+        if self._loading_detail:
+            return
+        btn = self._selected_button()
+        if (
+            btn is None
+            or btn.get("kind") != palette_config.BUTTON_KIND_LAYER_SNAPSHOT
+            or btn.get("role") != palette_config.LAYER_SNAPSHOT_ROLE_RESTORE
+        ):
+            return
+        btn["keep_write_layer"] = self.layer_restore_keep_var.get()
+
+    def _on_layer_save_default_changed(self):
+        if self._loading_detail:
+            return
+        btn = self._selected_button()
+        if (
+            btn is None
+            or btn.get("kind") != palette_config.BUTTON_KIND_LAYER_SNAPSHOT
+            or btn.get("role") != palette_config.LAYER_SNAPSHOT_ROLE_SAVE
+        ):
+            return
+        btn["default_keep_write_layer"] = self.layer_save_default_var.get()
 
     def _on_pick_swatches(self):
         btn = self._selected_button()
@@ -1642,7 +1778,21 @@ class SidePanel(ttk.Frame):
                 kind = btn.get("kind")
                 is_group = kind in (palette_config.BUTTON_KIND_FLYOUT, palette_config.BUTTON_KIND_MACRO)
                 is_auto_attr = kind == palette_config.BUTTON_KIND_AUTO_ATTR
-                if is_group:
+                is_layer_restore = (
+                    kind == palette_config.BUTTON_KIND_LAYER_SNAPSHOT
+                    and btn.get("role") == palette_config.LAYER_SNAPSHOT_ROLE_RESTORE
+                )
+                is_layer_save = (
+                    kind == palette_config.BUTTON_KIND_LAYER_SNAPSHOT
+                    and btn.get("role") == palette_config.LAYER_SNAPSHOT_ROLE_SAVE
+                )
+                if is_layer_restore:
+                    self.cmd_var.set(f"(レイヤ復元・{btn.get('snapshot_name', '')})")
+                    self.layer_restore_keep_var.set(bool(btn.get("keep_write_layer", True)))
+                elif is_layer_save:
+                    self.cmd_var.set("(レイヤ保存)")
+                    self.layer_save_default_var.set(bool(btn.get("default_keep_write_layer", True)))
+                elif is_group:
                     # 👑 「中身5個」という個数だけでは何が入っているか分からない
                     # という指摘のため、コマンド欄に中身の名前も並べて表示する
                     # (専用の行を別途足すと縦に伸びて設定ウィンドウ下端の
@@ -1677,7 +1827,17 @@ class SidePanel(ttk.Frame):
                 self._update_icon_preview(btn["icon"])
                 self.color_swatch.configure(bg=btn["color"])
                 self._set_detail_enabled(True, True)
-                self._set_detail_extra_section("group" if is_group else ("auto_attr" if is_auto_attr else None))
+                if is_layer_restore:
+                    section = "layer_restore"
+                elif is_layer_save:
+                    section = "layer_save"
+                elif is_group:
+                    section = "group"
+                elif is_auto_attr:
+                    section = "auto_attr"
+                else:
+                    section = None
+                self._set_detail_extra_section(section)
             else:
                 # 複数選択中: 名前は編集不可、色・アイコンはまとめて変更可能
                 self.cmd_var.set(f"{len(multi)}個選択中")
@@ -1780,6 +1940,18 @@ class SidePanel(ttk.Frame):
         if btn is None:
             return
         btn["name"] = self.name_var.get()
+        if (
+            btn.get("kind") == palette_config.BUTTON_KIND_LAYER_SNAPSHOT
+            and btn.get("role") == palette_config.LAYER_SNAPSHOT_ROLE_RESTORE
+        ):
+            # 👑 表示名(name)とsnapshot_name(保存ボタンが同名かどうかを
+            # 照合する時に使う正式名)が別々に持てる設計だったが、表示名
+            # だけ変えるとsnapshot_nameが古いまま取り残され、後で同じ
+            # 元の名前で保存すると別ボタンだと思っていたこの復元ボタンを
+            # 上書きしてしまう混乱を生む。「名前の変更を簡単にしたい」
+            # (2026-09-08)を踏まえ、表示名の変更にsnapshot_nameを常に
+            # 追従させ、両者が乖離しないようにする。
+            btn["snapshot_name"] = btn["name"]
         self._refresh_current_group_labels()
 
     def _on_pick_icon(self):
@@ -1970,14 +2142,34 @@ class SidePanel(ttk.Frame):
         indices = sorted(i for i in self._selected_indices if i < len(buttons))
         if not indices:
             return
+        # 👑 レイヤ復元ボタンを削除する時は、保存済みの.JWLファイルも
+        # 一緒に消す(ユーザー指摘:「保存したレイヤ情報の削除って
+        # 作ってないね」。今まではボタンだけ消えてファイルが孤児として
+        # 残り続けていた)。
+        has_layer_snapshot = any(
+            buttons[i].get("kind") == palette_config.BUTTON_KIND_LAYER_SNAPSHOT
+            and buttons[i].get("role") == palette_config.LAYER_SNAPSHOT_ROLE_RESTORE
+            for i in indices
+        )
         if len(indices) == 1:
             msg = f"「{buttons[indices[0]]['name']}」を削除しますか?"
         else:
             names = "、".join(buttons[i]["name"] for i in indices)
             msg = f"{len(indices)}個({names})を削除しますか?"
+        if has_layer_snapshot:
+            msg += "\n\n(保存済みのレイヤ情報も一緒に削除されます)"
         if not messagebox.askyesno("確認", msg, parent=self.winfo_toplevel()):
             return
         for i in reversed(indices):
+            btn = buttons[i]
+            if (
+                btn.get("kind") == palette_config.BUTTON_KIND_LAYER_SNAPSHOT
+                and btn.get("role") == palette_config.LAYER_SNAPSHOT_ROLE_RESTORE
+            ):
+                try:
+                    os.remove(palette_config.layer_snapshot_path(btn.get("snapshot_id", "")))
+                except OSError:
+                    pass
             buttons.pop(i)
         self.selected = None
         self._selected_group = None

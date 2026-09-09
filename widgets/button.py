@@ -288,6 +288,15 @@ class NavButton(tk.Frame):
         return "\n".join(rows), _f(base)
 
     def load_and_draw(self):
+        # 👑 パレット全体の再構築(config変更の反映等)で、この参照が指す
+        # ウィジェットが既に破棄されている状態で呼ばれることがある
+        # (例: レイヤ保存ボタンを押した直後にconfig更新→
+        # _refresh_all_toolbar_buttons()でボタン自身が作り直される、その
+        # 後で古い参照へ非同期に届いたコールバックがこれを呼ぶ)。実機で
+        # `_tkinter.TclError: invalid command name`のクラッシュを確認
+        # (2026-09-08)。破棄済みなら何もしない。
+        if not self.winfo_exists():
+            return
         self.canvas.delete("all")
         drawn = False
 
@@ -424,12 +433,18 @@ class NavButton(tk.Frame):
         pass
 
     def set_selected(self):
+        # 👑 load_and_draw()と同じ理由で破棄済みウィジェットに対する
+        # 呼び出しをここでも無害化する(2026-09-08)。
+        if not self.winfo_exists():
+            return
         self.selected = True
         selected_color = _darken_color(self.bg_color)
         self.configure(bg=selected_color, relief="sunken")
         self.canvas.configure(bg=selected_color)
 
     def clear_selected(self):
+        if not self.winfo_exists():
+            return
         self.selected = False
         self.configure(bg=self.bg_color, relief="raised")
         self.canvas.configure(bg=self.bg_color)

@@ -263,6 +263,20 @@ def new_layer_snapshot_button(name, role, snapshot_id=None, snapshot_name=None, 
     if role == LAYER_SNAPSHOT_ROLE_RESTORE:
         button["snapshot_id"] = snapshot_id or uuid.uuid4().hex
         button["snapshot_name"] = snapshot_name or name
+        # 👑 .JWL復元は書込レイヤグループ/レイヤも保存時点の値へ動かして
+        # しまう(このメモの2026-09-04調査参照)。既定では復元直後に
+        # 「復元ボタンを押す直前にいた書込レイヤ」へ自動で戻す
+        # (keep_write_layer=True)。ユーザー要望により、ボタンごとに
+        # チェックボックスでこの挙動をOFF(=保存時点の書込レイヤへ
+        # 素直に切り替わる)にできるようにする(2026-09-07)。
+        button["keep_write_layer"] = True
+    elif role == LAYER_SNAPSHOT_ROLE_SAVE:
+        # 👑 復元ボタンは保存の度に動的に新規作成されるため、作成された
+        # その復元ボタン自身の設定画面には普段来ない(ユーザー指摘:
+        # 「レイヤ保存したらこのボタンの設定には来ないとおもうんだ」)。
+        # 保存ボタン側に「新しく作る復元ボタンの既定値」を持たせ、
+        # main.py: _start_layer_snapshot_save が新規作成時にここを見る。
+        button["default_keep_write_layer"] = True
     return button
 
 
@@ -372,6 +386,9 @@ def _normalize_button(raw, known_icons, allow_group=True):
             snapshot_id = str(raw.get("snapshot_id") or "").strip()
             button["snapshot_id"] = snapshot_id or uuid.uuid4().hex
             button["snapshot_name"] = str(raw.get("snapshot_name") or "").strip() or name
+            button["keep_write_layer"] = bool(raw.get("keep_write_layer", True))
+        elif role == LAYER_SNAPSHOT_ROLE_SAVE:
+            button["default_keep_write_layer"] = bool(raw.get("default_keep_write_layer", True))
 
     return button
 

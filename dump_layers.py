@@ -25,6 +25,18 @@ import csv
 import json
 import datetime
 import collections
+import time
+
+_T0 = time.perf_counter()
+_LAP = _T0
+
+
+def lap(name):
+    """区間の所要時間をログに出す（どこで時間を使っているかの計測用）。"""
+    global _LAP
+    now = time.perf_counter()
+    print("[time] %-12s %6.3f s  (累計 %6.3f s)" % (name, now - _LAP, now - _T0))
+    _LAP = now
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 OUTDIR = os.path.join(HERE, "layerdump")
@@ -313,11 +325,18 @@ def main():
         return 1
 
     print("source:", temp)
-    text = open(temp, "rb").read().decode(ENC, errors="replace")
+    lap("起動と探索")
+    raw_bytes = open(temp, "rb").read()
+    print("jwc_temp: %d bytes" % len(raw_bytes))
+    text = raw_bytes.decode(ENC, errors="replace")
+    lap("読み込み")
     rows, gstates, gnames, lnames, wg, wl = parse(text)
+    lap("解析")
 
     ngroup, nlayer, jwl_ok = write_outputs(stamp, text, rows, gstates, gnames, lnames, wg, wl)
+    lap("出力")
 
+    lap("返信直前")
     reply("[%s] group=%d layer=%d write=lg%s/ly%s  %s"
           % (label, ngroup, nlayer, wg, wl,
              "JWL保存OK" if jwl_ok else "JWL未作成(256レイヤ揃わず)"))
