@@ -547,8 +547,7 @@ class JwNavigatorManager:
     def sync_toolbar_position(self, hwnd):
         if hwnd not in self.active_launchers:
             return
-        tl = self.active_launchers[hwnd]["左"]
-        tr = self.active_launchers[hwnd]["右"]
+        toolbars = self.active_launchers[hwnd]
         try:
             jw_rect = get_jw_window_rect_safe(hwnd)
             screen_width = self.root.winfo_screenwidth()
@@ -574,37 +573,29 @@ class JwNavigatorManager:
                     "button_size": tb.button_size,
                     "orientation": tb.orientation,
                 }
-            left_info = _side_info(tl)
-            right_info = _side_info(tr)
-            # 👑 N枚パレット対応1歩目(2026-09-09): compute_palette_geometry()
-            # の引数をleft/rightの固定2個からsides辞書に変更した(utils/
-            # palette_layout.py参照)。ここはまだ従来通り2枚固定のまま
-            # 呼んでいるだけで、main.py側のtl/tr手書きループ化は次回の作業。
-            geom = compute_palette_geometry(
-                jw_rect, screen_width, virtual_screen, {"左": left_info, "右": right_info},
-            )
+            # 👑 N枚パレット対応(2026-09-10): tl/tr決め打ちをやめ、
+            # active_launchers[hwnd]の中身(可変長)をそのままループする形に
+            # 変更した。compute_palette_geometry()自体は2026-09-09に
+            # sides辞書を受け取る形へ既に一般化済み。
+            sides = {key: _side_info(tb) for key, tb in toolbars.items()}
+            geom = compute_palette_geometry(jw_rect, screen_width, virtual_screen, sides)
 
-            if not tl.is_pinned and geom["左"]:
-                new_geom_l = geom["左"]
+            for key, tb in toolbars.items():
+                if tb.is_pinned or not geom.get(key):
+                    continue
+                new_geom = geom[key]
                 # 位置が変わっていないのに毎回wm_geometry()を呼ぶと、
                 # Windows側で「位置が更新された」扱いになり、意図せず
                 # 最前面に上がってくることがある（実測で確認）。実際に
                 # 変化があった時だけ呼ぶ。
-                if getattr(tl, "_last_geom", None) != new_geom_l:
-                    w, h, x, y = new_geom_l
-                    tl.wm_geometry(f"{w}x{h}+{x}+{y}")
+                if getattr(tb, "_last_geom", None) != new_geom:
+                    w, h, x, y = new_geom
+                    tb.wm_geometry(f"{w}x{h}+{x}+{y}")
                     # wm_geometry()だけだと、他の操作（ボタン押下など）で
                     # イベントループが回るまで実際の描画に反映されないことが
                     # あるため、ここで強制的に反映させる。
-                    tl.update_idletasks()
-                    tl._last_geom = new_geom_l
-            if not tr.is_pinned and geom["右"]:
-                new_geom_r = geom["右"]
-                if getattr(tr, "_last_geom", None) != new_geom_r:
-                    w, h, x, y = new_geom_r
-                    tr.wm_geometry(f"{w}x{h}+{x}+{y}")
-                    tr.update_idletasks()
-                    tr._last_geom = new_geom_r
+                    tb.update_idletasks()
+                    tb._last_geom = new_geom
             # 👑 【重大発覚】tl.winfo_id()/tr.winfo_id()は実は「本当の
             # トップレベルウィンドウ」ではなく、その内側の子ウィンドウの
             # hwndを返していた（実測でGetParent()!=0を確認、実際の
@@ -644,8 +635,8 @@ class JwNavigatorManager:
                     cur = win32gui.GetWindow(cur, win32con.GW_HWNDPREV)
                 return cur
 
-            palette_real_ids = {_real_top_level_hwnd(tl), _real_top_level_hwnd(tr)}
-            for tb, side_label in ((tl, "左"), (tr, "右")):
+            palette_real_ids = {_real_top_level_hwnd(tb) for tb in toolbars.values()}
+            for side_label, tb in toolbars.items():
                 if len(tb.buttons) == 0:
                     continue
                 if not getattr(tb, "_topmost_cleared", False):
@@ -729,10 +720,9 @@ class JwNavigatorManager:
 
         for hwnd in list(self.active_launchers.keys()):
             if hwnd not in current_jw_hwnds:
-                if self.active_launchers[hwnd]["左"]:
-                    self.active_launchers[hwnd]["左"].destroy()
-                if self.active_launchers[hwnd]["右"]:
-                    self.active_launchers[hwnd]["右"].destroy()
+                for tb in self.active_launchers[hwnd].values():
+                    if tb:
+                        tb.destroy()
                 del self.active_launchers[hwnd]
                 if hwnd in self.event_engines:
                     del self.event_engines[hwnd]
@@ -756,28 +746,27 @@ class JwNavigatorManager:
         for hwnd in current_jw_hwnds:
             if hwnd not in self.active_launchers:
                 try:
-                    toolbar_l = Toolbar(
-                        master=self.root,
-                        side_type="左",
-                        hwnd=hwnd,
-                        execute_func=self.logged_execute_command,
-                        manager_ref=self,
-                    )
-                    toolbar_r = Toolbar(
-                        master=self.root,
-                        side_type="右",
-                        hwnd=hwnd,
-                        execute_func=self.logged_execute_command,
-                        manager_ref=self,
-                    )
-                    toolbar_l.status_label = tk.Label(
-                        toolbar_l,
+                    toolbars = {}
+                    for side_key in palette_config.SIDES:
+                        toolbars[side_key] = Toolbar(
+                            master=self.root,
+                            side_type=side_key,
+                            hwnd=hwnd,
+                            execute_func=self.logged_execute_command,
+                            manager_ref=self,
+                        )
+                    # 👑 待機中ラベルは先頭(左)側にのみ付ける
+                    # (main.py内の他の箇所からtl.status_labelという
+                    # 前提で参照されており、両側に付けると混乱するため)。
+                    first_key = palette_config.SIDES[0]
+                    toolbars[first_key].status_label = tk.Label(
+                        toolbars[first_key],
                         text="待機中",
                         font=("Meiryo UI", 7),
                         bg="#f0f0f0",
                         fg="#888888",
                     )
-                    toolbar_l.status_label.pack(side="top", fill="x", pady=(0, 2))
+                    toolbars[first_key].status_label.pack(side="top", fill="x", pady=(0, 2))
 
                     def show_exit_popup(event, target_hwnd=hwnd, side_key="左"):
                         # 👑 「⚙️ 編集」だけは常に表示（消せない）。それ以外は
@@ -822,24 +811,17 @@ class JwNavigatorManager:
                             )
                         menu.post(event.x_root, event.y_root)
 
-                    toolbar_l.bind("<Button-3>", lambda e: show_exit_popup(e, side_key="左"))
-                    toolbar_r.bind("<Button-3>", lambda e: show_exit_popup(e, side_key="右"))
-                    if len(toolbar_l.buttons) > 0:
-                        toolbar_l.deiconify()
-                    else:
-                        toolbar_l.deiconify()
-                    if len(toolbar_r.buttons) > 0:
-                        toolbar_r.deiconify()
-                    else:
-                        toolbar_r.deiconify()
+                    for side_key, tb in toolbars.items():
+                        tb.bind("<Button-3>", lambda e, sk=side_key: show_exit_popup(e, side_key=sk))
+                        tb.deiconify()
 
-                    self.active_launchers[hwnd] = {"左": toolbar_l, "右": toolbar_r}
+                    self.active_launchers[hwnd] = toolbars
                     self.root.update_idletasks()
-                    toolbar_l.update_idletasks()
-                    toolbar_r.update_idletasks()
+                    for tb in toolbars.values():
+                        tb.update_idletasks()
                     is_reload = hwnd in self._pending_pin_restore
                     pending_pins = self._pending_pin_restore.pop(hwnd, {})
-                    for side_key, tb in (("左", toolbar_l), ("右", toolbar_r)):
+                    for side_key, tb in toolbars.items():
                         if side_key in pending_pins:
                             x, y = pending_pins[side_key]
                             tb.is_pinned = True
@@ -916,14 +898,14 @@ class JwNavigatorManager:
             return
         self.settings_window = SettingsWindow(self.root, manager_ref=self, initial_side=initial_side)
 
-    def _update_button_enabled_states(self, hwnd, tl, tr):
+    def _update_button_enabled_states(self, hwnd, toolbars):
         # jw_cad実ツールバーの有効/無効状態をまとめて調べ、対応するパレット
         # ボタンをグレーアウト/クリック無効化する。無効と判定できたものだけ
         # 反映し、判定不能（そのコマンドが今のツールバーに出ていない等）
         # なものは今まで通りクリック可能なままにする。
         try:
             id_map = {}
-            for tb in (tl, tr):
+            for tb in toolbars.values():
                 for btn in tb.buttons:
                     id_cmd = command_master.get_id_command(btn.command_key)
                     if id_cmd:
@@ -937,7 +919,7 @@ class JwNavigatorManager:
         except Exception as e:
             self.write_system_log(f"❌ ボタン有効状態更新エラー [HWND:{hwnd}]: {str(e)}")
 
-    def _update_checked_highlight(self, hwnd, tl, tr, current_state, matched_rule, click_confirmed):
+    def _update_checked_highlight(self, hwnd, toolbars, current_state, matched_rule, click_confirmed):
         # 👑 【CHECKEDビット方式】jw_cad自身のツールバーのTBSTATE_CHECKED
         # ビットを直接読み、その場でパレットの凹み表示に反映する。
         # ステータスバー文言の解析やAMBIGUOUS_GROUPS等の衝突解決は不要
@@ -947,7 +929,7 @@ class JwNavigatorManager:
         # その場合だけ旧ステータスバー方式（JP_MATCH_MAP）にフォールバック
         # する。
         try:
-            sides = (("左", tl), ("右", tr))
+            sides = tuple(toolbars.items())
             locked_name = self._get_active_locked_intent(hwnd)
             matched_side, matched_btn = None, None
             if locked_name:
@@ -1014,7 +996,7 @@ class JwNavigatorManager:
                     tb.current_selected_button = None
 
             if matched_btn:
-                target_tb = tl if matched_side == "左" else tr
+                target_tb = toolbars[matched_side]
                 if target_tb.current_selected_button is not matched_btn:
                     self.write_system_log(
                         f"[ボタン反映/CHECKED] 選択ボタン={matched_btn.name} side={matched_side}"
@@ -1026,29 +1008,26 @@ class JwNavigatorManager:
     # ===== ✂️ main.py END PART 2 ✂️ =====
     # ===== ✂️ main.py START PART 3 ✂️ =====
     def _execute_pipeline_tick(self, hwnd, t_loop_start, click_confirmed=False):
-        tl = self.active_launchers[hwnd]["左"]
-        tr = self.active_launchers[hwnd]["右"]
+        toolbars = self.active_launchers[hwnd]
         self._check_auto_attr_revert(hwnd)
-        if tl.user_hidden and tr.user_hidden:
+        if all(tb.user_hidden for tb in toolbars.values()):
             return
 
         if win32gui.IsIconic(hwnd):
-            if tl.winfo_viewable():
-                tl.withdraw()
-            if tr.winfo_viewable():
-                tr.withdraw()
+            for tb in toolbars.values():
+                if tb.winfo_viewable():
+                    tb.withdraw()
             return
         else:
             # 👑 「このパレットだけを閉じる」で片側だけuser_hidden=Trueに
             # なっている場合は、そちら側だけ再表示しないようにする
             # （以前は左右どちらか片方が実質「hwnd全体を隠すフラグ」を
             # 兼ねていて、閉じたつもりが両方消えるバグになっていた）。
-            if not tl.winfo_viewable() and len(tl.buttons) > 0 and not tl.user_hidden:
-                tl.deiconify()
-            if not tr.winfo_viewable() and len(tr.buttons) > 0 and not tr.user_hidden:
-                tr.deiconify()
+            for tb in toolbars.values():
+                if not tb.winfo_viewable() and len(tb.buttons) > 0 and not tb.user_hidden:
+                    tb.deiconify()
 
-        self._update_button_enabled_states(hwnd, tl, tr)
+        self._update_button_enabled_states(hwnd, toolbars)
 
         raw_text = get_raw_statusbar_text(hwnd)
         # 👑 【2.0仕様：ステータスバーテキストのクリーンアップ強化】
@@ -1074,9 +1053,10 @@ class JwNavigatorManager:
             self._last_state_collection_state = current_state
             self._last_state_collection_rule = matched_rule
 
-        if hasattr(tl, "status_label"):
+        status_tb = toolbars.get(palette_config.SIDES[0])
+        if status_tb is not None and hasattr(status_tb, "status_label"):
             if current_state == "STATE_IDLE":
-                tl.status_label.configure(text="待機中", fg="#888888")
+                status_tb.status_label.configure(text="待機中", fg="#888888")
 
         # 👑 【CHECKEDビット方式・experiment/checked-bit-highlight】
         # 旧方式（ステータスバー文言をstate_parser.pyで解析し、JP_MATCH_MAPで
@@ -1089,7 +1069,7 @@ class JwNavigatorManager:
         # （state_parser.py・JP_MATCH_MAP・is_hover_trustworthy_rule等）は
         # ツールバーボタンを持たないコマンドへのフォールバックとして温存
         # してあるが、現状この経路からは呼んでいない。
-        self._update_checked_highlight(hwnd, tl, tr, current_state, matched_rule, click_confirmed)
+        self._update_checked_highlight(hwnd, toolbars, current_state, matched_rule, click_confirmed)
 
     def logged_execute_command(self, hwnd, command_id):
         # 👑 補助線モード中(直線=AUTO_ATTR_TARGET_COMMANDが既にCHECKED済み)に
@@ -1135,22 +1115,20 @@ class JwNavigatorManager:
             send_key_to_hwnd(hwnd, shortcut_key, mode="A")
 
         # 👑 【2.0仕様：ランチャー側クリック時は即座に先行点灯し、インテントをロック】
-        for side_key in ["左", "右"]:
-            if hwnd in self.active_launchers:
-                tb = self.active_launchers[hwnd][side_key]
-                for btn in tb.buttons:
-                    if btn.command_key == command_id:
-                        tb.select_button(btn)
-                        # トグル動作でない機能を除外してインテントを先行ロック
-                        if btn.name not in [
-                            "戻る（アンドゥ）",
-                            "進む（リドゥ）",
-                            "戻る",
-                            "進む",
-                        ]:
-                            name = "面取" if btn.name in ["面取", "面取り"] else btn.name
-                            self.locked_intent[hwnd] = (name, time.time())
-                        return
+        for tb in self.active_launchers.get(hwnd, {}).values():
+            for btn in tb.buttons:
+                if btn.command_key == command_id:
+                    tb.select_button(btn)
+                    # トグル動作でない機能を除外してインテントを先行ロック
+                    if btn.name not in [
+                        "戻る（アンドゥ）",
+                        "進む（リドゥ）",
+                        "戻る",
+                        "進む",
+                    ]:
+                        name = "面取" if btn.name in ["面取", "面取り"] else btn.name
+                        self.locked_intent[hwnd] = (name, time.time())
+                    return
 
     MACRO_STEP_DELAY_MS = 300
 
@@ -1492,8 +1470,7 @@ class JwNavigatorManager:
         launcher = self.active_launchers.get(hwnd)
         if not launcher:
             return
-        for side in ("左", "右"):
-            toolbar = launcher.get(side)
+        for toolbar in launcher.values():
             if toolbar:
                 try:
                     toolbar.load_and_build_buttons()
@@ -1712,8 +1689,7 @@ class JwNavigatorManager:
     def show_hidden_palettes(self, hwnd):
         if hwnd not in self.active_launchers:
             return
-        for side_key in ("左", "右"):
-            tb = self.active_launchers[hwnd][side_key]
+        for tb in self.active_launchers[hwnd].values():
             if tb.user_hidden:
                 tb.user_hidden = False
                 if len(tb.buttons) > 0:
@@ -1736,25 +1712,18 @@ class JwNavigatorManager:
         if self.window_state.get("remember_on_exit"):
             try:
                 for hwnd in list(self.active_launchers.keys()):
-                    tl = self.active_launchers[hwnd]["左"]
-                    tr = self.active_launchers[hwnd]["右"]
-                    self.window_state["左"] = (
-                        {"x": tl.winfo_x(), "y": tl.winfo_y()} if tl.is_pinned else None
-                    )
-                    self.window_state["右"] = (
-                        {"x": tr.winfo_x(), "y": tr.winfo_y()} if tr.is_pinned else None
-                    )
+                    for side_key, tb in self.active_launchers[hwnd].items():
+                        self.window_state[side_key] = (
+                            {"x": tb.winfo_x(), "y": tb.winfo_y()} if tb.is_pinned else None
+                        )
                 window_state.save_state(self.window_state)
             except Exception as e:
                 self.write_system_log(f"⚠️ パレット位置保存エラー: {str(e)}")
 
         for hwnd in list(self.active_launchers.keys()):
-            tl = self.active_launchers[hwnd]["左"]
-            tr = self.active_launchers[hwnd]["右"]
-            if tl:
-                tl.destroy()
-            if tr:
-                tr.destroy()
+            for tb in self.active_launchers[hwnd].values():
+                if tb:
+                    tb.destroy()
         try:
             self.root.after_cancel(self._monitor_job)
         except Exception as exc:

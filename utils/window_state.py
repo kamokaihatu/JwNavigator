@@ -9,7 +9,7 @@ import json
 import os
 import sys
 
-SIDES = ("左", "右")
+from utils.palette_config import SIDES
 
 
 def _resolve_base_dir():
@@ -31,7 +31,10 @@ def state_path():
 
 
 def default_state():
-    return {"remember_on_exit": False, "左": None, "右": None}
+    state = {"remember_on_exit": False}
+    for side in SIDES:
+        state[side] = None
+    return state
 
 
 def load_state():
