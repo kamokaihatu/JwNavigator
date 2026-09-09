@@ -576,7 +576,13 @@ class JwNavigatorManager:
                 }
             left_info = _side_info(tl)
             right_info = _side_info(tr)
-            geom = compute_palette_geometry(jw_rect, screen_width, virtual_screen, left_info, right_info)
+            # 👑 N枚パレット対応1歩目(2026-09-09): compute_palette_geometry()
+            # の引数をleft/rightの固定2個からsides辞書に変更した(utils/
+            # palette_layout.py参照)。ここはまだ従来通り2枚固定のまま
+            # 呼んでいるだけで、main.py側のtl/tr手書きループ化は次回の作業。
+            geom = compute_palette_geometry(
+                jw_rect, screen_width, virtual_screen, {"左": left_info, "右": right_info},
+            )
 
             if not tl.is_pinned and geom["左"]:
                 new_geom_l = geom["左"]

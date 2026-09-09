@@ -36,35 +36,53 @@ def _toolbar_size(side):
     return width, height
 
 
-def compute_palette_geometry(jw_rect, screen_width, virtual_screen, left, right):
+EDGE_LEFT = "left"
+EDGE_RIGHT = "right"
+
+# 👑 N枚パレット対応(2026-09-09、実装1歩目)。今回のスコープでは「好きな
+# 辺に」は見送り、既存の左右ドッキングのままパレット数だけ増やせるように
+# する(doc/HANDOFF等ではなく[[jwnavigator-backlog-decisions]]メモリ参照)。
+# 新しいパレットのキーは"左"/"右"を流用せず新規キー(例:"palette_3")を
+# 足す方針のため、そのキーがどちら側にドッキングするかをここで対応付ける。
+# 将来、設定画面に「辺を選ぶ」UIができたら、ここを設定ファイル駆動に
+# 差し替える想定(今は決め打ちのフォールバックのみ)。
+DEFAULT_EDGES = {"左": EDGE_LEFT, "右": EDGE_RIGHT}
+
+
+def _edge_for(side_key, edges, index):
+    if edges and side_key in edges:
+        return edges[side_key]
+    if side_key in DEFAULT_EDGES:
+        return DEFAULT_EDGES[side_key]
+    # 未知のキー(3枚目以降)はいったん左右交互に割り振る。
+    return EDGE_LEFT if index % 2 == 0 else EDGE_RIGHT
+
+
+def compute_palette_geometry(jw_rect, screen_width, virtual_screen, sides, edges=None):
     """
     jw_rect: jw_cadメインウィンドウの (x1, y1, x2, y2)。
     screen_width: 最大化判定に使うプライマリスクリーン幅。
     virtual_screen: 画面外クランプに使う (left, top, width, height)
                      （マルチモニター込みの仮想スクリーン全体）。
-    left / right: _toolbar_size()が受け取るside辞書。
+    sides: {side_key: side辞書, ...} (_toolbar_size()が受け取る形式)。
+           2枚時代の呼び出し互換のため、キーの並び順はdictの挿入順で
+           扱う(Python 3.7+のdictは順序を保持する)。
+    edges: {side_key: EDGE_LEFT|EDGE_RIGHT, ...}(省略時はDEFAULT_EDGESと
+           交互割り振りにフォールバック)。
 
-    戻り値: {"左": (w, h, x, y) または None, "右": (同上)}
+    戻り値: {side_key: (w, h, x, y) または None, ...}
     ボタンが0個の側はNoneを返す（呼び出し側で「何もしない」判断に使う）。
     """
     x1, y1, x2, y2 = jw_rect
     jw_w = x2 - x1
 
-    tb_w_l, tb_h_l = _toolbar_size(left)
-    tb_w_r, tb_h_r = _toolbar_size(right)
+    sizes = {key: _toolbar_size(cfg) for key, cfg in sides.items()}
 
     # 最大化時、jw_cadの実ウィンドウ矩形は見えない分のリサイズ境界を
     # 含んで画面幅を超えることがある（Windowsの仕様）ため、通常配置とは
     # 別ロジックでドッキング位置を決める。
     is_maximized = x1 <= 0 and y1 <= 0 and jw_w >= screen_width - 20
-    if is_maximized:
-        left_x = 0
-        right_x = jw_w - tb_w_r - 16
-        top_off = 70
-    else:
-        left_x = x1 - tb_w_l
-        right_x = x2
-        top_off = 0
+    top_off = 70 if is_maximized else 0
 
     v_left, v_top, v_width, v_height = virtual_screen
     top_y = y1 + top_off
@@ -74,10 +92,17 @@ def compute_palette_geometry(jw_rect, screen_width, virtual_screen, left, right)
         cy = max(v_top, min(y, v_top + v_height - h))
         return (w, h, cx, cy)
 
-    result = {"左": None, "右": None}
-    if int(left.get("button_count", 0) or 0) > 0:
-        result["左"] = _clamp(left_x, top_y, tb_w_l, tb_h_l)
-    if int(right.get("button_count", 0) or 0) > 0:
-        result["右"] = _clamp(right_x, top_y, tb_w_r, tb_h_r)
+    result = {}
+    for i, (key, cfg) in enumerate(sides.items()):
+        tb_w, tb_h = sizes[key]
+        if int(cfg.get("button_count", 0) or 0) <= 0:
+            result[key] = None
+            continue
+        edge = _edge_for(key, edges, i)
+        if is_maximized:
+            x = 0 if edge == EDGE_LEFT else jw_w - tb_w - 16
+        else:
+            x = x1 - tb_w if edge == EDGE_LEFT else x2
+        result[key] = _clamp(x, top_y, tb_w, tb_h)
     return result
 # ===== ✂️ utils/palette_layout.py END ✂️ =====
