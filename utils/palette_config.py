@@ -10,6 +10,8 @@ import os
 import sys
 import uuid
 
+from utils import app_paths
+
 SIDES = ("左", "右")
 # 👑 「くっつく場所を指定できるように」(2026-09-10)。4辺×3位置=12か所。
 # utils/palette_layout.pyのEDGE_*/POS_*と同じ文字列値(小さな定数重複、
@@ -68,10 +70,11 @@ def _resolve_base_dir():
 
 
 def config_path():
-    path = os.path.join(_resolve_base_dir(), "config", "config.json")
-    if os.path.exists(path):
-        return path
-    return os.path.join("config", "config.json")
+    # 👑 2026-09-11: パッケージ版は%APPDATA%\JwNavigator\config\へ移した
+    # (「exeを入れ替え/移動しても設定が消えないように」というユーザー
+    # 要望、DECISIONS.md参照)。開発環境は従来通りリポジトリ直下のまま
+    # (utils/app_paths.pyのuser_config_dir()参照)。
+    return os.path.join(app_paths.user_config_dir(), "config.json")
 
 
 def _icons_dir():

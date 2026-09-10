@@ -75,3 +75,41 @@ JwNavigator関連のフォルダは全て「exeのあるフォルダの直下」
 バイト単位で一致すること、`Sample.jwf`が触られないことを確認した
 (2026-09-11)。検証後、開発機の既存セットアップ(`C:\jww\JWW_EXT`)を
 壊さないよう手動で元に戻した。
+
+## 2026-09-11(追記): 設定ファイル一式を%APPDATA%へ移した
+
+**決定**: `config.json`/`window_state.json`/`menu_prefs.json`/
+`auto_attr_pending.json`/`layer_snapshots\`を、パッケージ版に限り
+`exeの隣のconfig\`から`%APPDATA%\JwNavigator\config\`へ移した
+(`utils/app_paths.py`)。
+
+**経緯**: 「exeを入れ替え/移動してもパレット設定が消えないようにしたい」
+という要望。exe隣接保存だと、zipを新しいフォルダへ展開し直したり、
+exeだけ差し替えたりするたびに設定が「無くなった」ように見えてしまう。
+
+**開発環境は対象外**: `python main.py`実行時は今まで通りリポジトリ直下の
+`config\`のまま(`utils/app_paths.py`の`user_config_dir()`が
+`sys.frozen`で分岐)。`config/config.json`をgitでコミットして共有する
+既存の運用(「今のパレット配置でコミットプッシュで」等)を崩さないため。
+
+**移さないもの**: `data\`(starter_presets/commands_master.csv/
+app_icon.ico)・`icons\`・`png_icons\`はexeに同梱される読み取り専用
+リソースで利用者の設定ではないため対象外。`external_transform\`
+(外部変形ツール一式)も、常に「今動いているexeに同梱された最新版」で
+あるべきなので意図的にexeの隣に残す(こちらもDECISIONS.md参照)。
+
+**移行**: 初回起動時だけ、以前のexe隣接`config\`にある上記5項目を
+新しい場所へ自動コピーする(`migrate_legacy_config_if_needed()`)。
+新しい場所に既にファイルがあれば上書きしない(1回きりの移行、以後は
+新しい場所が正)。**呼び出し順序が重要**: `main.py`の`__init__`の中で
+`window_state.load_state()`や初回起動判定(`run_first_launch_setup_if_needed`)
+より前に呼ぶ必要がある。でないと「移行前の空のAppDataを読んでしまい、
+今回のセッションだけ設定が消えたように見える/初回起動画面が誤って
+また出る」事故になる(実装中に気づいて`__init__`の先頭、
+`self.log_file_path`設定の直後まで呼び出し位置を動かした)。
+
+**実機検証**: 実際に凍結exeへ`config.json`を配置した状態で起動し、
+`%APPDATA%\JwNavigator\config\config.json`へ内容が完全一致でコピーされ、
+かつそのままパレットのボタン配置(19/23/1個)が正しく読み込まれることを
+確認した(2026-09-11)。検証後、テスト用の`%APPDATA%\JwNavigator\`は
+削除して片付けた。

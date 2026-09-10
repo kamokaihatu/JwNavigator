@@ -75,6 +75,7 @@ from utils.win_event_watcher import WinEventWatcher
 from utils.palette_layout import compute_palette_geometry
 from utils import window_state
 from utils import external_transform_setup
+from utils import app_paths
 from utils import auto_attr_state
 from utils import menu_prefs
 from utils import palette_config
@@ -299,6 +300,27 @@ class JwNavigatorManager:
     def __init__(self):
         self.root = tk.Tk()
         self.root.withdraw()
+
+        # 👑 【リスト直撃クラッシュ完全埋葬】 sys.argvの0番目（文字列）を正確に参照してPath型エラーを防止
+        script_path_str = sys.argv[0] if sys.argv else ""
+        exe_dir = (
+            os.path.dirname(os.path.abspath(script_path_str))
+            if script_path_str
+            else os.getcwd()
+        )
+        self.log_file_path = os.path.join(exe_dir, "JwNavigator_Log.txt")
+        self.write_system_log("--- JwNavigator Ver3.63 メインシステム始動 ---")
+
+        # 👑 2026-09-11: 「exeを入れ替え/移動しても設定が消えないように」、
+        # パッケージ版は設定の保存先を%APPDATA%\JwNavigator\へ移した
+        # (DECISIONS.md参照)。この下のrun_first_launch_setup_if_needed()
+        # や_auto_attr_pending読み込みが「新しい場所」を見に行く前に、
+        # 以前のexe隣接config\から一度だけ引き継いでおく必要がある
+        # (でないと既存ユーザーが「設定が消えた」「初回起動画面が
+        # また出た」と誤認する)。log_file_pathは直前で設定済みなので
+        # write_system_logはこの時点でも使える。
+        app_paths.migrate_legacy_config_if_needed(log=self.write_system_log)
+
         # 👑 config/config.jsonがまだ無ければ初回起動とみなし、パレットの
         # 初期構成（空/ミニマム/jw初期/開発者おすすめ/フル）を選ばせる。
         # 以降のパレット構築・監視系のセットアップより前、ここで確実に
@@ -344,14 +366,8 @@ class JwNavigatorManager:
         # 👑 フックコールバックはここへイベントを積むだけ。実処理はメインスレッドのdrainで行う。
         self.hook_event_queue = queue.Queue()
 
-        # 👑 【リスト直撃クラッシュ完全埋葬】 sys.argvの0番目（文字列）を正確に参照してPath型エラーを防止
-        script_path_str = sys.argv[0] if sys.argv else ""
-        exe_dir = (
-            os.path.dirname(os.path.abspath(script_path_str))
-            if script_path_str
-            else os.getcwd()
-        )
-        self.log_file_path = os.path.join(exe_dir, "JwNavigator_Log.txt")
+        # 👑 exe_dir/self.log_file_pathは__init__の先頭(migrate_legacy_
+        # config_if_needed()より前)で既に計算済み、ここではそれを流用する。
         state_collection_log_path = os.path.join(
             exe_dir, "JwNavigator_StateCollection_Log.txt"
         )
@@ -374,7 +390,6 @@ class JwNavigatorManager:
         self._pending_pin_restore = {}
         self.tray_icon = None
         self.root.withdraw()
-        self.write_system_log("--- JwNavigator Ver3.63 メインシステム始動 ---")
         external_transform_setup.ensure_deployed(log=self.write_system_log)
 
     LOG_MAX_BYTES = 5 * 1024 * 1024  # 5MB

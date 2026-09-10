@@ -16,25 +16,14 @@ JwNavigatorが再起動してもjw_cad側の実際の線属性はそのまま(�
 """
 import json
 import os
-import sys
 
-
-def _resolve_base_dir():
-    try:
-        script_path_str, *_ = sys.argv
-        exe_dir = os.path.dirname(os.path.abspath(script_path_str))
-        if os.path.isdir(exe_dir):
-            return exe_dir
-    except Exception:
-        pass
-    return os.getcwd()
+from utils import app_paths
 
 
 def state_path():
-    path = os.path.join(_resolve_base_dir(), "config", "auto_attr_pending.json")
-    if os.path.exists(path):
-        return path
-    return os.path.join("config", "auto_attr_pending.json")
+    # 👑 2026-09-11: palette_config.config_path()と同じ理由で
+    # utils/app_paths.pyのuser_config_dir()を使う(DECISIONS.md参照)。
+    return os.path.join(app_paths.user_config_dir(), "auto_attr_pending.json")
 
 
 def load_pending():
