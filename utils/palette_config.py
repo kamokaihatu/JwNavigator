@@ -79,6 +79,14 @@ def _icons_dir():
 
 
 def _png_icons_dir():
+    # 👑 list_icon_modules()と同じ理由(2026-08-31)でsys._MEIPASSを見る
+    # 必要があるが、こちらは2026-09-10まで対応漏れしていた。「かっこいい」
+    # 等のPNGベースの旧カテゴリ(png_icons/配下、JwNavigator.specでは
+    # datasとして同梱済みだが読み込み側がexe横のpng_icons/しか見ておらず、
+    # パッケージ版では常に空になっていた(同僚報告で発覚)。
+    if getattr(sys, "frozen", False):
+        base = getattr(sys, "_MEIPASS", _resolve_base_dir())
+        return os.path.join(base, "png_icons")
     return os.path.join(_resolve_base_dir(), "png_icons")
 
 

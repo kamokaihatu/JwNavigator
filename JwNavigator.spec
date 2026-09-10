@@ -23,8 +23,14 @@ a = Analysis(
     # が何も読み込めず「種別」チェックボックスも追加候補のコマンドも
     # 空になっていた(実機で発覚:「コマンドなくなっちゃったよ？」)。
     # app_icon.ico等と同じ要領でdata/配下に同梱する。
+    # 👑 png_icons/(「かっこいい」等のPNGベースのサンプルアイコン88個)が
+    # ここに無く、utils/palette_config.pyの_png_icons_dir()もexe横の
+    # png_icons/しか見ていなかったため、パッケージ版ではこれらのカテゴリが
+    # 常に空になっていた(2026-09-10、同僚報告で発覚)。icons/と同じ要領で
+    # 同梱し、_png_icons_dir()側もsys._MEIPASS対応させた。
     datas=[
         ('icons', 'icons'),
+        ('png_icons', 'png_icons'),
         ('data/app_icon.ico', 'data'),
         ('data/starter_presets', 'data/starter_presets'),
         ('data/commands_master.csv', 'data'),
