@@ -50,6 +50,7 @@ import win32gui
 import win32process
 
 from utils import line_attr_dialog
+from utils import external_transform_setup
 
 VK_CONTROL = 0x11
 SAVE_KEY_VK = 0x4A  # 'J' (Ctrl+J、GCOM_100の10番目=Jに割り付け済み)
@@ -96,9 +97,15 @@ MARK_Y = 1
 # 👑 B_MARKが書込レイヤに作図する目印点の後始末用(2026-09-09)。
 # B_MARK.bat/A_SAVE.batが追記しているlayerdump\trace.txtの[MARK]行数を
 # 保存の前後で比較し、実際に何回点が作図されたか(連鎖の2周バグがあれば
-# 2回)を数えて、その回数だけ「戻る」を送って消す。GCOM_100/110の11番目
-# のフォルダ指定と一致させること(現状の登録先はJWW_EXT)。
-TRACE_LOG_PATH = r"C:\jww\JWW_EXT\layerdump\trace.txt"
+# 2回)を数えて、その回数だけ「戻る」を送って消す。
+# 👑 2026-09-11: 以前はC:\jww\JWW_EXTへ固定でハードコードしていたが、
+# 「exeを1個置くだけで動く」ようutils/external_transform_setup.pyが
+# JwNavigator.exeの隣に自動展開する方式に変えたため、そちらと同じ
+# 場所(exeのあるフォルダ+\external_transform)を動的に指す(DECISIONS.md
+# 参照)。GCOM_100登録時のフォルダ指定もこちらに合わせること。
+TRACE_LOG_PATH = os.path.join(
+    external_transform_setup.external_transform_dir(), "layerdump", "trace.txt"
+)
 
 
 def _count_marks():

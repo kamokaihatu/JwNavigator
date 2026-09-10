@@ -1,44 +1,33 @@
 # レイヤ保存機能の初回セットアップ (jw_cad外部変形の登録)
 
-JwNavigatorの「レイヤ情報を保存」ボタンは、JwNavigator.exe単体では完結しません。
-jw_cad側に外部変形(バッチファイル)を登録しておく必要があります。**新しいPCに
-JwNavigatorを入れるたびに、この手順を1回だけ行ってください。**
+JwNavigator Ver3.62以降、外部変形ツール(`B_MARK.BAT`/`A_SAVE.BAT`/
+`mark_point.exe`/`dump_layers.exe`)は**JwNavigator.exeに同梱されており、
+起動のたびに自動でexeの隣の`external_transform\`フォルダへ展開されます**。
+手動でのビルド・コピーは不要になりました(2026-09-11、DECISIONS.md参照)。
+
+ただし、jw_cad側に**このフォルダの場所をキー割り付けとして1回だけ登録**
+しておく必要があります。これは他アプリ(jw_cad)の設定ファイルを
+JwNavigatorが無断で書き換えるのを避けるため、あえて自動化していません。
+**新しいPCにJwNavigatorを入れるたびに、この手順を1回だけ行ってください。**
 
 これを忘れると「復元ボタンは出現するのに、押しても中身が保存されていない」
 「レイヤの状態がうまく切り替わらない」という無言の失敗になります
 (2026-09-10、同僚PCで実際に発生・原因特定)。
 
-## 1. 必要なファイルを配置する
+## 1. JwNavigatorを一度起動して展開先を確認する
 
-以下のファイルを、jw_cadとは別の**専用フォルダ**(例: `C:\jww\JWW_EXT\`)へ
-まとめて置きます。JwNavigator.exe本体のフォルダとは別で構いません。
+JwNavigator.exeを一度起動すると、そのexeと同じフォルダに`external_transform\`
+フォルダが自動で作られます。
 
 ```
-C:\jww\JWW_EXT\
+<JwNavigator.exeのあるフォルダ>\external_transform\
 ├── B_MARK.BAT
 ├── A_SAVE.BAT
-├── mark_point\        ← mark_point.exeとその依存ファイル一式(フォルダごと)
-│   ├── mark_point.exe
-│   └── _internal\...
-└── dump_layers\        ← dump_layers.exeとその依存ファイル一式(フォルダごと)
-    ├── dump_layers.exe
-    └── _internal\...
+├── mark_point\
+└── dump_layers\
 ```
 
-`B_MARK.BAT`/`A_SAVE.BAT`はこのリポジトリのルート直下にあるものをそのまま
-コピーしてください。`mark_point.exe`/`dump_layers.exe`は以下でビルドします
-(👑 **重要**: `python mark_point.py`のようにPythonスクリプトを直接呼ぶ方式は
-やめました。配布先PCにPythonが入っていないと無言で失敗するためです、
-2026-09-10)。
-
-```
-.venv\Scripts\pyinstaller.exe MarkPoint.spec --noconfirm
-.venv\Scripts\pyinstaller.exe DumpLayers.spec --noconfirm
-```
-
-`dist\mark_point\`と`dist\dump_layers\`ができるので、それぞれフォルダごと
-上記の配置先へコピーします(onedir形式。onefileは初回展開が遅い上に
-Windows Application Control policyでブロックされることがあるため不使用)。
+このフォルダの**フルパス**を、次の手順2で使います。
 
 ## 2. jw_cadの環境設定ファイルにキー割り付けを追記する
 
@@ -47,27 +36,31 @@ jw_cadの環境設定ファイル(`Jw_win.jwf`、または使用中のプロフ�
 文字がキー(`J`=Ctrl+J)、11番目がフォルダパスです。
 
 ```
-GCOM_100 =A_SAVE,,,,,,,,,,C:\jww\JWW_EXT
+GCOM_100 =A_SAVE,,,,,,,,,,<手順1で確認したexternal_transformフォルダのフルパス>
+```
+
+例: JwNavigator.exeを`C:\jww\JwNavigator\`に置いた場合
+
+```
+GCOM_100 =A_SAVE,,,,,,,,,,C:\jww\JwNavigator\external_transform
 ```
 
 - 1番目のファイル名(`A_SAVE`)は実際にはB_MARK.BATから連鎖起動されるため、
   jw_cadから見た「登録名」程度の意味です。拡張子は書きません。
-- `C:\jww\JWW_EXT`の部分は手順1で置いたフォルダのパスと必ず一致させてください
-  (`utils\layer_snapshot.py`の`TRACE_LOG_PATH`もこの値に合わせてあります)。
+- フォルダパスは手順1で確認した`external_transform`の場所と必ず一致させて
+  ください(`utils\layer_snapshot.py`の`TRACE_LOG_PATH`は自動でこの場所を
+  参照するので、そちらは意識しなくて大丈夫です)。
 - `[Ctrl]+[J]`に既存の割り付けが無いことを確認してください。あれば別の
   空いている文字に変更し、`utils\layer_snapshot.py`の`SAVE_KEY_VK`も
   合わせて変更する必要があります。
 - この設定はjw_cad上のプロファイル切替では引き継がれないことがあるので、
   常用するプロファイルの`.jwf`に書いてください。
 
-## 3. バッチファイルの先頭コメントを確認する
+👑 **JwNavigatorを別のフォルダへ移動・再インストールした場合**は、
+`external_transform`の場所も一緒に移動するので、この手順2をやり直して
+GCOM_100のパスを新しい場所に書き換えてください。
 
-`B_MARK.BAT`/`A_SAVE.BAT`の先頭に`REM #jww`という行が無いと、jw_cadの
-外部変形一覧に一切出てきません(ファイルは存在するのに選べない、という
-形で気づきにくいハマりどころです)。リポジトリのものにはすでに入って
-いますが、コピー時に壊れていないか一応確認してください。
-
-## 4. 動作確認
+## 3. 動作確認
 
 1. jw_cadで適当な図面を開き、図形を1つ以上作図しておく
    (外部変形は「選択する図形が0個」だと起動しません)。
@@ -76,8 +69,8 @@ GCOM_100 =A_SAVE,,,,,,,,,,C:\jww\JWW_EXT
 
 ### うまくいかない時に見るログ
 
-配置先フォルダ(例: `C:\jww\JWW_EXT\`)の中に`layerdump\`フォルダが
-自動生成され、以下が残ります。
+`external_transform\`フォルダの中に`layerdump\`フォルダが自動生成され、
+以下が残ります。
 
 - `layerdump\trace.txt` — `B_MARK.BAT`/`A_SAVE.BAT`自体が起動したかどうか
   (`[MARK] enter/exit`、`[SAVE] enter/exit`)
@@ -86,9 +79,17 @@ GCOM_100 =A_SAVE,,,,,,,,,,C:\jww\JWW_EXT
 
 `trace.txt`に何も書かれない場合は、手順2(GCOM_100登録)が正しく効いて
 いないか、`[Ctrl]+[J]`が別の機能に奪われています。`trace.txt`に`enter`は
-あるが`log_*.txt`が空/存在しない場合は、exeの配置場所(パス)が
-`GCOM_100`の11番目の指定と食い違っている可能性が高いです。
+あるが`log_*.txt`が空/存在しない場合は、`external_transform`フォルダの
+場所が`GCOM_100`の11番目の指定と食い違っている可能性が高いです。
+
+Windows 11のSmart App Controlが「オン」になっていると、署名の無い
+`JwNavigator.exe`/`mark_point.exe`/`dump_layers.exe`自体が無言でブロック
+されることがあります(2026-09-10、実際に発生)。設定→プライバシーと
+セキュリティ→Windowsセキュリティ→アプリとブラウザーの制御→
+Smart App Controlが「評価モード」ならオフにできますが、「オン」で
+固定済みの場合はWindowsの再インストールが必要です。
 
 ## 参考
 
-詳しい設計・調査の経緯は`doc/HANDOFF_layer_control.md`を参照してください。
+詳しい設計・調査の経緯は`doc/HANDOFF_layer_control.md`、配布方針の決定は
+`DECISIONS.md`を参照してください。

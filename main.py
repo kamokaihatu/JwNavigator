@@ -74,6 +74,7 @@ from utils.state_collection import StateCollectionLogger
 from utils.win_event_watcher import WinEventWatcher
 from utils.palette_layout import compute_palette_geometry
 from utils import window_state
+from utils import external_transform_setup
 from utils import auto_attr_state
 from utils import menu_prefs
 from utils import palette_config
@@ -373,6 +374,7 @@ class JwNavigatorManager:
         self.tray_icon = None
         self.root.withdraw()
         self.write_system_log("--- JwNavigator Ver3.62 メインシステム始動 ---")
+        external_transform_setup.ensure_deployed(log=self.write_system_log)
 
     LOG_MAX_BYTES = 5 * 1024 * 1024  # 5MB
 

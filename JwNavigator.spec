@@ -28,12 +28,22 @@ a = Analysis(
     # png_icons/しか見ていなかったため、パッケージ版ではこれらのカテゴリが
     # 常に空になっていた(2026-09-10、同僚報告で発覚)。icons/と同じ要領で
     # 同梱し、_png_icons_dir()側もsys._MEIPASS対応させた。
+    # 👑 「利用者がexe1個置くだけで動く状態」(2026-09-11決定、DECISIONS.md
+    # 参照)。外部変形ツール(B_MARK.BAT/A_SAVE.BAT/mark_point.exe/
+    # dump_layers.exe)を同梱し、utils/external_transform_setup.pyが
+    # 起動のたびにexeの隣へ展開する。mark_point.exe/dump_layers.exeは
+    # 事前にMarkPoint.spec/DumpLayers.specでビルドしてdist/配下に
+    # 作っておく必要がある(このspecより先にビルドすること)。
     datas=[
         ('icons', 'icons'),
         ('png_icons', 'png_icons'),
         ('data/app_icon.ico', 'data'),
         ('data/starter_presets', 'data/starter_presets'),
         ('data/commands_master.csv', 'data'),
+        ('B_MARK.BAT', 'external_transform_bundle'),
+        ('A_SAVE.BAT', 'external_transform_bundle'),
+        ('dist/mark_point', 'external_transform_bundle/mark_point'),
+        ('dist/dump_layers', 'external_transform_bundle/dump_layers'),
     ],
     hiddenimports=collect_submodules('icons'),
     hookspath=[],
