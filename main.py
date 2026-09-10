@@ -369,6 +369,7 @@ class JwNavigatorManager:
         self.prevent_overlap = True
         self.palette_edges = {}
         self.palette_positions = {}
+        self._gcom100_checked = False
         self.window_state = window_state.load_state()
         self._pending_pin_restore = {}
         self.tray_icon = None
@@ -423,20 +424,24 @@ class JwNavigatorManager:
         return name
 
     @staticmethod
-    def _get_exe_name_for_hwnd(hwnd):
+    def _get_exe_path_for_hwnd(hwnd):
         handle = None
         try:
             _, pid = win32process.GetWindowThreadProcessId(hwnd)
             handle = win32api.OpenProcess(
                 win32con.PROCESS_QUERY_INFORMATION | win32con.PROCESS_VM_READ, False, pid
             )
-            path = win32process.GetModuleFileNameEx(handle, 0)
-            return os.path.basename(path).lower()
+            return win32process.GetModuleFileNameEx(handle, 0)
         except Exception:
             return None
         finally:
             if handle:
                 win32api.CloseHandle(handle)
+
+    @staticmethod
+    def _get_exe_name_for_hwnd(hwnd):
+        path = JwNavigatorManager._get_exe_path_for_hwnd(hwnd)
+        return os.path.basename(path).lower() if path else None
 
     def find_all_jw_cad_windows(self):
         # 👑 【誤検出完全埋葬】タイトル文字列の緩い部分一致（"jw"/"cad"含む等）は
@@ -870,6 +875,20 @@ class JwNavigatorManager:
                     self.write_system_log(
                         f"✨ 新規Jww [HWND:{hwnd}] を捕捉。双方向パレットをドッキングしました。"
                     )
+                    # 👑 「レイヤ情報保存」用のGCOM_100(Ctrl+J)キー割り付けを
+                    # jw_cad側のプロファイルに自動登録する(2026-09-11、
+                    # DECISIONS.md参照)。アプリ起動中1回だけでよいので
+                    # フラグで抑制する。jw_cadのexeフォルダはhwndから辿る。
+                    if not self._gcom100_checked:
+                        self._gcom100_checked = True
+                        try:
+                            jw_exe_path = self._get_exe_path_for_hwnd(hwnd)
+                            if jw_exe_path:
+                                external_transform_setup.ensure_gcom100_registered(
+                                    os.path.dirname(jw_exe_path), log=self.write_system_log
+                                )
+                        except Exception as e:
+                            self.write_system_log(f"⚠️ GCOM_100自動登録確認に失敗しました: {str(e)}")
                 except Exception as e:
                     self.write_system_log(
                         f"❌ パレット動的構築失敗 [HWND:{hwnd}]: {str(e)}"
