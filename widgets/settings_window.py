@@ -264,12 +264,12 @@ class IconPickerDialog(tk.Toplevel):
     # CommandPickerDialogの種別/分類チェックボックスと同じ方式
     # (複数同時ON/OFF、BooleanVarを値ごとに持つ)に置き換えた。
     # プレフィックスはファイル名の命名規則そのもの。
-    # 👑 「かっこいい」等の旧カテゴリ(sample_cmd_/sample_emoji_/
-    # sample_stylish_/sample_cute_/sample_cool_)は該当するアイコン
-    # ファイルがicons/に1つも存在しない空カテゴリだったため削除した
-    # (2026-09-10、同僚報告「かっこいいにチェックしたけど出ない」で発覚。
-    # 開発環境でも再現、パッケージングとは無関係の元からあったバグ)。
     CATEGORY_PREFIXES = [
+        ("コマンド風", "sample_cmd_"),
+        ("派手", "sample_emoji_"),
+        ("落ち着いた", "sample_stylish_"),
+        ("かわいい", "sample_cute_"),
+        ("かっこいい", "sample_cool_"),
         ("UI", "ui_"),
         ("天気", "weather_"),
         ("機器", "device_"),
