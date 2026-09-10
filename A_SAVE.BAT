@@ -1,5 +1,5 @@
 @REM [A] レイヤ状態を保存
-@REM 全選択方式(所要時間の計測つき・ブロック/曲線/寸法図形/ソリッド除外で高速化を試験中)
+@REM 全選択せず(所要時間の計測・ブロック/曲線/多角形/ソリッドをログで区別するため)
 REM #jww
 REM #h1
 REM #ht10
@@ -14,10 +14,7 @@ if not exist "%~dp0layerdump" mkdir "%~dp0layerdump"
 set "LOG=%~dp0layerdump\log_A.txt"
 set "TRACE=%~dp0layerdump\trace.txt"
 echo [SAVE] %TIME% enter >> "%TRACE%"
-echo [bat] %TIME% python 起動前 > "%LOG%"
-python "%~dp0dump_layers.py" A >> "%LOG%" 2>&1
-if not errorlevel 1 goto :done
-py "%~dp0dump_layers.py" A >> "%LOG%" 2>&1
-:done
-echo [bat] %TIME% python 終了後 >> "%LOG%"
+echo [bat] %TIME% dump_layers.exe 起動前 > "%LOG%"
+"%~dp0dump_layers\dump_layers.exe" A >> "%LOG%" 2>&1
+echo [bat] %TIME% dump_layers.exe 終了後 >> "%LOG%"
 echo [SAVE] %TIME% exit >> "%TRACE%"
