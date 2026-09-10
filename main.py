@@ -365,6 +365,9 @@ class JwNavigatorManager:
         self._monitor_scheduled = False
         self._safe_mode = False
         self._auto_create_palettes = True
+        self.prevent_overlap = True
+        self.palette_edges = {}
+        self.palette_positions = {}
         self.window_state = window_state.load_state()
         self._pending_pin_restore = {}
         self.tray_icon = None
@@ -572,24 +575,40 @@ class JwNavigatorManager:
                     "button_count": len(tb.buttons),
                     "button_size": tb.button_size,
                     "orientation": tb.orientation,
+                    # 👑 自由(ピン留め)中のパレットは、追従中の他パレットの
+                    # 重なり防止スタッキングから除外する(ユーザー要望、
+                    # 2026-09-10)。utils/palette_layout.pyのcompute_palette_
+                    # geometry参照。
+                    "is_pinned": tb.is_pinned,
                 }
             # 👑 N枚パレット対応(2026-09-10): tl/tr決め打ちをやめ、
             # active_launchers[hwnd]の中身(可変長)をそのままループする形に
             # 変更した。compute_palette_geometry()自体は2026-09-09に
             # sides辞書を受け取る形へ既に一般化済み。
             sides = {key: _side_info(tb) for key, tb in toolbars.items()}
-            geom = compute_palette_geometry(jw_rect, screen_width, virtual_screen, sides)
+            geom = compute_palette_geometry(
+                jw_rect, screen_width, virtual_screen, sides,
+                edges=self.palette_edges, positions=self.palette_positions,
+                prevent_overlap=self.prevent_overlap,
+            )
 
             for key, tb in toolbars.items():
-                if tb.is_pinned or not geom.get(key):
+                if not geom.get(key):
                     continue
-                new_geom = geom[key]
+                w, h, x, y = geom[key]
+                if tb.is_pinned:
+                    # 👑 「自由モード中にもボタンが増えたら伸ばしてほしい」
+                    # (ユーザー要望、2026-09-10)。自由(ピン留め)配置は
+                    # 位置だけユーザーの手元に任せ、サイズ(w,h)は通常通り
+                    # ボタン数から再計算した値に追従させる。x,yは現在の
+                    # 実際の位置をそのまま使い、動かさない。
+                    x, y = tb.winfo_x(), tb.winfo_y()
+                new_geom = (w, h, x, y)
                 # 位置が変わっていないのに毎回wm_geometry()を呼ぶと、
                 # Windows側で「位置が更新された」扱いになり、意図せず
                 # 最前面に上がってくることがある（実測で確認）。実際に
                 # 変化があった時だけ呼ぶ。
                 if getattr(tb, "_last_geom", None) != new_geom:
-                    w, h, x, y = new_geom
                     tb.wm_geometry(f"{w}x{h}+{x}+{y}")
                     # wm_geometry()だけだと、他の操作（ボタン押下など）で
                     # イベントループが回るまで実際の描画に反映されないことが
@@ -747,7 +766,12 @@ class JwNavigatorManager:
             if hwnd not in self.active_launchers:
                 try:
                     toolbars = {}
-                    for side_key in palette_config.SIDES:
+                    config = palette_config.load_config()
+                    self.prevent_overlap = bool(config.get("prevent_overlap", True))
+                    self.palette_edges = dict(config.get("edges") or {})
+                    self.palette_positions = dict(config.get("positions") or {})
+                    side_keys = palette_config.all_side_keys(config)
+                    for side_key in side_keys:
                         toolbars[side_key] = Toolbar(
                             master=self.root,
                             side_type=side_key,
@@ -1253,7 +1277,7 @@ class JwNavigatorManager:
 
         config = palette_config.load_config()
         existing_id = None
-        for side in palette_config.SIDES:
+        for side in palette_config.all_side_keys(config):
             for group in palette_config.side_config(config, side)["groups"]:
                 for btn in group.get("buttons") or []:
                     if (
@@ -1327,7 +1351,8 @@ class JwNavigatorManager:
         # 👑 新しい復元ボタンは、押された保存ボタンのすぐ後ろに挿入する
         # (ユーザー決定: 「置き場所は保存ボタンのすぐ後ろが自然」)。
         # 同名の保存ボタンが複数ある場合はpreferred_side側を優先する。
-        sides_order = [preferred_side] + [s for s in palette_config.SIDES if s != preferred_side] if preferred_side else list(palette_config.SIDES)
+        all_keys = palette_config.all_side_keys(config)
+        sides_order = [preferred_side] + [s for s in all_keys if s != preferred_side] if preferred_side else all_keys
         for side in sides_order:
             groups = palette_config.side_config(config, side)["groups"]
             for gi, group in enumerate(groups):

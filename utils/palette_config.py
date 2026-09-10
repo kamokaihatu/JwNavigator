@@ -11,6 +11,11 @@ import sys
 import uuid
 
 SIDES = ("左", "右")
+# 👑 「くっつく場所を指定できるように」(2026-09-10)。4辺×3位置=12か所。
+# utils/palette_layout.pyのEDGE_*/POS_*と同じ文字列値(小さな定数重複、
+# LINE_COLOR_CTRL_IDS等と同じ許容範囲の方針)。
+EDGE_CHOICES = ("left", "right", "top", "bottom")
+POSITION_CHOICES = ("start", "center", "end")
 ORIENTATION_PORTRAIT = "portrait"
 ORIENTATION_LANDSCAPE = "landscape"
 ORIENTATIONS = (ORIENTATION_PORTRAIT, ORIENTATION_LANDSCAPE)
@@ -296,6 +301,9 @@ def default_config():
     return {
         "version": CONFIG_VERSION,
         "sides": {side: _default_side() for side in SIDES},
+        "prevent_overlap": True,
+        "edges": {},
+        "positions": {},
     }
 
 
@@ -457,11 +465,68 @@ def normalize_config(raw):
     if not isinstance(raw_sides, dict):
         raw_sides = {}
 
+    # 👑 N枚パレット対応: 組み込みの"左"/"右"は空でも常に残すが、それ以外の
+    # キー(例:"palette_3"、add_palette()で追加されたもの)はconfig.json内に
+    # 実際に存在する分だけ拾い、正規化後にボタンが0個になったものは
+    # 保存のたびに消す(「パレット削除」操作を専用UIなしで実現する:
+    # 中身を全部消せば次の保存でパレット自体が消える)。
     sides = {}
     for side in SIDES:
         sides[side] = _normalize_side(raw_sides.get(side), known_icons)
+    for side, raw_side in raw_sides.items():
+        if side in sides:
+            continue
+        normalized = _normalize_side(raw_side, known_icons)
+        if count_buttons(normalized) > 0:
+            sides[side] = normalized
 
-    return {"version": version, "sides": sides}
+    # 👑 「パレット重なり防止」チェックボックス(2026-09-10)。同じ(辺,位置)に
+    # 複数パレットが割り当たった時に積み上げるか(utils/palette_layout.pyの
+    # compute_palette_geometryを参照)。既定ON。
+    prevent_overlap = bool(raw.get("prevent_overlap", True))
+
+    # 👑 「くっつく場所を指定できるように」(2026-09-10)。4辺(左/右/上/下)
+    # ×3位置(端/真ん中/端)=12か所からドッキング位置を選べるようにする。
+    # 存在しないside_keyや不正な値は捨てる(sides正規化後のキー集合で
+    # フィルタする)。値の妥当性チェック自体はpalette_layout.pyの
+    # EDGES/POSITIONSに揃える(このファイルはtkinter/win32非依存の方針
+    # のため、小さな文字列定数はここにも複製する。既存のLINE_COLOR_CTRL_IDS
+    # 等と同じ許容範囲の重複)。
+    raw_edges = raw.get("edges")
+    edges = {}
+    if isinstance(raw_edges, dict):
+        for key, val in raw_edges.items():
+            if key in sides and val in EDGE_CHOICES:
+                edges[key] = val
+
+    raw_positions = raw.get("positions")
+    positions = {}
+    if isinstance(raw_positions, dict):
+        for key, val in raw_positions.items():
+            if key in sides and val in POSITION_CHOICES:
+                positions[key] = val
+
+    return {
+        "version": version, "sides": sides, "prevent_overlap": prevent_overlap,
+        "edges": edges, "positions": positions,
+    }
+
+
+def next_available_side_key(config):
+    existing = set(config.get("sides", {}).keys())
+    i = 3
+    while f"palette_{i}" in existing:
+        i += 1
+    return f"palette_{i}"
+
+
+def add_palette(config):
+    # 👑 新しいパレットは常に新規キー(palette_3, palette_4, ...)を採番する
+    # (既存の"左"/"右"キーは流用しない、既存ユーザーのconfig.json移行を
+    # 不要にするための方針。詳細はバックログメモ参照)。
+    side_key = next_available_side_key(config)
+    config["sides"][side_key] = _default_side()
+    return side_key
 
 
 def load_config():
@@ -488,6 +553,28 @@ def save_config(config):
 
 def side_config(config, side):
     return config["sides"][side]
+
+
+def set_dock_position(config, side_key, edge, position):
+    # 👑 edge=Noneは「自動」(utils/palette_layout.pyの_edge_for/
+    # _position_forの既定フォールバックに任せる)を意味し、明示指定を
+    # 削除する。設定画面のドッキング位置選択("自動"含む12+1択)から呼ぶ。
+    config.setdefault("edges", {})
+    config.setdefault("positions", {})
+    if edge is None:
+        config["edges"].pop(side_key, None)
+        config["positions"].pop(side_key, None)
+    else:
+        config["edges"][side_key] = edge
+        config["positions"][side_key] = position or "start"
+
+
+def all_side_keys(config):
+    # 👑 palette_config.SIDES(組み込みの"左"/"右")だけでなく、add_palette()
+    # で追加された"palette_3"等も含めた「今のconfig.jsonに実在する
+    # パレット全部」を、挿入順を保ったまま返す。main.py側で「今何枚
+    # パレットがあるか」を知りたい箇所はSIDESではなくこちらを使う。
+    return list(config.get("sides", {}).keys())
 
 
 def clone_config(config):

@@ -37,12 +37,9 @@ class Toolbar(tk.Toplevel):
         self.create_pin_button()
         self._bind_drag_move(self)
         self.columns_container = tk.Frame(self, bg="#f0f0f0")
-        # fill/expandを付けると、ウィンドウ幅がボタン列の実サイズより
-        # わずかに大きい場合に余白が右側だけに寄ってしまう（左詰めに見える
-        # 原因）。fill/expandなしでpackすると、Tkinterのデフォルトの
-        # center配置により左右対称に余白が入る。空白部分のドラッグは
-        # self（Toplevel本体）側のバインドでカバーする。
-        self.columns_container.pack(side="top", padx=3, pady=3)
+        # 👑 pin_btn/columns_containerの実際のpack()は_layout_chrome()に
+        # 任せる（横型では先頭=左端に来てほしいという要望に対応するため、
+        # orientationが判明してから配置する必要がある。詳細は下記参照）。
         self._bind_drag_move(self.columns_container)
         self.load_and_build_buttons()
 
@@ -51,13 +48,41 @@ class Toolbar(tk.Toplevel):
             self, text="👣 追従", font=("Meiryo UI", 8),
             bg="#ffcccc", relief="sunken", bd=1
         )
-        self.pin_btn.pack(side="top", fill="x")
         # 👑 command=は使わない。tk.Buttonの標準クリック処理は
         # <ButtonPress-1>/<B1-Motion>/<ButtonRelease-1>を自分のクラス
         # バインドで消費してしまい、Toplevel側へは伝播しない（実測で確認、
         # ドラッグしても常にクリック扱いになっていた）。ボタン自身に
         # 直接バインドして、クリックとドラッグを自前で判定する。
         self._bind_drag_move(self.pin_btn, click_action=self.toggle_pin)
+
+    def _pin_button_label(self):
+        # 👑 「横型にしたときには追従/自由ボタンを左の先頭へ」
+        # (ユーザー要望、2026-09-10)。横型では縦のストライプ(幅は
+        # utils/palette_layout.pyのPIN_BUTTON_HEIGHTと同じ想定)に
+        # なるため、フルテキストだと収まらずアイコンだけにする。
+        if self.orientation == palette_config.ORIENTATION_LANDSCAPE:
+            return "🔓" if self.is_pinned else "👣"
+        return "自由" if self.is_pinned else "👣 追従"
+
+    def _layout_chrome(self):
+        # 👑 縦型(portrait): 上にpin_btn(横幅いっぱい)、下にボタン列。
+        # 横型(landscape): 左端にpin_btn(縦幅いっぱい、先頭列扱い)、
+        # 右にボタン列。orientationはconfig保存のたびに変わりうるため、
+        # load_and_build_buttons()の中で毎回呼び直す。
+        self.pin_btn.pack_forget()
+        self.columns_container.pack_forget()
+        self.pin_btn.configure(text=self._pin_button_label())
+        if self.orientation == palette_config.ORIENTATION_LANDSCAPE:
+            self.pin_btn.pack(side="left", fill="y")
+            self.columns_container.pack(side="left", padx=3, pady=3)
+        else:
+            self.pin_btn.pack(side="top", fill="x")
+            # fill/expandを付けると、ウィンドウ幅がボタン列の実サイズより
+            # わずかに大きい場合に余白が右側だけに寄ってしまう（左詰めに
+            # 見える原因）。fill/expandなしでpackすると、Tkinterの
+            # デフォルトのcenter配置により左右対称に余白が入る。空白部分の
+            # ドラッグはself（Toplevel本体）側のバインドでカバーする。
+            self.columns_container.pack(side="top", padx=3, pady=3)
 
     def _bind_drag_move(self, widget, click_action=None):
         # ウィジェット相対座標（event.x/event.y）を使う。event.x_root/y_root
@@ -83,7 +108,7 @@ class Toolbar(tk.Toplevel):
                 # 瞬間に自由モードへ切り替えておく。
                 if not self.is_pinned:
                     self.is_pinned = True
-                    self.pin_btn.configure(text="自由", bg="#e1e1e1", relief="raised")
+                    self.pin_btn.configure(text=self._pin_button_label(), bg="#e1e1e1", relief="raised")
                 new_x = self.winfo_x() + dx
                 new_y = self.winfo_y() + dy
                 self.wm_geometry(f"+{new_x}+{new_y}")
@@ -107,9 +132,9 @@ class Toolbar(tk.Toplevel):
         # 判定した時だけなので、ここでは単純にトグルするだけでよい。
         self.is_pinned = not self.is_pinned
         if self.is_pinned:
-            self.pin_btn.configure(text="自由", bg="#e1e1e1", relief="raised")
+            self.pin_btn.configure(text=self._pin_button_label(), bg="#e1e1e1", relief="raised")
         else:
-            self.pin_btn.configure(text="👣 追従", bg="#ffcccc", relief="sunken")
+            self.pin_btn.configure(text=self._pin_button_label(), bg="#ffcccc", relief="sunken")
             # 自由配置中に手動でドラッグ移動していると、main.py側が
             # 覚えている「前回適用した座標」（_last_geom）が実際の位置と
             # ズレたままになる。追従に戻す時はこれを捨てて、次のsync tickで
@@ -138,6 +163,7 @@ class Toolbar(tk.Toplevel):
 
         self.orientation = side_cfg["orientation"]
         self.button_size = side_cfg["button_size"]
+        self._layout_chrome()
 
         if self.orientation == palette_config.ORIENTATION_LANDSCAPE:
             group_side, group_anchor, button_side = "top", "w", "left"

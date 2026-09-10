@@ -1349,12 +1349,17 @@ class GroupContentsDialog(tk.Toplevel):
 
 
 class SidePanel(ttk.Frame):
-    def __init__(self, master, side, side_cfg, manager_ref=None, swatch_cache=None):
+    def __init__(self, master, side, side_cfg, manager_ref=None, swatch_cache=None, config_data=None):
         super().__init__(master)
         self.side = side
         self.side_cfg = side_cfg
         self.manager_ref = manager_ref
         self.swatch_cache = swatch_cache if swatch_cache is not None else {"data": None}
+        # 👑 ドッキング位置(edges/positions)はside_cfg(このパレット単体の
+        # 辞書)ではなくconfig全体の直下にあるため、参照を別途持つ
+        # (「ボタン詳細」の右に置いてほしいという要望で、この場所=
+        # SidePanel内から書き換えられるようにする必要があった、2026-09-10)。
+        self.config_data = config_data
         self.selected = None
         self._selected_group = None
         self._selected_indices = []
@@ -1370,10 +1375,25 @@ class SidePanel(ttk.Frame):
         self._build_shape_bar()
         self._build_layout_area()
         self._build_detail_form()
+        self._update_dock_selector()
 
         self.name_var.trace_add("write", self._on_name_changed)
 
         self._rebuild_groups()
+
+    def _update_dock_selector(self):
+        if self.config_data is None:
+            return
+        edge = self.config_data.get("edges", {}).get(self.side)
+        position = self.config_data.get("positions", {}).get(self.side)
+        self.dock_picker.set_selected(edge, position)
+        self.dock_status_label.configure(text=_dock_label_for(edge, position))
+
+    def _on_dock_pick(self, edge, position):
+        if self.config_data is None:
+            return
+        palette_config.set_dock_position(self.config_data, self.side, edge, position)
+        self.dock_status_label.configure(text=_dock_label_for(edge, position))
 
     def _group_noun(self):
         return "行" if self.orient_var.get() == palette_config.ORIENTATION_LANDSCAPE else "列"
@@ -1425,8 +1445,15 @@ class SidePanel(ttk.Frame):
         self.remove_group_btn.pack(pady=2)
 
     def _build_detail_form(self):
-        lf = ttk.LabelFrame(self, text="ボタン詳細")
-        lf.pack(side="top", fill="x", padx=8, pady=(0, 8))
+        # 👑 ドッキング位置ピッカーを「ボタン詳細」の枠の外、隣に置く
+        # (ユーザー指摘: 枠の中に入っているのは変)。wrapperで横に並べ、
+        # lf(ボタン詳細)とdock_frame(ドッキング位置)を別々のLabelFrame
+        # として同格に扱う。
+        wrapper = ttk.Frame(self)
+        wrapper.pack(side="top", fill="x", padx=8, pady=(0, 8))
+
+        lf = ttk.LabelFrame(wrapper, text="ボタン詳細")
+        lf.pack(side="left", fill="both", expand=True)
 
         ttk.Label(lf, text="コマンド:").grid(row=0, column=0, sticky="e", padx=6, pady=4)
         ttk.Label(lf, textvariable=self.cmd_var, wraplength=460, justify="left").grid(row=0, column=1, sticky="w", padx=6, pady=4)
@@ -1457,6 +1484,19 @@ class SidePanel(ttk.Frame):
         self.reset_color_btn.pack(side="left")
         ttk.Label(lf, text="(リストでCtrl/Shiftクリックすると複数選択してまとめて色・アイコン変更できます)",
                   foreground="#888888").grid(row=4, column=0, columnspan=2, sticky="w", padx=6, pady=(0, 4))
+
+        # 👑 「ドッキング位置の表示はボタン詳細の右に」(ユーザー要望、
+        # 2026-09-10)。ただし「ボタン詳細」の枠の中に入っているのは変、
+        # との指摘で、lfの中ではなくwrapper直下の別枠(LabelFrame)として
+        # 隣に並べる形にした。ドッキング位置はパレット(タブ)ごとの設定
+        # なので、他のパレット単位設定(向き・ボタンサイズ等)と同じく
+        # このタブの中に置く。
+        dock_frame = ttk.LabelFrame(wrapper, text="ドッキング位置")
+        dock_frame.pack(side="left", fill="y", padx=(8, 0))
+        self.dock_picker = DockPositionPicker(dock_frame, on_select=self._on_dock_pick)
+        self.dock_picker.pack(side="top", padx=6, pady=(6, 2))
+        self.dock_status_label = ttk.Label(dock_frame, text="")
+        self.dock_status_label.pack(side="top")
 
         # 👑 フライアウト/マクロの「箱」ボタン用の操作と、補助線系
         # (kind="auto_attr")ボタン用の線属性/レイヤ設定は、同じボタンで
@@ -2350,6 +2390,109 @@ class RightClickMenuPanel(ttk.Frame):
         menu_prefs.save_prefs({key: var.get() for key, var in self.vars.items()})
 
 
+# 👑 「くっつく場所を指定できるように」(2026-09-10)。4辺(左/右/上/下)×
+# 3位置(端/真ん中/端)=12か所+「自動」(明示指定なし、utils/palette_layout.py
+# の_edge_for/_position_forの既定フォールバックに任せる)。(label, edge,
+# position)のタプルで持ち、edge=Noneが「自動」を表す。
+DOCK_POSITION_OPTIONS = [
+    ("自動", None, None),
+    ("左辺・上端", "left", "start"),
+    ("左辺・真ん中", "left", "center"),
+    ("左辺・下端", "left", "end"),
+    ("右辺・上端", "right", "start"),
+    ("右辺・真ん中", "right", "center"),
+    ("右辺・下端", "right", "end"),
+    ("上辺・左端", "top", "start"),
+    ("上辺・真ん中", "top", "center"),
+    ("上辺・右端", "top", "end"),
+    ("下辺・左端", "bottom", "start"),
+    ("下辺・真ん中", "bottom", "center"),
+    ("下辺・右端", "bottom", "end"),
+]
+
+
+def _dock_label_for(edge, position):
+    for label, e, p in DOCK_POSITION_OPTIONS:
+        if e == edge and p == position:
+            return label
+    return DOCK_POSITION_OPTIONS[0][0]
+
+
+class DockPositionPicker(tk.Frame):
+    # 👑 「もう少し見やすく」への対応(ユーザー要望、2026-09-10)。ドロップ
+    # ダウンのテキスト12択より、jw_cadウィンドウを模した四角の周囲に
+    # チップ(丸)を配置して直接クリックで選ぶ方が直感的、という指摘。
+    # 中央の丸は「自動」を表す。
+    CANVAS_W = 170
+    CANVAS_H = 100
+    MARGIN = 26
+    CHIP_R = 6
+    FRACS = (0.18, 0.5, 0.82)  # 端・真ん中・端
+
+    def __init__(self, master, on_select):
+        super().__init__(master)
+        self.on_select = on_select
+        self._selected = (None, None)
+        self._chip_items = {}
+        self.canvas = tk.Canvas(
+            self, width=self.CANVAS_W, height=self.CANVAS_H,
+            bg="#ffffff", highlightthickness=1, highlightbackground="#999999",
+        )
+        self.canvas.pack()
+        self.canvas.bind("<Button-1>", self._on_click)
+        self._draw()
+
+    def _rect_bounds(self):
+        m = self.MARGIN
+        return m, m, self.CANVAS_W - m, self.CANVAS_H - m
+
+    def _draw(self):
+        self.canvas.delete("all")
+        self._chip_items = {}
+        x1, y1, x2, y2 = self._rect_bounds()
+        self.canvas.create_rectangle(x1, y1, x2, y2, outline="#666666", width=2, fill="#eef3fb")
+        self.canvas.create_text(
+            (x1 + x2) / 2, (y1 + y2) / 2 - 2, text="jw_cad", fill="#8899aa", font=("Meiryo UI", 7),
+        )
+
+        for frac, pos in zip(self.FRACS, ("start", "center", "end")):
+            self._add_chip(x1 + (x2 - x1) * frac, y1, "top", pos)
+            self._add_chip(x1 + (x2 - x1) * frac, y2, "bottom", pos)
+            self._add_chip(x1, y1 + (y2 - y1) * frac, "left", pos)
+            self._add_chip(x2, y1 + (y2 - y1) * frac, "right", pos)
+
+        # 中央=「自動」。矩形の内側に収まる位置に小さめの丸を置く。
+        self._add_chip((x1 + x2) / 2, (y1 + y2) / 2 + 12, None, None)
+
+    def _add_chip(self, cx, cy, edge, pos):
+        r = self.CHIP_R
+        selected = self._selected == (edge, pos)
+        is_auto = edge is None
+        if selected:
+            fill, outline = "#3f7ad1", "#2a5aa0"
+        elif is_auto:
+            fill, outline = "#dddddd", "#888888"
+        else:
+            fill, outline = "#ffffff", "#666666"
+        item = self.canvas.create_oval(cx - r, cy - r, cx + r, cy + r, fill=fill, outline=outline, width=2)
+        self._chip_items[item] = (edge, pos)
+
+    def _on_click(self, event):
+        item = self.canvas.find_closest(event.x, event.y)
+        if not item:
+            return
+        key = self._chip_items.get(item[0])
+        if key is None:
+            return
+        self._selected = key
+        self._draw()
+        self.on_select(*key)
+
+    def set_selected(self, edge, position):
+        self._selected = (edge, position)
+        self._draw()
+
+
 class SettingsWindow(tk.Toplevel):
     def __init__(self, master, manager_ref=None, initial_side="左"):
         super().__init__(master)
@@ -2380,20 +2523,37 @@ class SettingsWindow(tk.Toplevel):
         if self.swatch_cache is None:
             self.swatch_cache = {"data": None}
 
+        palette_bar = ttk.Frame(self)
+        palette_bar.pack(side="top", fill="x", padx=8, pady=(8, 0))
+        ttk.Button(palette_bar, text="＋ パレットを追加", command=self._on_add_palette).pack(side="left")
+        self.remove_palette_btn = ttk.Button(
+            palette_bar, text="🗑 このパレットを削除", command=self._on_remove_palette,
+        )
+        self.remove_palette_btn.pack(side="left", padx=(6, 0))
+
+        # 👑 同じ辺(左/右)に複数パレットが割り当たった時、そのままだと
+        # 全部同じ位置に重なって描画される(utils/palette_layout.pyの
+        # compute_palette_geometry参照)。既定でONにして自動的に縦へ
+        # 積み上げ、OFFにすれば従来通り重ねたままにできる(あえて同じ
+        # 場所に置いて片方だけ自由配置で退避させたい場合向け)。
+        self.prevent_overlap_var = tk.BooleanVar(
+            value=bool(self.config_data.get("prevent_overlap", True))
+        )
+        ttk.Checkbutton(
+            palette_bar, text="パレットの重なりを防止する", variable=self.prevent_overlap_var,
+        ).pack(side="left", padx=(12, 0))
+
         self.notebook = ttk.Notebook(self)
         self.notebook.pack(side="top", fill="both", expand=True, padx=8, pady=(8, 0))
+        self.notebook.bind("<<NotebookTabChanged>>", lambda e: self._update_remove_palette_btn())
+        self.menu_panel = None
 
         # 👑 「N枚パレット見越してパレット名だけ変えとこうか」への対応。
         # 内部の"左"/"右"(config構造・ドッキング側の判定にそのまま使う
         # 実データ)は変えず、この設定画面のタブ表示名だけ「パレット1」
         # 「パレット2」に変える(将来N枚に増えても番号がそのまま使える)。
-        tab_labels = {side: f"パレット{i + 1}" for i, side in enumerate(palette_config.SIDES)}
-
-        for side in palette_config.SIDES:
-            side_cfg = palette_config.side_config(self.config_data, side)
-            panel = SidePanel(self.notebook, side, side_cfg, manager_ref=self.manager_ref, swatch_cache=self.swatch_cache)
-            self.notebook.add(panel, text=tab_labels[side])
-            self.panels[side] = panel
+        for side in palette_config.all_side_keys(self.config_data):
+            self._add_side_tab(side)
 
         self.menu_panel = RightClickMenuPanel(self.notebook)
         self.notebook.add(self.menu_panel, text="右クリック")
@@ -2403,8 +2563,68 @@ class SettingsWindow(tk.Toplevel):
         ttk.Button(footer, text="保存", command=self._on_save, width=14).pack(side="right", ipady=4)
         ttk.Button(footer, text="キャンセル", command=self._on_cancel, width=14).pack(side="right", padx=(0, 8), ipady=4)
 
+        self._update_remove_palette_btn()
+
         self.protocol("WM_DELETE_WINDOW", self._on_cancel)
         self.select_tab(initial_side)
+
+    def _add_side_tab(self, side):
+        side_cfg = palette_config.side_config(self.config_data, side)
+        panel = SidePanel(
+            self.notebook, side, side_cfg, manager_ref=self.manager_ref,
+            swatch_cache=self.swatch_cache, config_data=self.config_data,
+        )
+        # 👑 ttk.Notebook.insert()は「まだどのタブでもない新規child」を
+        # 数値位置で渡すと"Slave index out of bounds"になる（実測で発覚。
+        # 数値位置は既存タブの並べ替え専用らしい）。新規追加は必ず"end"を
+        # 使い、「右クリック」タブより前に置きたい時だけ、追加した直後に
+        # 末尾から1つ手前へ動かす。
+        self.notebook.insert("end", panel, text=f"パレット{len(self.panels) + 1}")
+        if self.menu_panel is not None:
+            self.notebook.insert(self.notebook.index("end") - 2, panel)
+        self.panels[side] = panel
+        return panel
+
+    def _renumber_tabs(self):
+        for i, panel in enumerate(self.panels.values()):
+            self.notebook.tab(panel, text=f"パレット{i + 1}")
+
+    def _current_side(self):
+        current_tab = self.notebook.select()
+        for side, panel in self.panels.items():
+            if str(panel) == current_tab:
+                return side
+        return None
+
+    def _update_remove_palette_btn(self):
+        current = self._current_side()
+        removable = current is not None and current not in palette_config.SIDES
+        self.remove_palette_btn.configure(state="normal" if removable else "disabled")
+
+    def _on_add_palette(self):
+        side = palette_config.add_palette(self.config_data)
+        panel = self._add_side_tab(side)
+        self.notebook.select(panel)
+        self._update_remove_palette_btn()
+
+    def _on_remove_palette(self):
+        # 👑 組み込みの"左"/"右"は削除不可(_update_remove_palette_btnで
+        # ボタン自体を無効化しているが、念のため二重に防御)。
+        current = self._current_side()
+        if current is None or current in palette_config.SIDES:
+            return
+        if not messagebox.askyesno(
+            "パレットを削除", "このパレットを削除しますか?(中のボタンも全て削除されます)", parent=self,
+        ):
+            return
+        panel = self.panels.pop(current)
+        self.notebook.forget(panel)
+        panel.destroy()
+        del self.config_data["sides"][current]
+        self.config_data.get("edges", {}).pop(current, None)
+        self.config_data.get("positions", {}).pop(current, None)
+        self._renumber_tabs()
+        self._update_remove_palette_btn()
 
     def select_tab(self, side):
         # 👑 右パレットの右クリックから開いた時は右パレットのタブから
@@ -2422,9 +2642,10 @@ class SettingsWindow(tk.Toplevel):
             panel.commit_scalars()
         self.menu_panel.save()
 
+        self.config_data["prevent_overlap"] = self.prevent_overlap_var.get()
         new_config = palette_config.normalize_config(self.config_data)
 
-        total = sum(palette_config.count_buttons(new_config["sides"][s]) for s in palette_config.SIDES)
+        total = sum(palette_config.count_buttons(cfg) for cfg in new_config["sides"].values())
         if total == 0:
             messagebox.showwarning("保存できません", "ボタンが1つも登録されていません。", parent=self)
             return
