@@ -1,6 +1,6 @@
 # ===== ✂️ utils/external_transform_setup.py START ✂️ =====
 """
-外部変形ツール(B_MARK.BAT/A_SAVE.BAT/mark_point.exe/dump_layers.exe)を
+外部変形ツール(B_MARK.BAT/A_SAVE.BAT/mark_point.ps1/dump_layers.ps1)を
 JwNavigator.exeの隣に自動展開する。
 
 👑 2026-09-11決定(DECISIONS.md参照): 「利用者がexe1個置くだけで動く状態」
@@ -8,6 +8,20 @@ JwNavigator.exeの隣に自動展開する。
 JwNavigator.exe自身にdatas(external_transform_bundle/)として埋め込み、
 起動のたびに<exeのあるフォルダ>\\external_transform\\ へ展開し直す
 (常にexeに同梱された最新版へ揃える)。
+
+👑 2026-09-11さらに追記: 当初はmark_point.exe/dump_layers.exe(PyInstaller
+単体ビルド)だったが、法人向けウイルス対策ソフト(ウイルスバスター
+Business)が導入されたPCで、この未署名の自前exeがブロックされ
+レイヤ保存が動かない事例が発生した。python.exeを追加インストールして
+`python mark_point.py`形式に切り替える案も試したが、python.exeも
+同様にブロックされた(署名の有無ではなく、cmd.exeからスクリプト系の
+実行ファイルを子プロセスとして起動すること自体が警戒される模様)。
+最終的に、Windows標準搭載で追加インストール不要な`powershell.exe`
+経由に切り替えたところブロックされずに動作したため(実機確認済み、
+2026-09-11)、mark_point.exe/dump_layers.exeを廃止しPowerShellスクリプト
+(mark_point.ps1/dump_layers.ps1)へ全面移行した。副次的にexeバンドルが
+不要になり配布サイズも小さくなった。開発環境(python main.py)は今まで
+通り`mark_point.py`/`dump_layers.py`を直接使う想定で変更なし。
 
 👑 2026-09-11追記: jw_cad側のGCOM_100キー割り付けも、当初は手動登録の
 ままにしていたが「バージョンアップのたびに手でパスを直すのは面倒、
@@ -33,7 +47,7 @@ import shutil
 import sys
 
 EXTERNAL_TRANSFORM_DIRNAME = "external_transform"
-_BUNDLE_ITEMS = ("B_MARK.BAT", "A_SAVE.BAT", "mark_point", "dump_layers")
+_BUNDLE_ITEMS = ("B_MARK.BAT", "A_SAVE.BAT", "mark_point.ps1", "dump_layers.ps1")
 
 # 👑 GCOM_100は外部変形番号100〜109に対応する10ファイル分をまとめて1行に
 # 書く形式(JWW_SMPL.BAT/Sample.jwf参照)。"=" の後をカンマ区切りで見た時、

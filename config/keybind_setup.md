@@ -4,8 +4,8 @@ JwNavigator Ver3.62以降、**このセットアップは全自動です**。
 JwNavigator.exeを起動するだけで、以下が自動的に行われます
 (2026-09-11、DECISIONS.md参照)。
 
-1. 外部変形ツール一式(`B_MARK.BAT`/`A_SAVE.BAT`/`mark_point.exe`/
-   `dump_layers.exe`)を、exeと同じフォルダの`external_transform\`へ展開
+1. 外部変形ツール一式(`B_MARK.BAT`/`A_SAVE.BAT`/`mark_point.ps1`/
+   `dump_layers.ps1`)を、exeと同じフォルダの`external_transform\`へ展開
    (`utils/external_transform_setup.py`の`ensure_deployed()`)。
 2. jw_cadの環境設定ファイル(`*.jwf`/`*.JWF`、見つかった全プロファイル)の
    `GCOM_100`のCtrl+Jスロットに、上記フォルダを自動登録
@@ -42,19 +42,26 @@ JwNavigatorの起動ログ(`JwNavigator_Log.txt`)に、以下のような行が�
 
 - `layerdump\trace.txt` — `B_MARK.BAT`/`A_SAVE.BAT`自体が起動したかどうか
   (`[MARK] enter/exit`、`[SAVE] enter/exit`)
-- `layerdump\log_MARK.txt` — `mark_point.exe`の実行ログ
-- `layerdump\log_A.txt` — `dump_layers.exe`の実行ログ
+- `layerdump\log_MARK.txt` — `mark_point.ps1`の実行ログ
+- `layerdump\log_A.txt` — `dump_layers.ps1`の実行ログ
 
 `trace.txt`に何も書かれない場合は、GCOM_100登録が正しく効いていないか、
 `[Ctrl]+[J]`が別の機能に奪われています。上記のJwNavigator起動ログの
 警告を確認してください。
 
 Windows 11のSmart App Controlが「オン」になっていると、署名の無い
-`JwNavigator.exe`/`mark_point.exe`/`dump_layers.exe`自体が無言でブロック
-されることがあります(2026-09-10、実際に発生)。設定→プライバシーと
-セキュリティ→Windowsセキュリティ→アプリとブラウザーの制御→
-Smart App Controlが「評価モード」ならオフにできますが、「オン」で
-固定済みの場合はWindowsの再インストールが必要です。
+`JwNavigator.exe`自体が無言でブロックされることがあります(2026-09-10、
+実際に発生)。設定→プライバシーとセキュリティ→Windowsセキュリティ→
+アプリとブラウザーの制御→Smart App Controlが「評価モード」ならオフに
+できますが、「オン」で固定済みの場合はWindowsの再インストールが必要です。
+
+法人向けのウイルス対策ソフト(ウイルスバスター Business等)が別途導入
+されている場合、`mark_point.ps1`/`dump_layers.ps1`を呼び出す
+`powershell.exe`自体がブロックされることも考えられます(2026-09-11、
+実際に発生・対応済み。以前はPyInstallerでビルドした専用exeを使っていた
+が、署名済みのpowershell.exe経由に変更してブロックを回避した経緯が
+DECISIONS.mdにあります)。この場合はIT管理者にフォルダの除外設定を
+依頼してください。
 
 ## 参考
 

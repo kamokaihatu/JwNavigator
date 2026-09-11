@@ -113,3 +113,37 @@ app_icon.ico)・`icons\`・`png_icons\`はexeに同梱される読み取り専�
 かつそのままパレットのボタン配置(19/23/1個)が正しく読み込まれることを
 確認した(2026-09-11)。検証後、テスト用の`%APPDATA%\JwNavigator\`は
 削除して片付けた。
+
+## 2026-09-11(追記): 外部変形ツールをexeからPowerShellスクリプトへ移行
+
+**決定**: `mark_point.exe`/`dump_layers.exe`(PyInstaller単体ビルド)を廃止し、
+`mark_point.ps1`/`dump_layers.ps1`(PowerShellスクリプト)へ全面移行した。
+`MarkPoint.spec`/`DumpLayers.spec`は削除、`JwNavigator.spec`のビルド前提
+だった「先にdist/mark_point・dist/dump_layers をビルドしておく」手順も
+不要になった。
+
+**経緯**: 法人向けウイルス対策ソフト(ウイルスバスター Business)が導入
+された利用者PCで、未署名の自前exe(`mark_point.exe`)がブロックされ、
+レイヤ保存機能が動かない事例が発生した。切り分けのため、まず
+`python.exe`を追加インストールして`python mark_point.py`形式を試したが、
+python.exeも同様にブロックされた。ここから、**「未署名だから」ではなく
+「cmd.exeからスクリプト系の実行ファイル(インタプリタ)を子プロセスとして
+起動すること自体」が警戒されている**と判断し、Windows標準搭載で追加
+インストール不要な`powershell.exe`経由を試したところ、ブロックされずに
+実機で正常動作した(2026-09-11、コワーカーの実PCで確認)。
+
+**ロジックの正しさの検証方法**: `dump_layers.ps1`は`dump_layers.py`の
+`write_jwl()`相当のみを移植したもの(CSV/matrix/JSON等のデバッグ出力は
+実際の保存/復元機能では使われないため省略)。過去に実機で取得した
+`layerdump/raw_*.txt`(実データ)57件全てに対し、Python版が生成する
+`LAYER_RESTORE.JWL`とPowerShell版が生成するものを突き合わせ、全件で
+バイト単位で一致することを確認してから採用した。
+
+**副次的な利点**: exeのビルド・バンドルが不要になり、配布サイズが
+縮小した。PowerShellはWindows標準搭載のため、追加インストール不要な点も
+「利用者がexe1個置くだけで動く状態」の方針([[2026-09-11の外部変形ツール
+自動展開の決定]]参照)に合致する。
+
+**変わらないこと**: 開発環境(`python main.py`)は今まで通り
+`mark_point.py`/`dump_layers.py`を直接使う。`ensure_deployed()`の
+凍結exe限定ゲートも変更なし。

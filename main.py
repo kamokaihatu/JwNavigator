@@ -309,7 +309,7 @@ class JwNavigatorManager:
             else os.getcwd()
         )
         self.log_file_path = os.path.join(exe_dir, "JwNavigator_Log.txt")
-        self.write_system_log("--- JwNavigator Ver3.65 メインシステム始動 ---")
+        self.write_system_log("--- JwNavigator Ver3.66 メインシステム始動 ---")
 
         # 👑 2026-09-11: 「exeを入れ替え/移動しても設定が消えないように」、
         # パッケージ版は設定の保存先を%APPDATA%\JwNavigator\へ移した

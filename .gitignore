@@ -35,8 +35,6 @@ MANIFEST
 # reproducible build.
 !JwNavigator.spec
 !UsageLogger.spec
-!MarkPoint.spec
-!DumpLayers.spec
 
 # Distribution-ready copy (config.json reset, zipped for release uploads).
 # Regenerated from dist/ each time; not source.
