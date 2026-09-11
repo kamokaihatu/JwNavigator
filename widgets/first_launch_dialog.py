@@ -7,11 +7,12 @@ config/config.jsonとしてコピーする。
 👑 ×で閉じた場合や、万が一プリセットのコピーに失敗した場合も、
 アプリの起動自体は止めない（空の状態から普通に使い始められる）。
 """
+import json
 import os
 import shutil
 import sys
 import tkinter as tk
-from tkinter import ttk
+from tkinter import filedialog, messagebox, ttk
 
 from utils import palette_config
 
@@ -39,7 +40,7 @@ class FirstLaunchDialog(tk.Toplevel):
     def __init__(self, master):
         super().__init__(master)
         self.title("JwNavigatorへようこそ")
-        self.geometry("440x420")
+        self.geometry("440x480")
         self.resizable(False, False)
         self.configure(bg="#f0f0f0")
         self.attributes("-topmost", True)
@@ -69,12 +70,77 @@ class FirstLaunchDialog(tk.Toplevel):
                 bg="#ffffff", anchor="w",
             ).pack(side="left", padx=(0, 8), pady=8, fill="x", expand=True)
 
+        ttk.Separator(self, orient="horizontal").pack(fill="x", padx=16, pady=(10, 6))
+
+        row = tk.Frame(self, bg="#ffffff", highlightthickness=1, highlightbackground="#cccccc")
+        row.pack(fill="x", padx=16, pady=4)
+        btn = tk.Button(
+            row, text="📂 すでに設定済み", font=("Meiryo UI", 10, "bold"), width=18, anchor="w",
+            command=self._browse_existing, bg="#5a5a5a", fg="white", relief="raised",
+        )
+        btn.pack(side="left", padx=8, pady=8)
+        tk.Label(
+            row, text="以前使っていたconfig.jsonを選ぶと、その設定をそのまま使い始めます。",
+            font=("Meiryo UI", 8), justify="left", wraplength=230,
+            bg="#ffffff", anchor="w",
+        ).pack(side="left", padx=(0, 8), pady=8, fill="x", expand=True)
+
         self.protocol("WM_DELETE_WINDOW", self.destroy)
         self.grab_set()
 
     def _choose(self, key):
         self.chosen = key
         self.destroy()
+
+    def _browse_existing(self):
+        # 👑 exeの移動/再インストールのたびに%APPDATA%移行(app_paths.py)や
+        # exe隣接の旧config探索だけでは拾えない旧設定(別フォルダに置いた
+        # 旧バージョンのconfig.json等)を、ユーザー自身に探してもらう救済策
+        # (2026-09-11、kamo自身が「0から設定する羽目に」なった実体験から)。
+        initial_dir = "C:\\jww" if os.path.isdir("C:\\jww") else os.path.expanduser("~")
+        path = filedialog.askopenfilename(
+            parent=self, title="以前のconfig.jsonを選択してください",
+            initialdir=initial_dir,
+            filetypes=[("config.json", "config.json"), ("JSONファイル", "*.json"), ("すべてのファイル", "*.*")],
+        )
+        if not path:
+            return
+        try:
+            with open(path, "r", encoding="utf-8") as f:
+                raw = json.load(f)
+        except Exception:
+            messagebox.showerror(
+                "読み込み失敗",
+                "このファイルは読み込めませんでした。\nJwNavigatorのconfig.jsonを選んでください。",
+                parent=self,
+            )
+            return
+        self.chosen = ("import", raw)
+        self.destroy()
+
+
+def _apply_choice(chosen, target_path):
+    """chosenは文字列(プリセットキー)か、("import", 生JSON辞書)のタプル。
+    実際にtarget_pathへ書き込めたらTrue。"""
+    try:
+        target_dir = os.path.dirname(target_path)
+        if target_dir:
+            os.makedirs(target_dir, exist_ok=True)
+        if isinstance(chosen, tuple) and chosen[0] == "import":
+            # 👑 ブラウズで選ばれたファイルは他人の壊れたconfigかもしれない
+            # ので、そのままコピーせずnormalize_config()を通してから書く
+            # (normalize_config()はどんな形の入力でも必ず妥当な形を返す)。
+            normalized = palette_config.normalize_config(chosen[1])
+            with open(target_path, "w", encoding="utf-8") as f:
+                json.dump(normalized, f, ensure_ascii=False, indent=2)
+            return True
+        preset_path = os.path.join(_presets_dir(), f"{chosen}.json")
+        if not os.path.exists(preset_path):
+            return False
+        shutil.copy(preset_path, target_path)
+        return True
+    except Exception:
+        return False
 
 
 def run_first_launch_setup_if_needed(root):
@@ -89,17 +155,7 @@ def run_first_launch_setup_if_needed(root):
     # 👑 ×で閉じた(何も選ばなかった)場合は「空から始める」を選んだのと
     # 同じ扱いにする(初回起動は必ず何らかのconfig.jsonを作りたいため)。
     chosen = dlg.chosen or "empty"
-
-    preset_path = os.path.join(_presets_dir(), f"{chosen}.json")
-    if not os.path.exists(preset_path):
-        return
-    try:
-        target_dir = os.path.dirname(target_path)
-        if target_dir:
-            os.makedirs(target_dir, exist_ok=True)
-        shutil.copy(preset_path, target_path)
-    except Exception:
-        pass
+    _apply_choice(chosen, target_path)
 
 
 def run_preset_reset(root):
@@ -113,18 +169,6 @@ def run_preset_reset(root):
     root.wait_window(dlg)
     if dlg.chosen is None:
         return False
-
-    preset_path = os.path.join(_presets_dir(), f"{dlg.chosen}.json")
-    if not os.path.exists(preset_path):
-        return False
-
     target_path = palette_config.config_path()
-    try:
-        target_dir = os.path.dirname(target_path)
-        if target_dir:
-            os.makedirs(target_dir, exist_ok=True)
-        shutil.copy(preset_path, target_path)
-    except Exception:
-        return False
-    return True
+    return _apply_choice(dlg.chosen, target_path)
 # ===== ✂️ widgets/first_launch_dialog.py END ✂️ =====
