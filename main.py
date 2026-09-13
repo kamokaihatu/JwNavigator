@@ -309,7 +309,7 @@ class JwNavigatorManager:
             else os.getcwd()
         )
         self.log_file_path = os.path.join(exe_dir, "JwNavigator_Log.txt")
-        self.write_system_log("--- JwNavigator Ver3.66 メインシステム始動 ---")
+        self.write_system_log("--- JwNavigator Ver3.67 メインシステム始動 ---")
 
         # 👑 2026-09-11: 「exeを入れ替え/移動しても設定が消えないように」、
         # パッケージ版は設定の保存先を%APPDATA%\JwNavigator\へ移した
@@ -901,6 +901,14 @@ class JwNavigatorManager:
                             if jw_exe_path:
                                 external_transform_setup.ensure_gcom100_registered(
                                     os.path.dirname(jw_exe_path), log=self.write_system_log
+                                )
+                            else:
+                                # 👑 ここが無言で素通りすると「GCOM_100が古い展開先の
+                                # ままで、原因がログから追えない」事故になる
+                                # (実機発覚、2026-09-11)。原因不明でも痕跡だけは残す。
+                                self.write_system_log(
+                                    "⚠️ GCOM_100自動登録確認: jw_cad.exeのパスが取得できず"
+                                    "スキップしました。"
                                 )
                         except Exception as e:
                             self.write_system_log(f"⚠️ GCOM_100自動登録確認に失敗しました: {str(e)}")
