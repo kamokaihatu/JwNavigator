@@ -16,6 +16,7 @@ SB_GETTEXTWのような危険な分岐(クロスプロセス手動マーシャ�
 """
 import ctypes
 import re
+import threading
 import time
 
 import win32api
@@ -268,16 +269,57 @@ def _find_layer_group_buttons(hwnd):
     return layer_hwnds, group_hwnds
 
 
+_LAYER_LIST_DIALOG_TITLES = ("レイヤ一覧", "レイヤグループ一覧")
+
+
+def _close_stray_layer_list_dialogs(stop_event):
+    """👑 「既に選択中のボタンを右クリック」の誤判定(set_layer_group()の
+    事前チェックが読み取りタイミングの問題で外れることがある、実機確認
+    2026-09-11)を防ぎきれない場合の保険。「レイヤ一覧」「レイヤグループ
+    一覧」ダイアログはモーダルで、開くと_right_click()内のSendMessageが
+    そのダイアログが閉じるまで戻ってこない(WM_RBUTTONUP送信がブロック
+    されたまま固まる)。このため、SendMessageと**並行して別スレッドで**
+    ダイアログの出現を監視し、見つかり次第WM_CLOSEを送って閉じる
+    (PostMessageは別スレッドからでも非同期に届くため、送信元スレッドが
+    SendMessageでブロック中でも問題なく効く)。"""
+    while not stop_event.is_set():
+        def cb(h, _extra):
+            try:
+                if win32gui.IsWindowVisible(h) and win32gui.GetClassName(h) == "#32770":
+                    title = win32gui.GetWindowText(h)
+                    if any(t in title for t in _LAYER_LIST_DIALOG_TITLES):
+                        win32gui.PostMessage(h, win32con.WM_CLOSE, 0, 0)
+            except Exception:
+                pass
+            return True
+
+        try:
+            win32gui.EnumWindows(cb, None)
+        except Exception:
+            pass
+        stop_event.wait(0.02)
+
+
 def _right_click(target_hwnd, hwnd_for_foreground):
     force_foreground_window(hwnd_for_foreground)
     time.sleep(0.05)
     l, t, r, b = win32gui.GetWindowRect(target_hwnd)
     w_, h_ = r - l, b - t
     lparam = win32api.MAKELONG(w_ // 2, h_ // 2)
-    win32gui.SendMessage(target_hwnd, WM_RBUTTONDOWN, 0, lparam)
-    time.sleep(0.05)
-    win32gui.SendMessage(target_hwnd, WM_RBUTTONUP, 0, lparam)
-    time.sleep(0.05)
+
+    stop_event = threading.Event()
+    watchdog = threading.Thread(
+        target=_close_stray_layer_list_dialogs, args=(stop_event,), daemon=True
+    )
+    watchdog.start()
+    try:
+        win32gui.SendMessage(target_hwnd, WM_RBUTTONDOWN, 0, lparam)
+        time.sleep(0.05)
+        win32gui.SendMessage(target_hwnd, WM_RBUTTONUP, 0, lparam)
+        time.sleep(0.05)
+    finally:
+        stop_event.set()
+        watchdog.join(timeout=1)
 
 
 def set_layer_group(hwnd, group=None, layer=None):
