@@ -309,7 +309,7 @@ class JwNavigatorManager:
             else os.getcwd()
         )
         self.log_file_path = os.path.join(exe_dir, "JwNavigator_Log.txt")
-        self.write_system_log("--- JwNavigator Ver3.67 メインシステム始動 ---")
+        self.write_system_log("--- JwNavigator Ver3.68 メインシステム始動 ---")
 
         # 👑 2026-09-11: 「exeを入れ替え/移動しても設定が消えないように」、
         # パッケージ版は設定の保存先を%APPDATA%\JwNavigator\へ移した
@@ -1308,9 +1308,15 @@ class JwNavigatorManager:
                 trigger_btn.clear_selected()
             return
 
+        save_entry = trigger_btn.entry if trigger_btn and trigger_btn.entry else None
+        fast = bool(save_entry.get("fast")) if save_entry else False
+        note = (
+            "先に図形を1つ以上選択しておいてください。保存には5〜10秒程度かかります"
+            if fast else "保存には10〜20秒程度かかります"
+        )
         dlg = TextInputDialog(
             self.root, title="レイヤ情報を保存", label="名前:", initial="",
-            note="保存には10〜20秒程度かかります",
+            note=note,
         )
         self.root.wait_window(dlg)
         name = dlg.result
@@ -1346,7 +1352,6 @@ class JwNavigatorManager:
             snapshot_id = existing_id
         else:
             snapshot_id = uuid.uuid4().hex
-            save_entry = trigger_btn.entry if trigger_btn and trigger_btn.entry else None
             save_name = (save_entry.get("name") if save_entry else None) or "ﾚｲﾔ\n保存"
             # 👑 新規作成した復元ボタン自身の設定画面には普段来ないため
             # (ユーザー指摘)、保存ボタン側の「既定値」をここで引き継ぐ。
@@ -1363,7 +1368,8 @@ class JwNavigatorManager:
 
         dest_path = palette_config.layer_snapshot_path(snapshot_id)
         captured_command = self._capture_current_command(hwnd)
-        self.write_system_log(f"[レイヤ保存] {name} を保存中です(10〜20秒程度かかります)…")
+        wait_note = "5〜10秒程度かかります" if fast else "10〜20秒程度かかります"
+        self.write_system_log(f"[レイヤ保存] {name} を保存中です({wait_note})…")
         # 👑 凹み表示だけだと物足りない、保存中とはっきり分かる表示が
         # 欲しいとの要望(2026-09-08)。ボタンの表示名を一時的に「保存中…」
         # に差し替える(config側のnameは触らない、ウィジェット側の見た目
@@ -1381,7 +1387,8 @@ class JwNavigatorManager:
         self._show_save_notice()
 
         def worker():
-            pending = layer_snapshot.trigger_save(hwnd, log=self.write_system_log)
+            trigger_fn = layer_snapshot.trigger_save_fast if fast else layer_snapshot.trigger_save
+            pending = trigger_fn(hwnd, log=self.write_system_log)
             self.root.after(
                 0,
                 lambda: self._on_layer_save_triggered(

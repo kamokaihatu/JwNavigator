@@ -54,6 +54,12 @@ from utils import external_transform_setup
 
 VK_CONTROL = 0x11
 SAVE_KEY_VK = 0x4A  # 'J' (Ctrl+J、GCOM_100の10番目=Jに割り付け済み)
+FAST_SAVE_KEY_VK = 0x4B  # 'K' (Ctrl+K、GCOM_110の1番目=Kに割り付け済み。A_SAVE直結)
+BM_CLICK = 0x00F5
+# 👑 jw_cad本体の条件設定バー上の「選択確定」ボタンのctrl_id(GWL_ID)。
+# 実機確認済み(2026-09-14)、jw_cadのバージョンが変わらない限り固定と
+# みなせる(utils/line_attr_dialog.pyのLAYER_GROUP_CTRL_ID等と同じ前提)。
+CONFIRM_SELECTION_CTRL_ID = 1120
 
 
 class _MEMORYSTATUSEX(ctypes.Structure):
@@ -287,6 +293,90 @@ def trigger_save(hwnd, log=None):
     return {"jwl_path": path, "baseline_mtime": baseline, "mark_baseline": mark_baseline}
 
 
+def _find_confirm_selection_button(hwnd):
+    found = []
+
+    def cb(h, _extra):
+        try:
+            if win32api.GetWindowLong(h, win32con.GWL_ID) == CONFIRM_SELECTION_CTRL_ID:
+                found.append(h)
+        except Exception:
+            pass
+        return True
+
+    try:
+        win32gui.EnumChildWindows(hwnd, cb, None)
+    except Exception:
+        pass
+    return found[0] if found else None
+
+
+def trigger_save_fast(hwnd, log=None):
+    """高速版レイヤ保存。B_MARKの点作図+A_SAVEへの連鎖(外部変形の呼び出し
+    2回)を経由せず、Ctrl+K(GCOM_110、A_SAVE直結、config/keybind_setup.md
+    参照)を使って外部変形の呼び出しを1回で済ませる。実機確認(2026-09-14):
+    合計約15秒→約8.6秒に短縮。
+
+    👑 **前提条件**: 呼び出し前に、利用者が図面上で何か1つ以上の図形を
+    範囲選択して確定(Shift+V等)しておく必要がある。このボタン自体は
+    選択操作を一切行わない(trigger_save()と違い、選択できる目印点を
+    自動で作図しないため)。選択が無い状態でCtrl+Kを送っても、jw_cad
+    本体の条件設定バーに「選択確定」ボタン(ctrl_id=1120)自体が
+    表示されないため、_find_confirm_selection_button()がNoneを返し、
+    安全に失敗する(Ctrl+K送信自体は無害)。
+
+    Ctrl+Kを送った直後にjw_cad本体の「選択確定」ボタンをBM_CLICKする。
+    このクリックはjw_cad内部でA_SAVE完了まで同期的にブロックする
+    (Ctrl+J経由の連鎖とは違い、戻ってきた時点でほぼ完了している)。
+    戻り値はtrigger_save()と同じ形なので、check_save_complete()/
+    finalize_save()をそのまま使い回せる。"""
+    def _log(msg):
+        if log:
+            try:
+                log(msg)
+            except Exception:
+                pass
+
+    path = restore_jwl_path(hwnd)
+    if not path:
+        return None
+    baseline = None
+    if os.path.isfile(path):
+        try:
+            baseline = os.path.getmtime(path)
+        except OSError:
+            baseline = None
+    mark_baseline = _count_marks()
+    mem = get_memory_status()
+    if mem:
+        _log(f"[レイヤ保存詳細](高速) 空きメモリ: {mem[1]:.0f}MB / {mem[2]:.0f}MB (使用率{mem[0]}%)")
+    force_foreground(hwnd)
+    time.sleep(0.2)
+    if win32gui.GetForegroundWindow() != hwnd:
+        _log("❌[レイヤ保存詳細](高速) jw_cadの前面化に失敗したため中断しました(誤ったウィンドウへの入力を防止)")
+        return None
+    _log("[レイヤ保存詳細](高速) 前面化成功")
+
+    _log("[レイヤ保存詳細](高速) Ctrl+K送信(A_SAVEへ直接)")
+    win32api.keybd_event(VK_CONTROL, 0, 0, 0)
+    win32api.keybd_event(FAST_SAVE_KEY_VK, 0, 0, 0)
+    win32api.keybd_event(FAST_SAVE_KEY_VK, 0, win32con.KEYEVENTF_KEYUP, 0)
+    win32api.keybd_event(VK_CONTROL, 0, win32con.KEYEVENTF_KEYUP, 0)
+
+    time.sleep(0.5)
+    btn = _find_confirm_selection_button(hwnd)
+    if not btn:
+        _log(
+            "❌[レイヤ保存詳細](高速) 「選択確定」ボタンが見つかりません"
+            "(先に図形を1つ以上選択してから押してください)"
+        )
+        return None
+    win32gui.SendMessage(btn, BM_CLICK, 0, 0)
+    _log("[レイヤ保存詳細](高速) 選択確定ボタンをクリック(以後はjw_cad内部処理待ち)")
+
+    return {"jwl_path": path, "baseline_mtime": baseline, "mark_baseline": mark_baseline}
+
+
 def cleanup_mark_points(hwnd, pending, log=None):
     """保存完了後に呼ぶ。trace.txtの[MARK]行数がtrigger_save()呼び出し時
     より増えた分(=連鎖の2周バグで余分に作図された分も含め、実際に作図
@@ -438,7 +528,11 @@ def trigger_restore(hwnd, jwl_path, keep_write_layer=True, log=None):
     win32gui.PostMessage(hwnd, win32con.WM_COMMAND, win32api.MAKELONG(LOAD_CONFIG_CMD_ID, 0), 0)
     _log("[レイヤ復元詳細] 環境設定ファイル読込みコマンド送信")
 
-    dlg = _find_new_window("#32770", before, timeout=2.0)
+    # 👑 保存直後(特に高速版のCtrl+K+選択確定ボタンクリック直後)は
+    # jw_cadがまだ内部処理中で、環境設定ファイル読込みコマンドへの反応が
+    # 一瞬遅れることがある(実機確認: 初回失敗→即リトライで成功、
+    # 2026-09-14)。2.0秒だと稀に間に合わないため余裕を持たせる。
+    dlg = _find_new_window("#32770", before, timeout=4.0)
     if not dlg:
         _log("❌[レイヤ復元詳細] 「開く」ダイアログが見つかりません")
         return False

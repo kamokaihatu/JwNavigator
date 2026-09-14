@@ -62,6 +62,19 @@ _GCOM100_MIN_FIELDS = 11
 _EXTERNAL_TRANSFORM_FILENAME = "B_MARK"
 _SKIP_PROFILE_NAMES = {"sample.jwf"}  # jw_cad同梱のひな形、実プロファイルではない
 
+# 👑 2026-09-14追記: 「レイヤ保存(高速)」ボタン用。GCOM_110ブロックの
+# 1番目(Ctrl+K)にA_SAVEを直結登録する(GCOM_100と同じ10キー1ブロックの
+# 構造、A=1番目〜J=10番目がGCOM_100、K=1番目〜T=10番目がGCOM_110、実機
+# 確認済み)。B_MARKの点作図+A_SAVEへの連鎖を経由しない分、外部変形の
+# 呼び出しが1回で済み体感時間が短縮できる(utils/layer_snapshot.pyの
+# trigger_save_fast()参照)。安全のための制約(スロットが空でない場合は
+# 書き換えない、バックアップ作成等)はGCOM_100と全く同じ。
+_GCOM110_KEY = "GCOM_110"
+_GCOM110_NAME_FIELD_INDEX = 0   # 0-indexed、Ctrl+KはGCOM_110の1番目
+_GCOM110_DIR_FIELD_INDEX = 10
+_GCOM110_MIN_FIELDS = 11
+_FAST_SAVE_FILENAME = "A_SAVE"
+
 
 def _resolve_base_dir():
     # 👑 main.py/utils/palette_config.py等と同じ小さなヘルパーの重複
@@ -128,10 +141,10 @@ def ensure_deployed(log=None):
 
 
 def ensure_gcom100_registered(jw_cad_exe_dir, log=None):
-    """jw_cadのプロファイル(*.jwf/*.JWF)全部のGCOM_100を確認し、必要なら
-    Ctrl+Jスロットへ外部変形の登録(ファイル名B_MARK、フォルダは今の
-    external_transform_dir())を行う。既に別用途で使われているスロットは
-    一切書き換えない。
+    """jw_cadのプロファイル(*.jwf/*.JWF)全部のGCOM_100/GCOM_110を確認し、
+    必要ならCtrl+J(B_MARK)/Ctrl+K(A_SAVE直結、レイヤ保存高速版用)へ
+    外部変形の登録(フォルダは今のexternal_transform_dir())を行う。既に
+    別用途で使われているスロットは一切書き換えない。
 
     👑 ensure_deployed()と同じ理由で凍結exe(sys.frozen)の時だけ動作する。
     開発環境(python main.py)ではexternal_transform_dir()がbat/exeを
@@ -157,26 +170,38 @@ def ensure_gcom100_registered(jw_cad_exe_dir, log=None):
     for jwf_path in jwf_paths:
         if os.path.basename(jwf_path).lower() in _SKIP_PROFILE_NAMES:
             continue
-        _ensure_gcom100_in_file(jwf_path, target_dir, log=log)
+        _ensure_gcom_slot_in_file(
+            jwf_path, target_dir, _GCOM100_KEY, _GCOM100_NAME_FIELD_INDEX,
+            _GCOM100_DIR_FIELD_INDEX, _GCOM100_MIN_FIELDS, _EXTERNAL_TRANSFORM_FILENAME,
+            "Ctrl+J", log=log,
+        )
+        _ensure_gcom_slot_in_file(
+            jwf_path, target_dir, _GCOM110_KEY, _GCOM110_NAME_FIELD_INDEX,
+            _GCOM110_DIR_FIELD_INDEX, _GCOM110_MIN_FIELDS, _FAST_SAVE_FILENAME,
+            "Ctrl+K", log=log,
+        )
 
 
-def _ensure_gcom100_in_file(jwf_path, target_dir, log=None):
+def _ensure_gcom_slot_in_file(
+    jwf_path, target_dir, gcom_key, name_field_index, dir_field_index,
+    min_fields, filename, key_label, log=None,
+):
     # 👑 実機のjwfに、過去の手編集由来と見られるcp932非適合バイト列が
-    # GCOM_100行とは無関係な箇所に混ざっているのを実測で確認した
+    # GCOM_1XX行とは無関係な箇所に混ざっているのを実測で確認した
     # (2026-09-11)。ファイル全体をテキストとしてdecode→encodeし直すと、
     # その箇所が書き込み時にエラーになる(直そうとしている訳でもないのに
-    # 巻き添えで壊れる)。そのため、GCOM_100の行だけをバイト列のまま
-    # 特定して置き換え、それ以外は元のバイトに一切触れない方式にする。
+    # 巻き添えで壊れる)。そのため、対象の行だけをバイト列のまま特定して
+    # 置き換え、それ以外は元のバイトに一切触れない方式にする。
     name = os.path.basename(jwf_path)
     try:
         raw = open(jwf_path, "rb").read()
     except Exception as e:
         if log:
-            log(f"⚠️ {name}の読み込みに失敗したためGCOM_100確認をスキップしました: {e}")
+            log(f"⚠️ {name}の読み込みに失敗したため{gcom_key}確認をスキップしました: {e}")
         return
 
     newline = b"\r\n" if b"\r\n" in raw else b"\n"
-    key_bytes = _GCOM100_KEY.encode("ascii")
+    key_bytes = gcom_key.encode("ascii")
     lines = raw.split(newline)
 
     changed = False
@@ -189,40 +214,40 @@ def _ensure_gcom100_in_file(jwf_path, target_dir, log=None):
             line_text = line_bytes.decode("cp932")
         except UnicodeDecodeError:
             if log:
-                log(f"⚠️ {name}のGCOM_100行の文字コードが想定と違うため、自動登録をスキップしました。")
+                log(f"⚠️ {name}の{gcom_key}行の文字コードが想定と違うため、自動登録をスキップしました。")
             break
         prefix, _, rest = line_text.partition("=")
         fields = rest.split(",")
-        while len(fields) < _GCOM100_MIN_FIELDS:
+        while len(fields) < min_fields:
             fields.append("")
-        current_name = fields[_GCOM100_NAME_FIELD_INDEX].strip()
-        current_dir = fields[_GCOM100_DIR_FIELD_INDEX].strip()
+        current_name = fields[name_field_index].strip()
+        current_dir = fields[dir_field_index].strip()
 
         new_dir = None
         if current_name == "":
-            fields[_GCOM100_NAME_FIELD_INDEX] = _EXTERNAL_TRANSFORM_FILENAME
+            fields[name_field_index] = filename
             new_dir = target_dir
             if log:
-                log(f"🔧 {name}のGCOM_100(Ctrl+J)にB_MARKを新規登録しました: {target_dir}")
-        elif current_name == _EXTERNAL_TRANSFORM_FILENAME:
+                log(f"🔧 {name}の{gcom_key}({key_label})に{filename}を新規登録しました: {target_dir}")
+        elif current_name == filename:
             if current_dir != target_dir:
                 new_dir = target_dir
                 if log:
-                    log(f"🔧 {name}のGCOM_100登録先を更新しました: {current_dir} → {target_dir}")
+                    log(f"🔧 {name}の{gcom_key}登録先を更新しました: {current_dir} → {target_dir}")
         else:
             if log:
                 log(
-                    f"⚠️ {name}のGCOM_100(Ctrl+J)は別の外部変形({current_name})が"
+                    f"⚠️ {name}の{gcom_key}({key_label})は別の外部変形({current_name})が"
                     "既に使用中のため、自動登録をスキップしました。"
                     "レイヤ保存機能を使うにはconfig/keybind_setup.mdを参照して手動で調整してください。"
                 )
 
         if new_dir is not None:
-            fields[_GCOM100_DIR_FIELD_INDEX] = new_dir
+            fields[dir_field_index] = new_dir
             new_line_text = prefix + "=" + ",".join(fields)
             lines[i] = new_line_text.encode("cp932")
             changed = True
-        break  # GCOM_100行は1ファイルに1つのはず
+        break  # 対象のGCOM_1XX行は1ファイルに1つのはず
 
     if not changed:
         return

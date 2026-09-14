@@ -259,7 +259,7 @@ LAYER_SNAPSHOT_ROLE_RESTORE = "restore"
 LAYER_SNAPSHOT_ROLES = (LAYER_SNAPSHOT_ROLE_SAVE, LAYER_SNAPSHOT_ROLE_RESTORE)
 
 
-def new_layer_snapshot_button(name, role, snapshot_id=None, snapshot_name=None, icon=NO_ICON, color=DEFAULT_COLOR):
+def new_layer_snapshot_button(name, role, snapshot_id=None, snapshot_name=None, icon=NO_ICON, color=DEFAULT_COLOR, fast=False):
     # 👑 2026-09-04設計: 保存ボタン(role=save)は名前もsnapshot_idも
     # 持たない汎用の1個のみを想定する(押すたびに動的に名前を聞き、
     # 対象を解決する。main.py: _start_layer_snapshot_save)。
@@ -293,6 +293,14 @@ def new_layer_snapshot_button(name, role, snapshot_id=None, snapshot_name=None, 
         # 保存ボタン側に「新しく作る復元ボタンの既定値」を持たせ、
         # main.py: _start_layer_snapshot_save が新規作成時にここを見る。
         button["default_keep_write_layer"] = True
+        # 👑 2026-09-14: 高速版(kind同じ、fast=True)。B_MARKの点作図を
+        # 経由せず、Ctrl+K(GCOM_110、A_SAVE直結)を使って外部変形の
+        # 呼び出しを1回で済ませる分、体感時間が約4割短縮できる(実機確認)。
+        # ただし利用者が事前に何か1つ以上選択しておく必要がある(このボタン
+        # 自体は選択操作を行わない)ため、既存の「押すだけ」版とは別の
+        # ボタンとして提供する(utils/layer_snapshot.pyのtrigger_save_fast()
+        # 参照)。
+        button["fast"] = bool(fast)
     return button
 
 
@@ -408,6 +416,7 @@ def _normalize_button(raw, known_icons, allow_group=True):
             button["keep_write_layer"] = bool(raw.get("keep_write_layer", True))
         elif role == LAYER_SNAPSHOT_ROLE_SAVE:
             button["default_keep_write_layer"] = bool(raw.get("default_keep_write_layer", True))
+            button["fast"] = bool(raw.get("fast", False))
 
     return button
 

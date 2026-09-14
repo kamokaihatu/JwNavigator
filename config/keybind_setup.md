@@ -8,9 +8,10 @@ JwNavigator.exeを起動するだけで、以下が自動的に行われます
    `dump_layers.ps1`)を、exeと同じフォルダの`external_transform\`へ展開
    (`utils/external_transform_setup.py`の`ensure_deployed()`)。
 2. jw_cadの環境設定ファイル(`*.jwf`/`*.JWF`、見つかった全プロファイル)の
-   `GCOM_100`のCtrl+Jスロットに、上記フォルダを自動登録
+   `GCOM_100`のCtrl+Jスロット(通常版のB_MARK用)と`GCOM_110`のCtrl+K
+   スロット(高速版のA_SAVE直結用)に、上記フォルダを自動登録
    (`ensure_gcom100_registered()`)。**空きスロットへの新規登録、または
-   以前JwNavigatorが登録した`B_MARK`の移設先追従だけを行い、他の用途で
+   以前JwNavigatorが登録したものの移設先追従だけを行い、他の用途で
    使われているスロットには一切触れません**(書き換え前に`.bak_jwnavigator`
    のバックアップも作成)。
 
@@ -30,12 +31,14 @@ JwNavigatorの起動ログ(`JwNavigator_Log.txt`)に、以下のような行が�
 いるか確認してください。
 
 - `🔧 外部変形ツールを展開しました: ...` — ツール展開が成功
-- `🔧 <ファイル名>のGCOM_100...登録しました/更新しました: ...` — jw_cad側の登録が成功
+- `🔧 <ファイル名>のGCOM_1XX...登録しました/更新しました: ...` — jw_cad側の登録が成功
 - `⚠️ <ファイル名>のGCOM_100(Ctrl+J)は別の外部変形(...)が既に使用中のため、
   自動登録をスキップしました` — **手動対応が必要**。`[Ctrl]+[J]`が既に
   別の外部変形で使われています。空いている別のキーに変更する場合は、
   jw_cadの環境設定ファイルの該当`GCOM_1XX`行を手で編集し、
   `utils/layer_snapshot.py`の`SAVE_KEY_VK`も合わせて変更してください。
+  `⚠️ ...のGCOM_110(Ctrl+K)は...`という同様の警告が出た場合は、高速版の
+  保存ボタンだけが使えません(通常版のボタンには影響しません)。
 
 `external_transform\`フォルダの中には`layerdump\`フォルダも自動生成され、
 以下が残ります(トラブル時の切り分け用)。

@@ -791,6 +791,7 @@ class CommandPickerDialog(tk.Toplevel):
         "box": "➕ グループボタン",
         "auto_attr": "➕ モードボタン",
         "layer_snapshot": "➕ レイヤ保存",
+        "layer_snapshot_fast": "➕ レイヤ保存(高速・要選択)",
     }
 
     def __init__(self, master, existing_ids=None, special_kinds=()):
@@ -2117,7 +2118,7 @@ class SidePanel(ttk.Frame):
         # 開く、特殊行も同じ多重選択でまとめて拾える)。
         dlg = CommandPickerDialog(
             self.winfo_toplevel(), existing_ids=self._existing_ids(),
-            special_kinds=("box", "auto_attr", "layer_snapshot"),
+            special_kinds=("box", "auto_attr", "layer_snapshot", "layer_snapshot_fast"),
         )
         self.winfo_toplevel().wait_window(dlg)
         rows = dlg.result
@@ -2173,6 +2174,8 @@ class SidePanel(ttk.Frame):
                 self._on_add_auto_attr()
             elif key == "layer_snapshot":
                 self._on_add_layer_snapshot()
+            elif key == "layer_snapshot_fast":
+                self._on_add_layer_snapshot(fast=True)
 
     def _on_remove(self):
         if self._selected_group is None or not self._selected_indices:
@@ -2275,7 +2278,7 @@ class SidePanel(ttk.Frame):
         self._selected_indices = [insert_at]
         self._rebuild_groups()
 
-    def _on_add_layer_snapshot(self):
+    def _on_add_layer_snapshot(self, fast=False):
         # 👑 「電灯配線図」のようなレイヤ状態の保存/復元ボタン(kind=
         # "layer_snapshot")の追加。2026-09-04の設計変更: 保存ボタンは
         # 名前を持たない汎用の1個のみをここで作る(「保存ボタんは1個で
@@ -2283,8 +2286,12 @@ class SidePanel(ttk.Frame):
         # ユーザー要望)。名前を聞くのも、名前ごとに復元ボタンを新設
         # するのも、押した瞬間(main.py: _start_layer_snapshot_save)に
         # 動的に行う。
+        # 👑 2026-09-14: fast=Trueは高速版(利用者が事前に選択しておく
+        # 前提、utils/layer_snapshot.pyのtrigger_save_fast()参照)。
+        # 見た目で区別できるよう名前とラベルを変える。
+        label = "ﾚｲﾔ\n保存\n(速)" if fast else "ﾚｲﾔ\n保存"
         new_btn = palette_config.new_layer_snapshot_button(
-            "ﾚｲﾔ\n保存", palette_config.LAYER_SNAPSHOT_ROLE_SAVE,
+            label, palette_config.LAYER_SNAPSHOT_ROLE_SAVE, fast=fast,
         )
         groups = self.side_cfg["groups"]
         if not groups:
