@@ -39,6 +39,17 @@ class TrayIcon:
         self.menu_items_provider = menu_items_provider
         self.on_default_click = on_default_click
         self._hicon = None
+        # 👑 2026-09-15: _wndproc(ctypesコールバック)の呼び出しスタックから
+        # 直接Tkの重い処理(新規ウィンドウ作成等)を呼ぶと、この環境
+        # (Python 3.13.14 + pywin32、main.pyのKeyboardHookController付近の
+        # コメント参照=WH_MOUSE_LL/WH_KEYBOARD_LLのctypesコールバックで
+        # 既に確認済みの不安定性と同種)で不定タイミングのクラッシュに
+        # つながることが実機検証で判明した(タスクトレイのダブルクリック
+        # →設定画面を開く、で確実に再現)。呼び出し自体は保留キューに
+        # 積むだけにし、実行はpoll_pending()経由でTkの既存イベントループ
+        # (`.after()`)から行う(win_event_watcher.pyのevent_queueと同じ
+        # 「コールバックは積むだけ、処理は別途」という設計を踏襲)。
+        self._pending_callbacks = []
         self.hwnd = self._create_window()
         self._add_icon(tooltip)
 
@@ -74,7 +85,7 @@ class TrayIcon:
             if lparam in (win32con.WM_RBUTTONUP, win32con.WM_LBUTTONUP):
                 self._show_menu()
             elif lparam == win32con.WM_LBUTTONDBLCLK and self.on_default_click:
-                self.on_default_click()
+                self._pending_callbacks.append(self.on_default_click)
             return 0
         if msg == win32con.WM_DESTROY:
             win32gui.PostQuitMessage(0)
@@ -113,7 +124,14 @@ class TrayIcon:
         if cmd:
             _, callback, _ = menu_items[cmd - 1]
             if callback:
-                callback()
+                self._pending_callbacks.append(callback)
+
+    def poll_pending(self):
+        # 👑 メインループ側の`.after()`から定期的に呼ぶ想定(__init__の
+        # コメント参照)。_wndprocからは直接呼ばず、ここで安全に実行する。
+        while self._pending_callbacks:
+            cb = self._pending_callbacks.pop(0)
+            cb()
 
     def update_tooltip(self, tooltip):
         flags = win32gui.NIF_TIP

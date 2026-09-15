@@ -327,7 +327,7 @@ class JwNavigatorManager:
             else os.getcwd()
         )
         self.log_file_path = os.path.join(exe_dir, "JwNavigator_Log.txt")
-        self.write_system_log("--- JwNavigator Ver3.70 メインシステム始動 ---")
+        self.write_system_log("--- JwNavigator Ver3.71 メインシステム始動 ---")
 
         # 👑 2026-09-11: 「exeを入れ替え/移動しても設定が消えないように」、
         # パッケージ版は設定の保存先を%APPDATA%\JwNavigator\へ移した
@@ -1854,6 +1854,7 @@ class JwNavigatorManager:
         self.root.after(30, self._drain_hook_queue)
         self.root.after(30, self._drain_win_event_queue)
         self._create_tray_icon()
+        self.root.after(50, self._poll_tray_pending)
         self.root.mainloop()
 
     def _create_tray_icon(self):
@@ -1865,6 +1866,18 @@ class JwNavigatorManager:
             )
         except Exception as e:
             self.write_system_log(f"⚠️ タスクトレイアイコン作成に失敗しました: {str(e)}")
+
+    def _poll_tray_pending(self):
+        # 👑 2026-09-15: タスクトレイの生WNDPROC(ctypesコールバック)から
+        # 直接呼ぶと不定タイミングでクラッシュする不具合が実機で見つかった
+        # ため(utils/tray_icon.pyのコメント参照)、トレイ操作の実行は
+        # ここ(既存のTkイベントループの`.after()`)からだけ行う。
+        if self.tray_icon is not None:
+            try:
+                self.tray_icon.poll_pending()
+            except Exception as e:
+                self.write_system_log(f"⚠️ トレイ操作の処理エラー: {str(e)}")
+        self.root.after(50, self._poll_tray_pending)
 
     def _tray_menu_items(self):
         # 👑 状態収集ログ(詳細ログ)のトグルはここに置かず、別途独立した
