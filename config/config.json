@@ -354,24 +354,25 @@
             },
             {
               "command_id": "",
-              "name": "ﾚｲﾔ\n保存\n(速)",
+              "name": "ﾚｲﾔ\n保存\n(要選択)",
               "icon": "",
               "color": "#f0f0f0",
               "kind": "layer_snapshot",
               "role": "save",
               "default_keep_write_layer": true,
-              "fast": true
+              "fast": true,
+              "auto": false
             },
             {
               "command_id": "",
-              "name": "1",
+              "name": "ﾚｲﾔ\n保存\n(全自動)",
               "icon": "",
               "color": "#f0f0f0",
               "kind": "layer_snapshot",
-              "role": "restore",
-              "snapshot_id": "1f31b8da4cc2449ebff2ba3ef323af63",
-              "snapshot_name": "1",
-              "keep_write_layer": true
+              "role": "save",
+              "default_keep_write_layer": true,
+              "fast": true,
+              "auto": true
             }
           ]
         }

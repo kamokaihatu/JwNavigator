@@ -435,7 +435,7 @@ def _rgb_to_hex(pixel):
     return f"#{r:02x}{g:02x}{b:02x}"
 
 
-def capture_swatches(hwnd, on_color=None, on_type=None):
+def capture_swatches(hwnd, on_color=None, on_type=None, on_dialog_found=None):
     """線属性ダイアログを開いて色9個・線種9個の実際の見本を読み取り、
     変更せずキャンセルで閉じる。戻り値:
     {"colors": [(ctrl_id, "#rrggbb"), ...], "types": [(ctrl_id, [bool,...]), ...]}
@@ -443,10 +443,22 @@ def capture_swatches(hwnd, on_color=None, on_type=None):
     👑 on_color(ctrl_id, hex_color)/on_type(ctrl_id, pattern)を渡すと、
     1項目読み取るたびに都度呼ばれる(「読めたもの1個ずつ更新していけたら
     臨場感あるけどできそう？」への対応。呼び出し元がTkinterのメイン
-    スレッドから同期的に呼ぶ前提で、別スレッド化はしていない)。"""
+    スレッドから同期的に呼ぶ前提で、別スレッド化はしていない)。
+    👑 2026-09-15: on_dialog_found(rect)を渡すと、線属性ダイアログの
+    実際の位置(win32gui.GetWindowRectのタプル)が分かった時点で1回だけ
+    呼ばれる。GetPixelは画面の絶対座標を読むだけなので、呼び出し元の
+    ウィンドウがこの矩形と重ならない位置へどければ、呼び出し元は
+    topmostのままでも正しく読み取れる(「せっかく1個ずつ更新している
+    のに、自分の窓が裏に回って見えないのは面白くない」というユーザー
+    指摘への対応)。"""
     dlg = _open_dialog(hwnd)
     if not dlg:
         return None
+    if on_dialog_found:
+        try:
+            on_dialog_found(win32gui.GetWindowRect(dlg))
+        except Exception:
+            pass
     ctrl_map = _build_ctrl_map(dlg)
     # 👑 ダイアログのhwndが見つかった直後は、中の18個のプレビュー(色9+
     # 線種9)がまだ描画し切れていないことがある(実機で、同じ条件でも

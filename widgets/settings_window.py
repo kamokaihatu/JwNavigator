@@ -355,6 +355,15 @@ class IconPickerDialog(tk.Toplevel):
         self.other_var = tk.BooleanVar(value=True)
         ttk.Checkbutton(row, text=self.OTHER_CATEGORY_LABEL, variable=self.other_var, command=self._rebuild_grid).pack(side="left", padx=3)
 
+        # 👑 2026-09-14修正: footer(OK/キャンセル)は、fill="both",
+        # expand=Trueのcontainerより**先に**side="bottom"でpackする
+        # (SettingsWindowと同じ不具合・同じ理由。widgets/settings_window.py
+        # のSettingsWindow.__init__のコメント参照)。
+        footer = ttk.Frame(self)
+        footer.pack(side="bottom", fill="x", padx=8, pady=8)
+        ttk.Button(footer, text="OK", command=self._on_ok, width=10).pack(side="right")
+        ttk.Button(footer, text="キャンセル", command=self._on_cancel, width=10).pack(side="right", padx=(0, 6))
+
         container = ttk.Frame(self)
         container.pack(side="top", fill="both", expand=True, padx=8)
         canvas = tk.Canvas(container, bg="#f0f0f0", highlightthickness=0)
@@ -370,11 +379,6 @@ class IconPickerDialog(tk.Toplevel):
             "<MouseWheel>", lambda e: canvas.yview_scroll(int(-e.delta / 120), "units")
         )
         self._mousewheel_canvas = canvas
-
-        footer = ttk.Frame(self)
-        footer.pack(side="top", fill="x", padx=8, pady=8)
-        ttk.Button(footer, text="OK", command=self._on_ok, width=10).pack(side="right")
-        ttk.Button(footer, text="キャンセル", command=self._on_cancel, width=10).pack(side="right", padx=(0, 6))
 
         self.protocol("WM_DELETE_WINDOW", self._on_cancel)
         self._cell_widgets = []
@@ -566,9 +570,15 @@ class LineAttrSwatchDialog(tk.Toplevel):
 
         self.title("線色・線種を見本から選ぶ")
         self.configure(bg="#f0f0f0")
+        # 👑 2026-09-15訂正: このダイアログだけtransient()→topmostの順に
+        # なっていた(他の全ダイアログ=ColorPickerDialog/IconPickerDialog/
+        # CommandPickerDialog/GroupContentsDialogはtopmost→transientの順)。
+        # Windows上、transient()確立時にラッパーHWNDが更新される挙動があり、
+        # その後でtopmostを付けるとSettingsWindow(同じく-topmost)の裏に
+        # 回ることがあった(実機報告)。他の全ダイアログと同じ順序に揃えた。
+        self.attributes("-topmost", True)
         self.transient(master)
         self.resizable(False, False)
-        self.attributes("-topmost", True)
 
         self._body = None
         self._build_body()
@@ -576,6 +586,15 @@ class LineAttrSwatchDialog(tk.Toplevel):
 
         self.protocol("WM_DELETE_WINDOW", self._on_cancel)
         self.grab_set()
+        # 👑 2026-09-14に追加したself.lift(master)は逆効果だった
+        # (2026-09-15訂正): main.py内の実測コメント(パレットのZ順制御
+        # 箇所)の通り、このシステムではSetWindowPos(hWndInsertAfter=X)が
+        # 「Xの直後＝Xより背面」に置く動きになる。tkinterのlift(aboveThis)は
+        # Windows側でこれと同じ仕組みのため、lift(master)は「masterの
+        # 背面へ」自分を送っていた可能性が高い(=当時の修正が効かなかった
+        # 理由)。引数無しのlift()(スタッキング順の最前面へ)に変更する。
+        self.lift()
+        self.focus_force()
 
     def _center_on_screen(self):
         # 👑 「すべてが左上になってるから」「画面の真ん中でやって」への
@@ -590,30 +609,76 @@ class LineAttrSwatchDialog(tk.Toplevel):
         y = max(0, (sh - h) // 2)
         self.geometry(f"+{x}+{y}")
 
+    def _on_dialog_found(self, rect):
+        # 👑 2026-09-15: GetPixelは画面の絶対座標を読むだけなので、自分の
+        # 窓が線属性ダイアログ(rect)と重ならなければ、自分はtopmostの
+        # ままで良い(読み取り中ずっと裏に隠れる必要が無い)。「せっかく
+        # 1個ずつ更新しているのに、自分の窓が裏に回って見えないのは面白
+        # くない」というユーザー指摘への対応。線属性ダイアログの右→左→
+        # 下→上の順で、画面に収まる空きを探して自分をどける。どこにも
+        # 収まらない極端な画面サイズの場合だけ、フォールバックの
+        # topmost一旦解除(_load_and_build()のtry/finally)に任せる。
+        self.update_idletasks()
+        w, h = self.winfo_reqwidth(), self.winfo_reqheight()
+        sw, sh = self.winfo_screenwidth(), self.winfo_screenheight()
+        ox0, oy0, ox1, oy1 = rect
+        candidates = [
+            (ox1 + 10, oy0),
+            (ox0 - 10 - w, oy0),
+            (ox0, oy1 + 10),
+            (ox0, oy0 - 10 - h),
+        ]
+        for x, y in candidates:
+            if 0 <= x and x + w <= sw and 0 <= y and y + h <= sh:
+                self.geometry(f"+{x}+{y}")
+                return
+        # 👑 どの向きにも収まらなかった(極端に小さい画面等)。この場合だけ
+        # 従来通りtopmostを一旦外して道を譲る(重なったまま自分がtopmost
+        # だと自分の背景を誤読するため)。
+        self.attributes("-topmost", False)
+
     def _load_and_build(self):
         # 👑 【重大】自分自身をtopmostにしたままjw_cad本体の線属性ダイアログ
         # を開くと、本物のダイアログが自分の裏に隠れてしまい、GetPixelで
         # 自分自身の白い背景を読み取ってしまう(実機で発覚: 全部白/実線に
         # なる不具合)。以前はwithdraw()で自分を完全に消していたが、
         # 「ボタン押したら画面きえちゃうの？残しておけない？」への対応で、
-        # 消す(withdraw)のではなくtopmostを一旦外すだけにする。本物の
-        # jw_cadダイアログ側は_open_dialog内で明示的にHWND_TOPMOSTへ
-        # 上げているので、こちらがtopmostを譲れば自然に向こうが前面に来て
-        # 正しく読み取れる。自分の窓自体は画面に残ったまま(裏に一瞬回る
-        # だけ)。
-        self.attributes("-topmost", False)
-        t0 = time.time()
-        # 👑 「読めたもの1個ずつ更新していけたら臨場感あるけどできそう？」
-        # への対応。1項目読めるごとにon_color/on_typeコールバックで既存の
-        # (今は空白の)マスをその場で塗り替えていく。既に画面には blank な
-        # グリッドが出来上がっているので、全部読み終わった後で改めて
-        # _build_body()し直す必要はない(成功時)。
-        swatches = line_attr_dialog.capture_swatches(
-            self._hwnd, on_color=self._update_color_swatch, on_type=self._update_type_swatch,
-        )
-        elapsed = time.time() - t0
-        print(f"[LineAttrSwatchDialog] 読み取り: 成功={swatches is not None} 所要={elapsed:.2f}秒")
-        self.attributes("-topmost", True)
+        # 消す(withdraw)のではなくtopmostを一旦外すだけにしていた。
+        # 👑 2026-09-15: さらに、_on_dialog_found()で線属性ダイアログと
+        # 重ならない位置へ自分をどけられた場合は、topmostを外す必要
+        # そのものが無くなった(重ならなければ何も隠れないため)。どけ
+        # られなかった場合(_moved_for_capture=False)だけ、従来通り
+        # topmostを一旦外して道を譲るフォールバックを使う。
+        self.load_swatches_btn.configure(state="disabled", text="読み込み中…")
+        self.load_swatches_note_var.set("(jw_cadの線属性ウィンドウが自動操作されています。触らずにお待ちください…)")
+        try:
+            t0 = time.time()
+            # 👑 「読めたもの1個ずつ更新していけたら臨場感あるけどできそう？」
+            # への対応。1項目読めるごとにon_color/on_typeコールバックで既存の
+            # (今は空白の)マスをその場で塗り替えていく。既に画面には blank な
+            # グリッドが出来上がっているので、全部読み終わった後で改めて
+            # _build_body()し直す必要はない(成功時)。
+            swatches = line_attr_dialog.capture_swatches(
+                self._hwnd, on_color=self._update_color_swatch, on_type=self._update_type_swatch,
+                on_dialog_found=self._on_dialog_found,
+            )
+            elapsed = time.time() - t0
+            print(f"[LineAttrSwatchDialog] 読み取り: 成功={swatches is not None} 所要={elapsed:.2f}秒")
+        finally:
+            # 👑 2026-09-15訂正: 順序が逆(_center_on_screen()→topmost)だと、
+            # Tk自身は.geometry()で正しい中央位置に動かしたと認識している
+            # のに、直後のattributes("-topmost", True)でWindows側の実際の
+            # ウィンドウ位置だけが動かす前の位置に巻き戻る不具合を実機の
+            # デバッグログで確認した(self.geometry()の戻り値は正しい値なのに
+            # win32のGetWindowRectでは元の位置のまま)。topmostを先に確定
+            # させてから位置を決める順序に直した。
+            self.attributes("-topmost", True)
+            self._center_on_screen()
+            # 👑 失敗時は_build_body()がボタン/注記ごと作り直すので不要だが、
+            # 成功時はここで明示的に戻さないとボタンが「読み込み中…」の
+            # まま固定されてしまう。
+            self.load_swatches_btn.configure(state="normal", text="📥 線色・線種の読み込み")
+            self.load_swatches_note_var.set("(10〜20秒程度かかります。線属性ウィンドウが開きますが、触らないでください。)")
         self._swatches = swatches
         self._attempted = True
         if swatches is not None:
@@ -667,11 +732,22 @@ class LineAttrSwatchDialog(tk.Toplevel):
         # 再読み込みを兼ねる、同じボタン一つだけ(常にOKのすぐ上に置く)。
         load_row = ttk.Frame(body)
         load_row.pack(side="top", fill="x", padx=10, pady=(6, 0))
-        ttk.Button(
+        self.load_swatches_btn = ttk.Button(
             load_row, text="📥 線色・線種の読み込み", command=self._load_and_build,
-        ).pack(fill="x", ipady=6)
+        )
+        self.load_swatches_btn.pack(fill="x", ipady=6)
+        # 👑 2026-09-15: 実測で10秒を超えることがあり(このダイアログ自身が
+        # 読み取り中は一時的にtopmostを譲ってjw_cad本体の裏に回るため
+        # =_load_and_build()参照、GetPixelで自分の背景を誤読するのを防ぐ
+        # ための正しい挙動)、「10秒程度」の表記だと待ちきれず「戻って
+        # こない(壊れた)」と誤解されやすかった(実機でユーザーが誤解)。
+        # 表記を実測値に合わせ、かつ二重押下/連打による多重実行を防ぐため
+        # 読み込み中はボタン自体を無効化して分かりやすくする。
+        self.load_swatches_note_var = tk.StringVar(
+            value="(10〜20秒程度かかります。線属性ウィンドウが開きますが、触らないでください。)"
+        )
         ttk.Label(
-            body, text="(10秒程度かかります。線属性ウィンドウが開きますが、触らないでください。)",
+            body, textvariable=self.load_swatches_note_var,
             font=("Meiryo UI", 8), foreground="#000000",
         ).pack(side="top", pady=(2, 2))
 
@@ -790,17 +866,25 @@ class CommandPickerDialog(tk.Toplevel):
     SPECIAL_LABELS = {
         "box": "➕ グループボタン",
         "auto_attr": "➕ モードボタン",
-        "layer_snapshot": "➕ レイヤ保存",
-        "layer_snapshot_fast": "➕ レイヤ保存(高速・要選択)",
+        "layer_snapshot": "🧪 レイヤ保存(通常版・テスト用)",
+        "layer_snapshot_fast": "🧪 レイヤ保存(要選択・テスト用)",
+        "layer_snapshot_fast_auto": "➕ レイヤ保存(全自動)",
     }
 
-    def __init__(self, master, existing_ids=None, special_kinds=()):
+    def __init__(self, master, existing_ids=None, special_kinds=(), test_kinds=()):
         super().__init__(master)
         self.result = []
         self.result_specials = []
         self._existing_ids = existing_ids or set()
         self._all_rows = command_master.list_available_commands()
         self._special_kinds = list(special_kinds)
+        # 👑 2026-09-14: レイヤ保存は「全自動」だけを通常メニューに残し、
+        # 通常版(低速だが確実)と要選択版は「普通は選ばない」テストモード
+        # 的な位置づけに変更(ユーザー決定)。test_kindsに渡した種別は、
+        # 「特殊」チェックだけでは出さず、追加の「テスト版も表示」
+        # チェックを入れた時だけ一覧に混ぜる(削除はせず、選べる状態で
+        # 隠しておく)。
+        self._test_kinds = list(test_kinds)
         self._visible_specials = []
         self.filtered = []
 
@@ -839,6 +923,13 @@ class CommandPickerDialog(tk.Toplevel):
             ttk.Checkbutton(
                 kind_bar, text="特殊", variable=self.show_specials_var, command=self._apply_filter,
             ).pack(side="left", padx=4)
+        # 👑 2026-09-14: test_kinds(普段は隠しておきたい種別)は、既定OFFの
+        # 別チェックボックスを追加した時だけ一覧に混ぜる。
+        self.show_test_var = tk.BooleanVar(value=False)
+        if self._test_kinds:
+            ttk.Checkbutton(
+                kind_bar, text="テスト版も表示", variable=self.show_test_var, command=self._apply_filter,
+            ).pack(side="left", padx=4)
 
         cat_bar = ttk.Frame(self)
         cat_bar.pack(side="top", fill="x", padx=8, pady=(2, 6))
@@ -849,6 +940,14 @@ class CommandPickerDialog(tk.Toplevel):
             self.cat_vars[cat] = var
             ttk.Checkbutton(cat_bar, text=cat, variable=var, command=self._apply_filter).pack(side="left", padx=4)
 
+        # 👑 2026-09-14修正: footer(追加/キャンセル)は、fill="both",
+        # expand=Trueのlist_frameより**先に**side="bottom"でpackする
+        # (SettingsWindowと同じ不具合・同じ理由)。
+        footer = ttk.Frame(self)
+        footer.pack(side="bottom", fill="x", padx=8, pady=8)
+        ttk.Button(footer, text="追加", command=self._on_ok, width=10).pack(side="right")
+        ttk.Button(footer, text="キャンセル", command=self._on_cancel, width=10).pack(side="right", padx=(0, 6))
+
         list_frame = ttk.Frame(self)
         list_frame.pack(side="top", fill="both", expand=True, padx=8)
         self.listbox = tk.Listbox(list_frame, selectmode="extended", exportselection=0, font=("Meiryo UI", 9))
@@ -857,11 +956,6 @@ class CommandPickerDialog(tk.Toplevel):
         self.listbox.pack(side="left", fill="both", expand=True)
         scroll.pack(side="right", fill="y")
         self.listbox.bind("<Double-Button-1>", self._on_ok)
-
-        footer = ttk.Frame(self)
-        footer.pack(side="top", fill="x", padx=8, pady=8)
-        ttk.Button(footer, text="追加", command=self._on_ok, width=10).pack(side="right")
-        ttk.Button(footer, text="キャンセル", command=self._on_cancel, width=10).pack(side="right", padx=(0, 6))
 
         self.protocol("WM_DELETE_WINDOW", self._on_cancel)
         self._apply_filter()
@@ -883,7 +977,11 @@ class CommandPickerDialog(tk.Toplevel):
                 continue
             self.filtered.append(row)
 
-        self._visible_specials = self._special_kinds if self.show_specials_var.get() else []
+        self._visible_specials = []
+        if self.show_specials_var.get():
+            self._visible_specials += self._special_kinds
+            if self.show_test_var.get():
+                self._visible_specials += self._test_kinds
         self.listbox.delete(0, tk.END)
         for key in self._visible_specials:
             # 👑 下に並ぶ一般コマンド行(◯◯ (種別/分類))と見た目を揃え、
@@ -933,6 +1031,16 @@ class GroupContentsDialog(tk.Toplevel):
         self.transient(master)
 
         self.name_var = tk.StringVar()
+
+        # 👑 2026-09-14修正: footer(OK/キャンセル)は、fill="both",
+        # expand=Trueのbodyより**先に**side="bottom"でpackする
+        # (SettingsWindowと同じ不具合・同じ理由。以前はbodyの後、detail等
+        # を挟んだ末尾でpackしていたため、bodyが領域を使い切ってしまい
+        # footerが下端で潰れる不具合があった)。
+        footer = ttk.Frame(self)
+        footer.pack(side="bottom", fill="x", padx=8, pady=8)
+        ttk.Button(footer, text="OK", command=self._on_ok, width=10).pack(side="right")
+        ttk.Button(footer, text="キャンセル", command=self._on_cancel, width=10).pack(side="right", padx=(0, 6))
 
         body = ttk.Frame(self)
         body.pack(side="top", fill="both", expand=True, padx=8, pady=8)
@@ -1058,7 +1166,7 @@ class GroupContentsDialog(tk.Toplevel):
         self.auto_attr_layer_number_combo.pack(side="left", padx=(2, 8))
         self.auto_attr_layer_number_combo.bind("<<ComboboxSelected>>", self._on_auto_attr_changed)
 
-        ttk.Label(auto_attr_frame2, text="対象:").pack(side="left")
+        ttk.Label(auto_attr_frame2, text="コマンド:").pack(side="left")
         # 👑 対象を「メイン」種別(線・矩形・連続線等)だけに絞る。
         # ファイル操作/一発系コマンドはCHECKED状態を持たず、「離脱したら
         # 自動で戻す」の検知ができないため選ばせない(ユーザー指摘:
@@ -1080,11 +1188,6 @@ class GroupContentsDialog(tk.Toplevel):
 
         ttk.Label(self, text="(複数選択してまとめてアイコン・色を変更できます)",
                   foreground="#888888").pack(side="top", anchor="w", padx=8)
-
-        footer = ttk.Frame(self)
-        footer.pack(side="top", fill="x", padx=8, pady=8)
-        ttk.Button(footer, text="OK", command=self._on_ok, width=10).pack(side="right")
-        ttk.Button(footer, text="キャンセル", command=self._on_cancel, width=10).pack(side="right", padx=(0, 6))
 
         self.protocol("WM_DELETE_WINDOW", self._on_cancel)
         self._rebuild_list()
@@ -1374,8 +1477,15 @@ class SidePanel(ttk.Frame):
         self.name_var = tk.StringVar()
 
         self._build_shape_bar()
-        self._build_layout_area()
+        # 👑 2026-09-14修正: _build_detail_form()(固定高さの「ボタン詳細」)
+        # を、fill="both", expand=Trueの_build_layout_area()(「ボタン
+        # 配置」一覧)より**先に**呼ぶ(SettingsWindow等と同じ不具合・同じ
+        # 理由)。ただし見た目の上下は変えたくない(一覧が上、詳細が下の
+        # まま)ため、_build_detail_form()側のwrapperをside="bottom"で
+        # packするよう変更してある(呼び出し順を変えても、下端に固定表示
+        # されたまま)。
         self._build_detail_form()
+        self._build_layout_area()
         self._update_dock_selector()
 
         self.name_var.trace_add("write", self._on_name_changed)
@@ -1421,11 +1531,17 @@ class SidePanel(ttk.Frame):
         lf = ttk.LabelFrame(self, text="ボタン配置")
         lf.pack(side="top", fill="both", expand=True, padx=8, pady=6)
 
-        self.groups_host = tk.Frame(lf, bg="#f0f0f0")
-        self.groups_host.pack(side="left", fill="both", expand=True, padx=4, pady=4)
-
+        # 👑 2026-09-14修正: ops(▲▼◀▶追加削除＋行/列－行/列)は、
+        # fill="both", expand=Trueのgroups_hostより**先に**side="right"で
+        # packする(SettingsWindow等と同じ不具合・同じ理由。今回は横方向
+        # で発生: 行数が増えてgroups_hostの内容が横に伸びると、後から
+        # packされていたopsの取り分が無くなり、右側のボタンが全て見えなく
+        # なっていた、実機確認)。
         ops = ttk.Frame(lf)
         ops.pack(side="right", fill="y", padx=(0, 6), pady=4)
+
+        self.groups_host = tk.Frame(lf, bg="#f0f0f0")
+        self.groups_host.pack(side="left", fill="both", expand=True, padx=4, pady=4)
 
         ttk.Button(ops, text="▲", width=6, command=self._move_up).pack(pady=2)
         ttk.Button(ops, text="▼", width=6, command=self._move_down).pack(pady=2)
@@ -1451,10 +1567,27 @@ class SidePanel(ttk.Frame):
         # lf(ボタン詳細)とdock_frame(ドッキング位置)を別々のLabelFrame
         # として同格に扱う。
         wrapper = ttk.Frame(self)
-        wrapper.pack(side="top", fill="x", padx=8, pady=(0, 8))
+        wrapper.pack(side="bottom", fill="x", padx=8, pady=(0, 8))
 
         lf = ttk.LabelFrame(wrapper, text="ボタン詳細")
         lf.pack(side="left", fill="both", expand=True)
+
+        # 👑 2026-09-14: 「モード」(kind="auto_attr")の線色/線種/線幅/
+        # レイヤ設定は、以前はlf内にgrid()/grid_remove()で出し入れして
+        # いたが、選択中のボタン種別によって「ボタン詳細」全体の高さが
+        # 変わってしまい、そのたびに「ボタン配置」エリア(特に右のops列
+        # =▲▼◀▶等のボタン)が窮屈になって潰れる不具合が実機で繰り返し
+        # 発生した(ユーザー指摘)。「ボタン詳細」「モード設定」「ドッキング
+        # 位置」を常に横並びの3枠にして高さを固定し、対象外の時はモード
+        # 設定側を丸ごとdisabled表示にする方式へ変更した(ユーザー提案)。
+        mode_lf = ttk.LabelFrame(wrapper, text="モード設定")
+        # 👑 fill="y"にすると、隣のlf(「ボタン詳細」、5行分で背が高い)に
+        # 合わせて縦に引き伸ばされ、中身は8行程度しか無いのに下に大きな
+        # 空白ができてしまう(ユーザー指摘: 「空白いっぱいあるよ」)。
+        # fillなし+anchor="n"で、自分の内容ぶんの高さだけ使い、上詰めで
+        # 表示する。
+        mode_lf.pack(side="left", anchor="n", padx=(8, 0))
+        self.mode_lf = mode_lf
 
         ttk.Label(lf, text="コマンド:").grid(row=0, column=0, sticky="e", padx=6, pady=4)
         ttk.Label(lf, textvariable=self.cmd_var, wraplength=460, justify="left").grid(row=0, column=1, sticky="w", padx=6, pady=4)
@@ -1483,8 +1616,6 @@ class SidePanel(ttk.Frame):
         self.pick_color_btn.pack(side="left", padx=6)
         self.reset_color_btn = ttk.Button(color_frame, text="既定に戻す", command=self._on_reset_color)
         self.reset_color_btn.pack(side="left")
-        ttk.Label(lf, text="(リストでCtrl/Shiftクリックすると複数選択してまとめて色・アイコン変更できます)",
-                  foreground="#888888").grid(row=4, column=0, columnspan=2, sticky="w", padx=6, pady=(0, 4))
 
         # 👑 「ドッキング位置の表示はボタン詳細の右に」(ユーザー要望、
         # 2026-09-10)。ただし「ボタン詳細」の枠の中に入っているのは変、
@@ -1526,80 +1657,71 @@ class SidePanel(ttk.Frame):
         self.ungroup_btn.pack(side="left", padx=(6, 0))
         self.group_frame = group_frame
 
-        # 👑 「補助線」「配線」等(kind="auto_attr")用: 線色・線種・線幅・
-        # 水平垂直・レイヤグループ・レイヤを、幅に余裕があるので1行に
-        # まとめる(ユーザー要望: 「並べれるところは並べて」)。
-        auto_attr_frame = ttk.Frame(lf)
-        self.auto_attr_frame = auto_attr_frame
-        ttk.Label(auto_attr_frame, text="線色:").pack(side="left")
+        # 👑 「補助線」「配線」等(kind="auto_attr")用の線色・線種・線幅・
+        # 水平垂直・レイヤグループ・レイヤ・コマンド・見本で選ぶ。
+        # 👑 2026-09-14: 親をlfからmode_lf(常時表示・固定幅の別枠)へ変更。
+        # 「横長い、空白が多い」→ 全部1行1項目に分解、の後で「今度は
+        # ボタン詳細(説明文を消して4行に短縮済み)より縦に長すぎて
+        # バランスが悪い、全体の余白が最小になるように」という指摘
+        # (ユーザー、2026-09-14)を受け、2項目/行に組み直して5行程度に
+        # 収め、隣のlf(4行)と高さがおおむね釣り合うようにした。
+        ttk.Label(mode_lf, text="線色:").grid(row=0, column=0, sticky="e", padx=(6, 2), pady=3)
         self.auto_attr_color_var = tk.StringVar()
         self.auto_attr_color_combo = ttk.Combobox(
-            auto_attr_frame, textvariable=self.auto_attr_color_var, values=palette_config.LINE_COLOR_LABELS,
+            mode_lf, textvariable=self.auto_attr_color_var, values=palette_config.LINE_COLOR_LABELS,
             state="readonly", width=7,
         )
-        self.auto_attr_color_combo.pack(side="left", padx=(2, 8))
+        self.auto_attr_color_combo.grid(row=0, column=1, sticky="w", padx=(0, 6), pady=3)
         self.auto_attr_color_combo.bind("<<ComboboxSelected>>", self._on_auto_attr_changed)
 
-        ttk.Label(auto_attr_frame, text="線種:").pack(side="left")
+        ttk.Label(mode_lf, text="線種:").grid(row=0, column=2, sticky="e", padx=(6, 2), pady=3)
         self.auto_attr_type_var = tk.StringVar()
         self.auto_attr_type_combo = ttk.Combobox(
-            auto_attr_frame, textvariable=self.auto_attr_type_var, values=palette_config.LINE_TYPE_LABELS,
+            mode_lf, textvariable=self.auto_attr_type_var, values=palette_config.LINE_TYPE_LABELS,
             state="readonly", width=7,
         )
-        self.auto_attr_type_combo.pack(side="left", padx=(2, 8))
+        self.auto_attr_type_combo.grid(row=0, column=3, sticky="w", padx=(0, 6), pady=3)
         self.auto_attr_type_combo.bind("<<ComboboxSelected>>", self._on_auto_attr_changed)
 
-        ttk.Label(auto_attr_frame, text="線幅:").pack(side="left")
+        ttk.Label(mode_lf, text="線幅:").grid(row=1, column=0, sticky="e", padx=(6, 2), pady=3)
         self.auto_attr_width_var = tk.StringVar()
-        self.auto_attr_width_entry = ttk.Entry(auto_attr_frame, textvariable=self.auto_attr_width_var, width=5)
-        self.auto_attr_width_entry.pack(side="left", padx=(2, 8))
+        self.auto_attr_width_entry = ttk.Entry(mode_lf, textvariable=self.auto_attr_width_var, width=7)
+        self.auto_attr_width_entry.grid(row=1, column=1, sticky="w", padx=(0, 6), pady=3)
         self.auto_attr_width_var.trace_add("write", self._on_auto_attr_width_changed)
 
         self.auto_attr_hv_var = tk.BooleanVar()
         self.auto_attr_hv_check = ttk.Checkbutton(
-            auto_attr_frame, text="水平･垂直もON", variable=self.auto_attr_hv_var,
+            mode_lf, text="水平･垂直もON", variable=self.auto_attr_hv_var,
             command=self._on_auto_attr_changed,
         )
-        self.auto_attr_hv_check.pack(side="left", padx=(0, 8))
+        self.auto_attr_hv_check.grid(row=1, column=2, columnspan=2, sticky="w", padx=(6, 6), pady=3)
 
-        # 👑 「見本で選ぶ…」等の設定用ボタンは行末(右側)へ(ユーザー要望:
-        # 「右に設定ボタンをいろいろ持ってきたらいいんじゃない？」)。読み込み
-        # は画面を開いた後にボタンを押した時だけ走るようになったため、
-        # 「(5秒待つ)」の事前注記は不要になった(削除)。
-        ttk.Button(auto_attr_frame, text="見本で選ぶ…", command=self._on_pick_swatches).pack(side="left", padx=(0, 8))
-
-        # 👑 幅overflow対策で2行目に分ける(実機でレイヤ系の設定と保存/
-        # キャンセルが右に切れる不具合が出た)。GroupContentsDialogの
-        # auto_attr_frame/auto_attr_frame2と同じ構成に揃える。
-        auto_attr_frame2 = ttk.Frame(lf)
-        self.auto_attr_frame2 = auto_attr_frame2
-        ttk.Label(auto_attr_frame2, text="レイヤG:").pack(side="left")
+        ttk.Label(mode_lf, text="レイヤG:").grid(row=2, column=0, sticky="e", padx=(6, 2), pady=3)
         self.auto_attr_layer_group_var = tk.StringVar()
         self.auto_attr_layer_group_combo = ttk.Combobox(
-            auto_attr_frame2, textvariable=self.auto_attr_layer_group_var,
+            mode_lf, textvariable=self.auto_attr_layer_group_var,
             values=palette_config.LAYER_NUMBER_LABELS, state="readonly", width=7,
         )
-        self.auto_attr_layer_group_combo.pack(side="left", padx=(2, 8))
+        self.auto_attr_layer_group_combo.grid(row=2, column=1, sticky="w", padx=(0, 6), pady=3)
         self.auto_attr_layer_group_combo.bind("<<ComboboxSelected>>", self._on_auto_attr_changed)
 
-        ttk.Label(auto_attr_frame2, text="レイヤ:").pack(side="left")
+        ttk.Label(mode_lf, text="レイヤ:").grid(row=2, column=2, sticky="e", padx=(6, 2), pady=3)
         self.auto_attr_layer_number_var = tk.StringVar()
         self.auto_attr_layer_number_combo = ttk.Combobox(
-            auto_attr_frame2, textvariable=self.auto_attr_layer_number_var,
+            mode_lf, textvariable=self.auto_attr_layer_number_var,
             values=palette_config.LAYER_NUMBER_LABELS, state="readonly", width=7,
         )
-        self.auto_attr_layer_number_combo.pack(side="left", padx=(2, 8))
+        self.auto_attr_layer_number_combo.grid(row=2, column=3, sticky="w", padx=(0, 6), pady=3)
         self.auto_attr_layer_number_combo.bind("<<ComboboxSelected>>", self._on_auto_attr_changed)
 
         # 👑 切替先コマンド(既定は直線)。「他のコマンド選択することできる？
-        # 連続線とか」というユーザー要望への対応。
-        ttk.Label(auto_attr_frame2, text="対象:").pack(side="left")
-        # 👑 対象を「メイン」種別(線・矩形・連続線等)だけに絞る。
-        # ファイル操作/一発系コマンドはCHECKED状態を持たず、「離脱したら
-        # 自動で戻す」の検知ができないため選ばせない(ユーザー指摘:
-        # 「コマンド全部いれたら問題おきないかな。クラッシュしそうじゃ
-        # ない？」→ クラッシュはしないが、選ぶと線属性が戻らなくなる
-        # 実害があるため制限した)。
+        # 連続線とか」というユーザー要望への対応。対象を「メイン」種別
+        # (線・矩形・連続線等)だけに絞る。ファイル操作/一発系コマンドは
+        # CHECKED状態を持たず、「離脱したら自動で戻す」の検知ができない
+        # ため選ばせない(ユーザー指摘:「コマンド全部いれたら問題おき
+        # ないかな。クラッシュしそうじゃない？」→ クラッシュはしないが、
+        # 選ぶと線属性が戻らなくなる実害があるため制限した)。
+        ttk.Label(mode_lf, text="コマンド:").grid(row=3, column=0, sticky="e", padx=(6, 2), pady=3)
         self._target_command_options = [
             (row["command_id"], f"{row['command_id']} {row['toolbar_name']}")
             for row in command_master.list_available_commands()
@@ -1607,11 +1729,14 @@ class SidePanel(ttk.Frame):
         ]
         self.auto_attr_target_var = tk.StringVar()
         self.auto_attr_target_combo = ttk.Combobox(
-            auto_attr_frame2, textvariable=self.auto_attr_target_var,
-            values=[label for _cid, label in self._target_command_options], state="readonly", width=12,
+            mode_lf, textvariable=self.auto_attr_target_var,
+            values=[label for _cid, label in self._target_command_options], state="readonly", width=20,
         )
-        self.auto_attr_target_combo.pack(side="left", padx=(2, 0))
+        self.auto_attr_target_combo.grid(row=3, column=1, columnspan=3, sticky="w", padx=(0, 6), pady=3)
         self.auto_attr_target_combo.bind("<<ComboboxSelected>>", self._on_auto_attr_changed)
+
+        self.pick_swatches_btn = ttk.Button(mode_lf, text="見本で選ぶ…", command=self._on_pick_swatches)
+        self.pick_swatches_btn.grid(row=4, column=0, columnspan=4, sticky="ew", padx=6, pady=(3, 6))
 
         # 👑 「電灯配線図を復元」等(kind="layer_snapshot", role="restore")用:
         # 復元時に書込レイヤをどう扱うかのチェックボックス(ユーザー要望:
@@ -1645,20 +1770,27 @@ class SidePanel(ttk.Frame):
         self._set_detail_extra_section(None)
 
     def _set_detail_extra_section(self, section):
-        # 👑 group_frame(箱用)とauto_attr_frame(補助線系用)は排他なので、
-        # 選ばれた方だけ実際にgrid()して表示し、他方はgrid_remove()で
-        # 完全に外す(disabled表示のまま常時場所だけ取っていた以前の
-        # 実装だと、使わない方の分まで縦に伸び続けていた)。
-        # 👑 他の行(ラベルがcolumn0・中身がcolumn1)と揃える(以前は
-        # columnspan=2で1枠を丸ごと使っていて中央寄りに見えていた)。
+        # 👑 group_frame(箱用)/layer_restore_frame/layer_save_frameは
+        # 排他なので、選ばれた方だけ実際にgrid()して表示し、他方は
+        # grid_remove()で完全に外す。
+        # 👑 2026-09-14: auto_attr_frame/auto_attr_frame2(モード設定)は
+        # ここでの出し入れ対象から外した。以前はこれも含めてgrid_remove()
+        # していたが、選択中のボタン種別によって「ボタン詳細」全体の
+        # 高さが変わり、「ボタン配置」エリアのops列(▲▼◀▶等)が窮屈に
+        # なって潰れる不具合が繰り返し発生したため、常時表示・固定幅の
+        # 別枠(mode_lf、_build_detail_form()参照)へ移した。この関数からは
+        # _set_mode_enabled()を呼んで有効/無効の切り替えだけ行う。
         # section: None(何も出さない)/"group"/"auto_attr"/"layer_restore"/"layer_save"
         self.group_frame.grid_remove()
-        self.auto_attr_frame.grid_remove()
-        self.auto_attr_frame2.grid_remove()
         self.layer_restore_frame.grid_remove()
         self.layer_save_frame.grid_remove()
         self.extra_row_label.grid_remove()
-        if section is None:
+        self._set_mode_enabled(section == "auto_attr")
+        # 👑 2026-09-14: auto_attr(モード)は中身をmode_lf側へ完全に移した
+        # ため、lf側には「中身:」等に相当する行もdetail_separatorも不要
+        # (以前はdetail_separatorだけ残していたが、下に何も無いのに
+        # 区切り線だけ残るのは不自然、とのユーザー指摘で削除)。
+        if section is None or section == "auto_attr":
             self.detail_separator.grid_remove()
             return
         self.detail_separator.grid()
@@ -1666,16 +1798,32 @@ class SidePanel(ttk.Frame):
         if section == "group":
             self.extra_row_label.configure(text="中身:")
             self.group_frame.grid(row=self._detail_extra_row, column=1, sticky="w", padx=6, pady=4)
-        elif section == "auto_attr":
-            self.extra_row_label.configure(text="モード:")
-            self.auto_attr_frame.grid(row=self._detail_extra_row, column=1, sticky="w", padx=6, pady=(4, 0))
-            self.auto_attr_frame2.grid(row=self._detail_extra_row + 1, column=1, sticky="w", padx=6, pady=(0, 4))
         elif section == "layer_restore":
             self.extra_row_label.configure(text="復元設定:")
             self.layer_restore_frame.grid(row=self._detail_extra_row, column=1, sticky="w", padx=6, pady=4)
         elif section == "layer_save":
             self.extra_row_label.configure(text="保存設定:")
             self.layer_save_frame.grid(row=self._detail_extra_row, column=1, sticky="w", padx=6, pady=4)
+
+    def _set_mode_enabled(self, enabled):
+        state = "readonly" if enabled else "disabled"
+        entry_state = "normal" if enabled else "disabled"
+        self.auto_attr_color_combo.configure(state=state)
+        self.auto_attr_type_combo.configure(state=state)
+        self.auto_attr_width_entry.configure(state=entry_state)
+        self.auto_attr_hv_check.configure(state=entry_state)
+        self.pick_swatches_btn.configure(state=entry_state)
+        self.auto_attr_layer_group_combo.configure(state=state)
+        self.auto_attr_layer_number_combo.configure(state=state)
+        self.auto_attr_target_combo.configure(state=state)
+        if not enabled:
+            self.auto_attr_color_var.set("")
+            self.auto_attr_type_var.set("")
+            self.auto_attr_width_var.set("")
+            self.auto_attr_hv_var.set(False)
+            self.auto_attr_layer_group_var.set("")
+            self.auto_attr_layer_number_var.set("")
+            self.auto_attr_target_var.set("")
 
     def _on_auto_attr_changed(self, event=None):
         if self._loading_detail:
@@ -2118,7 +2266,11 @@ class SidePanel(ttk.Frame):
         # 開く、特殊行も同じ多重選択でまとめて拾える)。
         dlg = CommandPickerDialog(
             self.winfo_toplevel(), existing_ids=self._existing_ids(),
-            special_kinds=("box", "auto_attr", "layer_snapshot", "layer_snapshot_fast"),
+            special_kinds=("box", "auto_attr", "layer_snapshot_fast_auto"),
+            # 👑 2026-09-14: 通常版・要選択版は実機検証で「全自動」の方が
+            # 確実だと分かったため、普段は選ばせずテストモード的に隠す
+            # (ユーザー決定、DECISIONS.md参照)。削除はしない。
+            test_kinds=("layer_snapshot", "layer_snapshot_fast"),
         )
         self.winfo_toplevel().wait_window(dlg)
         rows = dlg.result
@@ -2176,6 +2328,8 @@ class SidePanel(ttk.Frame):
                 self._on_add_layer_snapshot()
             elif key == "layer_snapshot_fast":
                 self._on_add_layer_snapshot(fast=True)
+            elif key == "layer_snapshot_fast_auto":
+                self._on_add_layer_snapshot(fast=True, auto=True)
 
     def _on_remove(self):
         if self._selected_group is None or not self._selected_indices:
@@ -2278,7 +2432,7 @@ class SidePanel(ttk.Frame):
         self._selected_indices = [insert_at]
         self._rebuild_groups()
 
-    def _on_add_layer_snapshot(self, fast=False):
+    def _on_add_layer_snapshot(self, fast=False, auto=False):
         # 👑 「電灯配線図」のようなレイヤ状態の保存/復元ボタン(kind=
         # "layer_snapshot")の追加。2026-09-04の設計変更: 保存ボタンは
         # 名前を持たない汎用の1個のみをここで作る(「保存ボタんは1個で
@@ -2288,10 +2442,19 @@ class SidePanel(ttk.Frame):
         # 動的に行う。
         # 👑 2026-09-14: fast=Trueは高速版(利用者が事前に選択しておく
         # 前提、utils/layer_snapshot.pyのtrigger_save_fast()参照)。
-        # 見た目で区別できるよう名前とラベルを変える。
-        label = "ﾚｲﾔ\n保存\n(速)" if fast else "ﾚｲﾔ\n保存"
+        # auto=Trueはさらに選択も全自動(trigger_save_fast_auto()参照)。
+        # 👑 2026-09-14(名称訂正): 当初「(速)」/「(全自動)」としていたが、
+        # 全自動版も同じ高速経路(Ctrl+K直結)を使っており速度は同等なので、
+        # 「(速)」という名前が全自動版を遅く見せてしまう誤解を避けるため
+        # 「(要選択)」に変更した(DECISIONS.md参照)。
+        if auto:
+            label = "ﾚｲﾔ\n保存\n(全自動)"
+        elif fast:
+            label = "ﾚｲﾔ\n保存\n(要選択)"
+        else:
+            label = "ﾚｲﾔ\n保存"
         new_btn = palette_config.new_layer_snapshot_button(
-            label, palette_config.LAYER_SNAPSHOT_ROLE_SAVE, fast=fast,
+            label, palette_config.LAYER_SNAPSHOT_ROLE_SAVE, fast=fast, auto=auto,
         )
         groups = self.side_cfg["groups"]
         if not groups:
@@ -2509,11 +2672,23 @@ class SettingsWindow(tk.Toplevel):
         # grid()/grid_remove()する方式に変更し、選んでいない方の分の
         # 無駄な縦スペースが無くなった(以前は両方を常時disabled表示で
         # 確保していたため、ボタンを選ぶたびに設定ウィンドウが必要以上に
-        # 縦長になり、保存/キャンセルが枠外に押し出される不具合を繰り返
-        # していた)。auto_attr側も1行に集約したため、以前の800x700より
-        # 低くできる。
-        self.geometry("800x680")
-        self.minsize(720, 620)
+        # 縦長になっていた)。auto_attr側も1行に集約したため、以前の
+        # 800x700より低くできる。
+        # 👑 2026-09-14追記: 上記とは別に、footer(保存/キャンセル)を
+        # notebookより後にside="top"でpackしていたため、notebookの
+        # expand=Trueが残り領域を全部使ってしまい、footerが下端で潰れて
+        # 半分しか見えない不具合があった(kosaka/kamo両方で実機確認)。
+        # footerをside="bottom"でnotebookより先にpackする形へ修正済み
+        # (下記のfooter/notebook.pack()参照)。
+        # 👑 2026-09-14さらに追記: 上記を直したら、今度は「ボタン配置」
+        # エリア内のops列(▲▼◀▶追加削除＋行－行)側が窮屈になり、
+        # 「－行」ボタンが見えなくなる不具合が新たに出た(実機確認)。
+        # 固定の800x680という数字には元々根拠が無く、内容が増えるたびに
+        # 手で数字を調整しては別の場所が窮屈になる、といういたちごっこに
+        # なっていた。そこで固定値をやめ、__init__の末尾(全タブ構築後)で
+        # 実際に必要な幅・高さ(winfo_reqwidth/reqheight)を測って
+        # ジオメトリを決める方式に変更した(_finalize_geometry()参照)。
+        # これ以降、内容が増減してもウィンドウ側が自動で追従する。
         self.configure(bg="#f0f0f0")
         self.attributes("-topmost", True)
 
@@ -2550,6 +2725,23 @@ class SettingsWindow(tk.Toplevel):
             palette_bar, text="パレットの重なりを防止する", variable=self.prevent_overlap_var,
         ).pack(side="left", padx=(12, 0))
 
+        # 👑 2026-09-14修正: footer(保存/キャンセル)は、fill="both",
+        # expand=Trueのnotebookより**先に**side="bottom"でpackする必要が
+        # ある。tkinterのpackは、後から積む部品ほど「先に積まれた
+        # expand=True部品が使い切った残りの領域」しかもらえないため、
+        # 以前のように notebook を先に積むと footer の取り分がほぼ無くなり、
+        # ウィンドウ下端で保存/キャンセルボタンが潰れて半分しか見えなく
+        # なる不具合があった(kosaka/kamo両方の環境で実機確認、2026-09-14。
+        # コメントにあった「以前800x700→縦スペース節約で対応」は別事象への
+        # 対策で、この根本原因の修正ではなかった)。先にfooterの領域を
+        # side="bottom"で確保しておけば、notebookはそれ以外の領域を
+        # fill="both"で埋めるだけになり、ウィンドウの高さに関わらず
+        # footerが必ず見える。
+        footer = ttk.Frame(self)
+        footer.pack(side="bottom", fill="x", padx=8, pady=10)
+        ttk.Button(footer, text="保存", command=self._on_save, width=14).pack(side="right", ipady=4)
+        ttk.Button(footer, text="キャンセル", command=self._on_cancel, width=14).pack(side="right", padx=(0, 8), ipady=4)
+
         self.notebook = ttk.Notebook(self)
         self.notebook.pack(side="top", fill="both", expand=True, padx=8, pady=(8, 0))
         self.notebook.bind("<<NotebookTabChanged>>", lambda e: self._update_remove_palette_btn())
@@ -2565,15 +2757,36 @@ class SettingsWindow(tk.Toplevel):
         self.menu_panel = RightClickMenuPanel(self.notebook)
         self.notebook.add(self.menu_panel, text="右クリック")
 
-        footer = ttk.Frame(self)
-        footer.pack(side="top", fill="x", padx=8, pady=10)
-        ttk.Button(footer, text="保存", command=self._on_save, width=14).pack(side="right", ipady=4)
-        ttk.Button(footer, text="キャンセル", command=self._on_cancel, width=14).pack(side="right", padx=(0, 8), ipady=4)
-
         self._update_remove_palette_btn()
 
         self.protocol("WM_DELETE_WINDOW", self._on_cancel)
         self.select_tab(initial_side)
+        self._finalize_geometry()
+
+    def _finalize_geometry(self):
+        # 👑 2026-09-14: 固定の"800x680"をやめ、全タブ構築後に実際に必要な
+        # 幅・高さを測ってジオメトリを決める(上のコメント参照)。
+        # ttk.Notebookは「現在表示中のタブ」だけでなく管理下の全ページの
+        # 中で最大の要求サイズを自身の要求サイズとして報告する(ttk標準
+        # 挙動)ため、select_tab()の後でもここで全タブ分の必要サイズを
+        # 取得できる。minsizeもここで同じ値にすることで、後からウィンドウ
+        # を縮められて同じ不具合が再発しない(縮小の下限=内容が欠けない
+        # 最小サイズ、という一致を保つ)。
+        # 👑 追記: update_idletasks()を1回呼んだ直後のwinfo_reqheight()は、
+        # 深くネストしたttk構成(Notebook→SidePanel→LabelFrame→Frame)だと
+        # まだ確定前の値を返すことがあり、実際には「－行」ボタンが
+        # わずかに潰れる不具合が実機で発生した。geometry()適用後にもう
+        # 一度update_idletasks()して再計測し、大きい方を採用する
+        # (1回では足りない場合があるための保険)。
+        self.update_idletasks()
+        width = max(800, self.winfo_reqwidth())
+        height = max(680, self.winfo_reqheight())
+        self.geometry(f"{width}x{height}")
+        self.update_idletasks()
+        width = max(width, self.winfo_reqwidth())
+        height = max(height, self.winfo_reqheight())
+        self.geometry(f"{width}x{height}")
+        self.minsize(width, height)
 
     def _add_side_tab(self, side):
         side_cfg = palette_config.side_config(self.config_data, side)

@@ -51,6 +51,7 @@ import win32process
 
 from utils import line_attr_dialog
 from utils import external_transform_setup
+from utils.jww_watcher import get_raw_statusbar_text
 
 VK_CONTROL = 0x11
 SAVE_KEY_VK = 0x4A  # 'J' (Ctrl+J、GCOM_100の10番目=Jに割り付け済み)
@@ -60,6 +61,103 @@ BM_CLICK = 0x00F5
 # 実機確認済み(2026-09-14)、jw_cadのバージョンが変わらない限り固定と
 # みなせる(utils/line_attr_dialog.pyのLAYER_GROUP_CTRL_ID等と同じ前提)。
 CONFIRM_SELECTION_CTRL_ID = 1120
+
+# 👑 2026-09-14: 高速版の「選択」自体も自動化する(利用者に事前選択を
+# 求めない完全自動版)。jw_cad標準の「点」「範囲選択」コマンド(いずれも
+# idCommand、commands_master.csvのC010/範囲選択に相当)を使い、外部変形を
+# 一切経由しない。座標はキャンバス内の適当な固定位置(ウィンドウ左上から
+# の相対オフセット)でよい(#g1は選択範囲の大小に関係なく256レイヤ全部を
+# 返すため、"どこかに1つ選択できればよい"という要件しかない)。
+FAST_POINT_COMMAND_IDCMD = 32785  # 点(C010)
+FAST_RANGE_SELECT_IDCMD = 32787   # 範囲選択
+# 👑 点を打つ座標と範囲選択の矩形サイズ(ウィンドウ相対px)。実機確認済み
+# (2026-09-14)。極端に小さいjw_cadウィンドウでは範囲外になり得るため、
+# auto_select_something()側でウィンドウサイズを見て安全側に倒す。
+_FAST_CLICK_X, _FAST_CLICK_Y = 250, 300
+_FAST_RANGE_MARGIN = 15
+
+# 👑 2026-09-14: 範囲選択の確定クリックが効かず、マウスに矩形が付いて
+# きたまま残った事例が実機であったため、待ち時間をここで一括調整
+# できるようにしておく(調子が悪ければまずここを大きくしてみる)。
+# なお「重い図面だから遅い」という説は当時の推測で、裏付けは取れて
+# いない(同時期の失敗の大半は別原因=外部変形フォルダの消滅だった、
+# DECISIONS.md「2026-09-14(訂正)」参照)。
+FAST_SELECT_COMMAND_SETTLE_SEC = 0.4   # コマンド切替(点/範囲選択)後の待ち
+FAST_SELECT_CLICK_SETTLE_SEC = 0.15    # カーソル移動後、クリックまでの待ち
+FAST_SELECT_CLICK_HOLD_SEC = 0.08      # mousedown〜mouseupの間隔
+FAST_SELECT_AFTER_CLICK_SEC = 0.2      # クリック後、次の操作までの待ち
+
+
+def _hw_click(hwnd, x, y, settle=FAST_SELECT_CLICK_SETTLE_SEC):
+    """実際のマウスカーソルを動かし、ハードウェアレベルでクリックする。
+    👑 win32gui.PostMessage(WM_LBUTTONDOWN/UP)では、jw_cadの「点」コマンド
+    や範囲選択の矩形プレビュー更新に反映されないことを実機で確認した
+    (2026-09-14)。keybd_eventと同様、mouse_event()によるハードウェア
+    レベルの合成でないと、jw_cad側の入力ハンドラが反応しない。実際に
+    画面上のマウスカーソルが動く点に注意(この関数の呼び出し中は他の
+    マウス操作をしないこと)。"""
+    rect = win32gui.GetWindowRect(hwnd)
+    win32api.SetCursorPos((rect[0] + x, rect[1] + y))
+    time.sleep(settle)
+    win32api.mouse_event(win32con.MOUSEEVENTF_LEFTDOWN, 0, 0, 0, 0)
+    time.sleep(FAST_SELECT_CLICK_HOLD_SEC)
+    win32api.mouse_event(win32con.MOUSEEVENTF_LEFTUP, 0, 0, 0, 0)
+    time.sleep(FAST_SELECT_AFTER_CLICK_SEC)
+
+
+_FAST_SELECT_END_RETRY_MAX = 5
+
+
+def auto_select_something(hwnd, log=None):
+    """書込レイヤに点を1個作図し、その場で範囲選択して確定する
+    (utils/line_attr_dialog.pyの右クリック系とは別に、こちらは実際の
+    座標クリックが必要なため独自に実装)。外部変形を一切経由しない
+    (実測: 合計1秒未満、軽い図面の場合)。戻り値: 選択の確定まで確認
+    できたらTrue、確認できなければFalse(下記参照、呼び出し元はFalseの
+    場合Ctrl+Kを送らず中断すること)。
+
+    👑 範囲選択はドラッグ(mousedown→移動→mouseup)では確定しない。
+    「始点クリック」→「終点クリック」の2回の独立したクリックが必要
+    (実機確認、2026-09-14。ドラッグだと「終点を指示してください」の
+    ままハングしたように見えて止まる)。
+
+    👑 2026-09-14: 終点クリックが登録されずマウスに矩形が付いてきたまま
+    (=jw_cadが「終点を指示してください」のまま)残る事例が実機で発生
+    した(利用者が画面上で直接確認)。ここでは
+    get_raw_statusbar_text()でステータスバーを読み、まだ「終点」待ちの
+    文言が残っていれば終点クリックをリトライする(最大
+    _FAST_SELECT_END_RETRY_MAX回)。発生条件は特定できていない
+    (当初は「重い図面だから」と考えたが裏付けは無い)。"""
+    def _log(msg):
+        if log:
+            try:
+                log(msg)
+            except Exception:
+                pass
+
+    win32gui.PostMessage(hwnd, win32con.WM_COMMAND, win32api.MAKELONG(FAST_POINT_COMMAND_IDCMD, 0), 0)
+    time.sleep(FAST_SELECT_COMMAND_SETTLE_SEC)
+    _hw_click(hwnd, _FAST_CLICK_X, _FAST_CLICK_Y)
+
+    win32gui.PostMessage(hwnd, win32con.WM_COMMAND, win32api.MAKELONG(FAST_RANGE_SELECT_IDCMD, 0), 0)
+    time.sleep(FAST_SELECT_COMMAND_SETTLE_SEC)
+    _hw_click(hwnd, _FAST_CLICK_X - _FAST_RANGE_MARGIN, _FAST_CLICK_Y - _FAST_RANGE_MARGIN)
+    _hw_click(hwnd, _FAST_CLICK_X + _FAST_RANGE_MARGIN, _FAST_CLICK_Y + _FAST_RANGE_MARGIN)
+
+    for attempt in range(_FAST_SELECT_END_RETRY_MAX):
+        status = get_raw_statusbar_text(hwnd)
+        if "終点" not in status:
+            break
+        _log(f"[レイヤ保存詳細](高速) 終点クリックが未確定のためリトライします({attempt + 1}回目)")
+        _hw_click(hwnd, _FAST_CLICK_X + _FAST_RANGE_MARGIN, _FAST_CLICK_Y + _FAST_RANGE_MARGIN)
+    else:
+        _log("❌[レイヤ保存詳細](高速) 範囲選択の終点確定に失敗しました")
+        return False
+
+    _log("[レイヤ保存詳細](高速) 目印点を自動作図・自動選択しました")
+    _send_vk(0x56, shift=True)  # Shift+V
+    time.sleep(FAST_SELECT_AFTER_CLICK_SEC)
+    return True
 
 
 class _MEMORYSTATUSEX(ctypes.Structure):
@@ -293,12 +391,25 @@ def trigger_save(hwnd, log=None):
     return {"jwl_path": path, "baseline_mtime": baseline, "mark_baseline": mark_baseline}
 
 
-def _find_confirm_selection_button(hwnd):
+def _find_visible_confirm_buttons(hwnd):
+    """👑 「選択確定」ボタン(ctrl_id=1120)は外部変形の選択待ちだけでなく、
+    jw_cad標準の「範囲選択」の条件設定バーにも出る。つまりJwNavigator側で
+    自動選択(Shift+V)した直後は、外部変形とは無関係な「選択確定」ボタンが
+    既に画面に出ている状態になる。この状態でCtrl+Kを送ってから
+    「見えている1120」を探すと、**外部変形用ではなく範囲選択用の方**を
+    掴んでしまい、クリックしても何も起きない(実機確認、2026-09-14:
+    Ctrl+K送信の173ミリ秒後にクリック成功のログが出て、保存は行われて
+    いなかった。正常時はBM_CLICKから戻るまで9秒前後かかる)。
+    そのためCtrl+Kの直前に「今見えている1120」を控えておき、その後に
+    **新しく現れた**1120だけを外部変形用とみなす。"""
     found = []
 
     def cb(h, _extra):
         try:
-            if win32api.GetWindowLong(h, win32con.GWL_ID) == CONFIRM_SELECTION_CTRL_ID:
+            if (
+                win32api.GetWindowLong(h, win32con.GWL_ID) == CONFIRM_SELECTION_CTRL_ID
+                and win32gui.IsWindowVisible(h)
+            ):
                 found.append(h)
         except Exception:
             pass
@@ -308,22 +419,60 @@ def _find_confirm_selection_button(hwnd):
         win32gui.EnumChildWindows(hwnd, cb, None)
     except Exception:
         pass
-    return found[0] if found else None
+    return found
+
+
+def _wait_for_new_confirm_selection_button(hwnd, known, timeout=10.0):
+    """`known`(Ctrl+K送信直前に見えていた1120のhwnd集合)に含まれない、
+    新しく現れた「選択確定」ボタンを待つ。_find_visible_confirm_buttons()
+    のコメント参照。
+
+    👑 2026-09-14: 以前はここに「IsWindowVisibleのみで判定する版」
+    (`_find_confirm_selection_button`/`_wait_for_confirm_selection_button`)
+    があった。その版は「非表示の古いボタンを誤検知する」不具合
+    (Ctrl+K送信の12ミリ秒後に「クリックした」ログだけ出て何も起きない
+    症状で発覚)への対策として書いたが、後で分かった真因は外部変形の
+    登録先フォルダがリビルドで消えていたことだった。可視判定版はその後
+    「表示されてはいるが範囲選択用の別ボタン」を誤検知する不具合
+    (173ミリ秒版)を新たに引き起こしたため、両方の不具合を避けられる
+    この`known`除外版に一本化した(重複していた2つの関数は削除済み)。
+    タイムアウト値(既定10秒)は「重い図面だと時間がかかる」という
+    推測に基づいていたが、その裏付けは無い(実測では最重量図面でも
+    8.6秒)。ポーリング自体は固定待ちより素直なのでこの形にしてある。"""
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        for h in _find_visible_confirm_buttons(hwnd):
+            if h not in known:
+                return h
+        time.sleep(0.15)
+    return None
 
 
 def trigger_save_fast(hwnd, log=None):
-    """高速版レイヤ保存。B_MARKの点作図+A_SAVEへの連鎖(外部変形の呼び出し
-    2回)を経由せず、Ctrl+K(GCOM_110、A_SAVE直結、config/keybind_setup.md
-    参照)を使って外部変形の呼び出しを1回で済ませる。実機確認(2026-09-14):
-    合計約15秒→約8.6秒に短縮。
+    """高速版レイヤ保存(要・事前選択)。B_MARKの点作図+A_SAVEへの連鎖
+    (外部変形の呼び出し2回)を経由せず、Ctrl+K(GCOM_110、A_SAVE直結、
+    config/keybind_setup.md参照)を使って外部変形の呼び出しを1回で
+    済ませる。実機確認(2026-09-14): 合計約15秒→約8.6秒に短縮。
 
     👑 **前提条件**: 呼び出し前に、利用者が図面上で何か1つ以上の図形を
     範囲選択して確定(Shift+V等)しておく必要がある。このボタン自体は
     選択操作を一切行わない(trigger_save()と違い、選択できる目印点を
     自動で作図しないため)。選択が無い状態でCtrl+Kを送っても、jw_cad
     本体の条件設定バーに「選択確定」ボタン(ctrl_id=1120)自体が
-    表示されないため、_find_confirm_selection_button()がNoneを返し、
-    安全に失敗する(Ctrl+K送信自体は無害)。
+    表示されないため、_wait_for_new_confirm_selection_button()がNoneを
+    返し、安全に失敗する(Ctrl+K送信自体は無害)。
+    👑 2026-09-14: 選択も自動化した全自動版はtrigger_save_fast_auto()
+    参照。自動選択が実機でまだ枯れていない(実装したてで検証途上)ため、
+    「確実に動く」こちらの手動選択版もあえて残してある。
+
+    👑 2026-09-14追記: 手動で範囲選択した場合も、選択確定の瞬間は
+    jw_cad標準の「範囲選択」用の選択確定ボタン(ctrl_id=1120)が一時的に
+    画面に出る。このボタンを押す前に十分な間(ま)が空けば自然に消えるが、
+    理屈上は間が短いと trigger_save_fast_auto() で見つかった「範囲選択用
+    のボタンを外部変形用と誤認する」不具合と同じことがここでも起こり
+    得る(実機で再現はしていないが、原因は共通のため予防的に同じ対策を
+    入れる)。Ctrl+K送信前に「今見えているボタン」を控え、新しく現れた
+    方だけを掴む(_find_visible_confirm_buttons()参照)。
 
     Ctrl+Kを送った直後にjw_cad本体の「選択確定」ボタンをBM_CLICKする。
     このクリックはjw_cad内部でA_SAVE完了まで同期的にブロックする
@@ -357,14 +506,18 @@ def trigger_save_fast(hwnd, log=None):
         return None
     _log("[レイヤ保存詳細](高速) 前面化成功")
 
+    # 👑 手動選択の直後(範囲選択で確定した場合)も、範囲選択用の
+    # 選択確定ボタンがまだ見えていることがあるため、Ctrl+K前に控えて
+    # 新規出現分だけを対象にする(trigger_save_fast_auto()と同じ対策)。
+    known_buttons = set(_find_visible_confirm_buttons(hwnd))
+
     _log("[レイヤ保存詳細](高速) Ctrl+K送信(A_SAVEへ直接)")
     win32api.keybd_event(VK_CONTROL, 0, 0, 0)
     win32api.keybd_event(FAST_SAVE_KEY_VK, 0, 0, 0)
     win32api.keybd_event(FAST_SAVE_KEY_VK, 0, win32con.KEYEVENTF_KEYUP, 0)
     win32api.keybd_event(VK_CONTROL, 0, win32con.KEYEVENTF_KEYUP, 0)
 
-    time.sleep(0.5)
-    btn = _find_confirm_selection_button(hwnd)
+    btn = _wait_for_new_confirm_selection_button(hwnd, known_buttons)
     if not btn:
         _log(
             "❌[レイヤ保存詳細](高速) 「選択確定」ボタンが見つかりません"
@@ -375,6 +528,99 @@ def trigger_save_fast(hwnd, log=None):
     _log("[レイヤ保存詳細](高速) 選択確定ボタンをクリック(以後はjw_cad内部処理待ち)")
 
     return {"jwl_path": path, "baseline_mtime": baseline, "mark_baseline": mark_baseline}
+
+
+def trigger_save_fast_auto(hwnd, log=None):
+    """高速版レイヤ保存(全自動・選択不要)。trigger_save_fast()と同じく
+    Ctrl+K(A_SAVE直結)で外部変形の呼び出しを1回で済ませつつ、選択の
+    ための目印点作図・範囲選択も自動で行うことで、事前選択の一手間も
+    無くしたもの。実機確認(2026-09-14): 合計約9〜9.7秒。
+
+    👑 点作図・範囲選択はどちらもjw_cad標準コマンドの実際のマウス操作
+    (mouse_event、外部変形を使わない)で行うため、この部分の追加コストは
+    1秒未満。auto_select_something()/_hw_click()参照。
+
+    👑 まだ実機検証の回数が少ない(2026-09-14実装)。何らかの理由で自動
+    選択が失敗する場合に備え、確実に動くtrigger_save_fast()(要・事前
+    選択)もボタンとして残してある。"""
+    def _log(msg):
+        if log:
+            try:
+                log(msg)
+            except Exception:
+                pass
+
+    path = restore_jwl_path(hwnd)
+    if not path:
+        return None
+    baseline = None
+    if os.path.isfile(path):
+        try:
+            baseline = os.path.getmtime(path)
+        except OSError:
+            baseline = None
+    mark_baseline = _count_marks()
+    mem = get_memory_status()
+    if mem:
+        _log(f"[レイヤ保存詳細](全自動) 空きメモリ: {mem[1]:.0f}MB / {mem[2]:.0f}MB (使用率{mem[0]}%)")
+    force_foreground(hwnd)
+    time.sleep(0.2)
+    if win32gui.GetForegroundWindow() != hwnd:
+        _log("❌[レイヤ保存詳細](全自動) jw_cadの前面化に失敗したため中断しました(誤ったウィンドウへの入力を防止)")
+        return None
+    _log("[レイヤ保存詳細](全自動) 前面化成功")
+
+    if not auto_select_something(hwnd, log=log):
+        # 👑 選択の確定を確認できなかった場合、ここでCtrl+Kを送っても
+        # 無関係な非表示ボタンを誤検知するだけなので送らずに中断する
+        # (2026-09-14、実機で発覚した不具合への対処)。作図済みの目印点
+        # だけ後始末する。
+        _remove_last_drawn_point(hwnd)
+        return None
+
+    # 👑 自分でShift+Vした直後は「範囲選択」側の選択確定ボタンが見えて
+    # いるため、Ctrl+K前に控えておき、新しく現れた方だけを掴む
+    # (_find_visible_confirm_buttons()のコメント参照)。
+    known_buttons = set(_find_visible_confirm_buttons(hwnd))
+
+    _log("[レイヤ保存詳細](全自動) Ctrl+K送信(A_SAVEへ直接)")
+    win32api.keybd_event(VK_CONTROL, 0, 0, 0)
+    win32api.keybd_event(FAST_SAVE_KEY_VK, 0, 0, 0)
+    win32api.keybd_event(FAST_SAVE_KEY_VK, 0, win32con.KEYEVENTF_KEYUP, 0)
+    win32api.keybd_event(VK_CONTROL, 0, win32con.KEYEVENTF_KEYUP, 0)
+
+    btn = _wait_for_new_confirm_selection_button(hwnd, known_buttons)
+    if not btn:
+        _log(
+            "❌[レイヤ保存詳細](全自動) 「選択確定」ボタンが見つかりません"
+            "(自動選択に失敗した可能性があります)"
+        )
+        # 👑 点だけ作図されて選択に失敗した場合でも、後始末は試みる。
+        _remove_last_drawn_point(hwnd)
+        return None
+    win32gui.SendMessage(btn, BM_CLICK, 0, 0)
+    _log("[レイヤ保存詳細](全自動) 選択確定ボタンをクリック(以後はjw_cad内部処理待ち)")
+
+    # 👑 BM_CLICKはA_SAVE完了までブロックするため、ここに戻ってきた時点で
+    # 保存はほぼ完了している。作図した目印点をここで消してしまってよい
+    # (trigger_save()のcleanup_mark_points()相当をtrace.txtに頼らず
+    # 直接行う。この関数は必ず1個しか点を作図しないため、Escape1回で足りる)。
+    _remove_last_drawn_point(hwnd)
+
+    # 👑 2026-09-14: このreturnが抜けており、保存が成功しても必ず
+    # 「開始できませんでした」と報告されるバグがあった(実機で発覚)。
+    return {"jwl_path": path, "baseline_mtime": baseline, "mark_baseline": mark_baseline}
+
+
+def _remove_last_drawn_point(hwnd):
+    if win32gui.GetForegroundWindow() != hwnd:
+        force_foreground(hwnd)
+        time.sleep(0.2)
+        if win32gui.GetForegroundWindow() != hwnd:
+            return
+    win32api.keybd_event(win32con.VK_ESCAPE, 0, 0, 0)
+    win32api.keybd_event(win32con.VK_ESCAPE, 0, win32con.KEYEVENTF_KEYUP, 0)
+    time.sleep(0.2)
 
 
 def cleanup_mark_points(hwnd, pending, log=None):

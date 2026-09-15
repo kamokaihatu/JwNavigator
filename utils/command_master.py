@@ -72,6 +72,7 @@ def list_available_commands():
         shortcut = (row.get("shortcut_key") or "").strip()
         if not id_cmd and not shortcut:
             continue
+        toolbar_no = (row.get("toolbar_no") or "").strip()
         rows.append(
             {
                 "command_id": command_id,
@@ -81,9 +82,17 @@ def list_available_commands():
                 "shortcut_key": shortcut,
                 "id_command": int(id_cmd) if id_cmd.isdigit() else None,
                 "default_icon": (row.get("default_icon") or "").strip(),
+                "toolbar_no": int(toolbar_no) if toolbar_no.isdigit() else None,
             }
         )
-    rows.sort(key=lambda r: (r["category"], r["command_id"]))
+    # 👑 2026-09-14: 以前は(category, command_id)順だったが、カテゴリ
+    # ごとにまとめて表示されるだけで「一覧全体としては番号順に見えない」
+    # という指摘(ユーザー)があったため、jw_cad実機のツールバー配置
+    # そのままの番号であるtoolbar_no順に変更した(commands_master.csvの
+    # 収集時にこの列だけ実際のボタン位置を反映済み、doc参照)。同じ
+    # toolbar_noを複数行が共有する場合(例: 図登録スロット1〜8=C058_1〜8)
+    # はcommand_idで安定した順に並べる。toolbar_noが無い行は末尾に回す。
+    rows.sort(key=lambda r: (r["toolbar_no"] is None, r["toolbar_no"], r["command_id"]))
     return rows
 
 

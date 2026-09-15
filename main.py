@@ -299,6 +299,24 @@ class MouseHookController:
 class JwNavigatorManager:
     def __init__(self):
         self.root = tk.Tk()
+        # 👑 2026-09-14: kosakaの高DPI環境(Windowsの拡大率100%超)で発覚した
+        # 不具合の修正。SetProcessDpiAwareness(2)導入後、tkinterはウィンドウ
+        # のあるモニタの実DPIを見てフォント(create_text等のfont=正の整数
+        # =ポイント指定)を自動で拡大するようになった。一方、このアプリの
+        # パレットボタンのキャンバス寸法(button_size設定値)や設定画面の
+        # .geometry("800x680")等は生のピクセル値の決め打ちで、DPIに応じて
+        # 拡大されない。結果、DPI100%超の環境だけ「文字がボタンからはみ
+        # 出す」「設定画面の保存/キャンセルボタンが枠外に押し出される」
+        # という不具合が起きていた(kamoの開発機は100%のため再現しなかった)。
+        # tk自身のポイント→ピクセル換算係数(tk scaling)を96DPI相当の値へ
+        # 固定することで、フォントもこのアプリの既存のピクセル前提の
+        # レイアウトと同じ基準に揃える(ネイティブなWindowsダイアログ・
+        # ウィンドウ枠は影響を受けず、実DPIに応じて正しく拡大され続ける、
+        # tk scalingはtkinter自身の描画にのみ効くため)。
+        try:
+            self.root.tk.call("tk", "scaling", 96 / 72)
+        except Exception:
+            pass
         self.root.withdraw()
 
         # 👑 【リスト直撃クラッシュ完全埋葬】 sys.argvの0番目（文字列）を正確に参照してPath型エラーを防止
@@ -309,7 +327,7 @@ class JwNavigatorManager:
             else os.getcwd()
         )
         self.log_file_path = os.path.join(exe_dir, "JwNavigator_Log.txt")
-        self.write_system_log("--- JwNavigator Ver3.68 メインシステム始動 ---")
+        self.write_system_log("--- JwNavigator Ver3.70 メインシステム始動 ---")
 
         # 👑 2026-09-11: 「exeを入れ替え/移動しても設定が消えないように」、
         # パッケージ版は設定の保存先を%APPDATA%\JwNavigator\へ移した
@@ -1310,10 +1328,13 @@ class JwNavigatorManager:
 
         save_entry = trigger_btn.entry if trigger_btn and trigger_btn.entry else None
         fast = bool(save_entry.get("fast")) if save_entry else False
-        note = (
-            "先に図形を1つ以上選択しておいてください。保存には5〜10秒程度かかります"
-            if fast else "保存には10〜20秒程度かかります"
-        )
+        auto = bool(save_entry.get("auto")) if save_entry else False
+        if fast and auto:
+            note = "選択も自動で行います。保存には5〜10秒程度かかります"
+        elif fast:
+            note = "先に図形を1つ以上選択しておいてください。保存には5〜10秒程度かかります"
+        else:
+            note = "保存には10〜20秒程度かかります"
         dlg = TextInputDialog(
             self.root, title="レイヤ情報を保存", label="名前:", initial="",
             note=note,
@@ -1387,7 +1408,12 @@ class JwNavigatorManager:
         self._show_save_notice()
 
         def worker():
-            trigger_fn = layer_snapshot.trigger_save_fast if fast else layer_snapshot.trigger_save
+            if fast and auto:
+                trigger_fn = layer_snapshot.trigger_save_fast_auto
+            elif fast:
+                trigger_fn = layer_snapshot.trigger_save_fast
+            else:
+                trigger_fn = layer_snapshot.trigger_save
             pending = trigger_fn(hwnd, log=self.write_system_log)
             self.root.after(
                 0,
