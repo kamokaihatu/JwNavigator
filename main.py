@@ -417,6 +417,7 @@ class JwNavigatorManager:
         # ため、この歯止めが無いとjw_cadを検出するたびに毎回吐いてしまう。
         self._env_described = False
         self._gcom_conflict_notified = False
+        self._missing_jw_win_notified = False
         self.window_state = window_state.load_state()
         self._pending_pin_restore = {}
         self.tray_icon = None
@@ -950,6 +951,15 @@ class JwNavigatorManager:
                                 if result["conflicts"] and not self._gcom_conflict_notified:
                                     self._gcom_conflict_notified = True
                                     self._notify_gcom_conflict(result["conflicts"])
+                                if (
+                                    not result["has_jw_win"]
+                                    and not self._missing_jw_win_notified
+                                    and self._has_layer_save_button()
+                                ):
+                                    self._missing_jw_win_notified = True
+                                    self._notify_missing_jw_win_jwf(
+                                        os.path.dirname(jw_exe_path)
+                                    )
                                 # 👑 2026-09-16: 登録の「結果」を必ず残す。他人の
                                 # PCは頻繁に触れないため、1回のログで原因が
                                 # 確定できるようにしておく(kosakaPCの調査参照)。
@@ -1012,6 +1022,53 @@ class JwNavigatorManager:
             )
         except Exception as e:
             self.write_system_log(f"🔎 [環境] ツールバー情報の取得に失敗: {e}")
+
+    def _has_layer_save_button(self):
+        # 👑 Jw_win.jwfが無いことを画面で知らせるのは、レイヤ保存を実際に
+        # 使う人だけにする(使わない人には無関係な警告になるため)。
+        try:
+            config = palette_config.load_config()
+        except Exception:
+            return False
+        for side in config.get("sides", {}).values():
+            for group in side.get("groups", []):
+                for btn in group.get("buttons", []):
+                    if (
+                        btn.get("kind") == palette_config.BUTTON_KIND_LAYER_SNAPSHOT
+                        and btn.get("role") == palette_config.LAYER_SNAPSHOT_ROLE_SAVE
+                    ):
+                        return True
+        return False
+
+    def _notify_missing_jw_win_jwf(self, jw_cad_exe_dir):
+        # 👑 2026-09-16: jw_cadはGCOM(外部変形のキー割り付け)をレジストリに
+        # 保存せず、起動時にJw_win.jwfからしか読まない。このファイルは
+        # jw_cad側で一度も「環境設定ファイルの書込み」をしたことがないPCには
+        # 存在せず、その場合レイヤ保存は**何度再起動しても永久に動かない**。
+        # kosakaPCがこの状態で、ログを読むまで原因が誰にも分からなかった。
+        # ログだけでは気づけないので、レイヤ保存ボタンを持っている人には
+        # 画面で伝える(_has_layer_save_button参照)。
+        self.write_system_log(
+            "⚠️ Jw_win.jwfが無いため、レイヤ保存が使えない状態です(画面で案内しました)。"
+        )
+        try:
+            ctypes.windll.user32.MessageBoxW(
+                0,
+                "レイヤ保存を使うための準備が1つ残っています。\n\n"
+                f"jw_cadのフォルダ({jw_cad_exe_dir})に Jw_win.jwf がありません。\n"
+                "jw_cadは外部変形のキー割り付けをこのファイルからしか読まないため、\n"
+                "このままではレイヤ保存は動作しません。\n\n"
+                "【対処方法】\n"
+                "1. jw_cadで [設定] → [環境設定ファイル] → [書込み] を選ぶ\n"
+                f"2. {jw_cad_exe_dir} に「Jw_win.jwf」という名前で保存する\n"
+                "3. jw_cadを再起動する\n\n"
+                "現在の設定がそのまま保存されるだけなので、設定は変わりません。\n"
+                "一度行えば、以後はこの案内は出ません。",
+                "JwNavigator",
+                0x30,  # MB_ICONWARNING
+            )
+        except Exception:
+            pass
 
     def _notify_gcom_conflict(self, conflicts):
         # 👑 2026-09-16: Ctrl+J/Ctrl+Kを既に自分の外部変形で使っている人の

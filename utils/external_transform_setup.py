@@ -169,11 +169,16 @@ def ensure_gcom100_registered(jw_cad_exe_dir, log=None):
                  「レイヤ保存だけ永久に使えない」状態に無自覚で陥るため、
                  呼び出し側で利用者に知らせる。
       has_jw_win: Jw_win.jwfの有無(has_jw_win_jwf()参照)。"""
-    empty = {"new_registration": False, "conflicts": [], "has_jw_win": False}
-    if not getattr(sys, "frozen", False):
-        return empty
     if not jw_cad_exe_dir or not os.path.isdir(jw_cad_exe_dir):
-        return empty
+        return {"new_registration": False, "conflicts": [], "has_jw_win": False}
+    # 👑 開発環境では登録は行わないが、has_jw_winだけは正直に返す。ここで
+    # 一律Falseにすると、Jw_win.jwfがあるのに「ありません」の案内が出る。
+    if not getattr(sys, "frozen", False):
+        return {
+            "new_registration": False,
+            "conflicts": [],
+            "has_jw_win": has_jw_win_jwf(jw_cad_exe_dir),
+        }
 
     target_dir = external_transform_dir()
 
