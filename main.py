@@ -335,7 +335,7 @@ class JwNavigatorManager:
         # 20マイクロ秒/行(約620倍)まで落ちた。os.path.getsizeも毎回
         # 呼んでいたが、実測では誤差だったのでtell()に置き換えた。
         self._log_fp = None
-        self.write_system_log("--- JwNavigator Ver3.74 メインシステム始動 ---")
+        self.write_system_log("--- JwNavigator Ver3.75 メインシステム始動 ---")
 
         # 👑 2026-09-11: 「exeを入れ替え/移動しても設定が消えないように」、
         # パッケージ版は設定の保存先を%APPDATA%\JwNavigator\へ移した
@@ -848,7 +848,9 @@ class JwNavigatorManager:
                     # 👑 待機中ラベルは先頭(左)側にのみ付ける
                     # (main.py内の他の箇所からtl.status_labelという
                     # 前提で参照されており、両側に付けると混乱するため)。
-                    first_key = palette_config.SIDES[0]
+                    # 👑 2026-09-16: "左"は削除できるようになったので、
+                    # 固定で参照せず「今あるパレットの先頭」を使う。
+                    first_key = side_keys[0]
                     toolbars[first_key].status_label = tk.Label(
                         toolbars[first_key],
                         text="待機中",
@@ -1084,6 +1086,17 @@ class JwNavigatorManager:
             )
         except Exception as e:
             self.write_system_log(f"🔎 [環境] Ctrl+英字の使用状況の取得に失敗: {e}")
+        try:
+            # 👑 レイヤ/レイヤグループのバーをどう見分けたか(名前で判別
+            # できたか、位置推定に落ちたか)。落ちていると両者が入れ替わる
+            # 可能性があるため、環境ごとに必ず残す。
+            line_attr_dialog._find_layer_group_buttons(hwnd)
+            self.write_system_log(
+                f"🔎 [環境] レイヤ/レイヤグループのバー判別: "
+                f"{line_attr_dialog.describe_layer_bar_detection()}"
+            )
+        except Exception as e:
+            self.write_system_log(f"🔎 [環境] レイヤバー判別の確認に失敗: {e}")
 
     _MESSAGE_LOCK = threading.Lock()
 
@@ -1395,7 +1408,9 @@ class JwNavigatorManager:
             self._last_state_collection_state = current_state
             self._last_state_collection_rule = matched_rule
 
-        status_tb = toolbars.get(palette_config.SIDES[0])
+        status_tb = next(
+            (tb for tb in toolbars.values() if hasattr(tb, "status_label")), None
+        )
         if status_tb is not None and hasattr(status_tb, "status_label"):
             if current_state == "STATE_IDLE":
                 status_tb.status_label.configure(text="待機中", fg="#888888")
@@ -1698,7 +1713,7 @@ class JwNavigatorManager:
                     ):
                         return side, gi, bi + 1
         # 見つからなければ、優先サイドの末尾グループの末尾へ
-        side = preferred_side or palette_config.SIDES[0]
+        side = preferred_side or (all_keys[0] if all_keys else palette_config.SIDES[0])
         groups = palette_config.side_config(config, side)["groups"]
         if not groups:
             groups.append(palette_config.new_group())
@@ -1890,6 +1905,21 @@ class JwNavigatorManager:
         if target_group is not None or target_layer is not None:
             if not line_attr_dialog.set_layer_group(hwnd, target_group, target_layer):
                 self.write_system_log("⚠️ [補助線系ボタン] レイヤ切替に失敗しました(線属性は変更済み)。")
+            else:
+                # 👑 2026-09-16: 切り替えた「結果」を必ず残す。狙いどおりに
+                # なったかはログを見れば一発で分かるようにしておく
+                # (レイヤとレイヤグループの取り違えを、今日ログから推測で
+                # 追う羽目になったため。line_attr_dialogの
+                # describe_layer_bar_detection()も参照)。
+                got_group, got_layer = line_attr_dialog.read_current_layer_group(hwnd)
+                ok = (target_group is None or got_group == target_group) and (
+                    target_layer is None or got_layer == target_layer
+                )
+                self.write_system_log(
+                    f"{'🔎' if ok else '⚠️'} [補助線系ボタン] レイヤ切替 "
+                    f"目標=(G{target_group}, L{target_layer}) → "
+                    f"実際=(G{got_group}, L{got_layer}){'' if ok else ' ← 一致しません'}"
+                )
         target_command = entry.get("target_command") or self.AUTO_ATTR_DEFAULT_TARGET_COMMAND
         self._auto_attr_pending[hwnd] = {
             "original": original, "confirmed": False, "trigger_btn": trigger_btn,

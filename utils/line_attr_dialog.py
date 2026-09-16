@@ -240,21 +240,41 @@ _PROCESS_VM_ACCESS = (
 _LAYER_BAR_CAPTION = "レイヤ"
 _LAYER_GROUP_BAR_CAPTION = "レイヤグループ"
 
+# 👑 2026-09-16: レイヤ/レイヤグループのバーをどう見分けたかの記録。
+# 名前で判別できず位置推定のフォールバックに落ちると、配置次第で両者が
+# **丸ごと入れ替わる**(Ver3.73で直したはずの不具合が再発する)。しかし
+# それがログに何も出ないと、今回のように「直したはずなのにまだ反転して
+# いる?」の切り分けができない。呼び出し側(main.pyの環境スナップショット)
+# から describe_layer_bar_detection() で吸い出せるようにしておく。
+_last_bar_detection = "まだ判定していません"
+
+
+def describe_layer_bar_detection():
+    return _last_bar_detection
+
 
 def _find_layer_group_buttons(hwnd):
     """戻り値: (layer_hwnds[16], group_hwnds[16])。見つからなければ
     (None, None)。hwnd自体は実行のたびに変わるので毎回列挙し直す。
 
-    👑 2026-09-16: 以前は32個を**x座標順に並べて前半16個をレイヤ、後半16個を
-    レイヤグループ**と決め打ちしていた。これはツールバーの配置に依存する
-    仮定で、レイヤグループバーがレイヤバーより左にあるPCでは**両者が丸ごと
-    入れ替わる**(kosakaPCで発覚: 「F-Fに設定したのに0-Fに描かれる」。
-    グループを変えるつもりでレイヤ側を右クリックしていた)。
-    実機調査の結果、32個は`ToolbarWindow32`の親2つに分かれていて、
-    その親のウィンドウテキストがそれぞれ「レイヤ」「レイヤグループ」で
-    あることが分かったため、位置ではなく親の名前で判別する。
-    バー内での0〜Fの並び順は従来どおり(x,y)順で決める(こちらは実機で
-    正しく効いていることを確認済み)。"""
+    👑 2026-09-16: 32個のボタンは`ToolbarWindow32`の親2つに分かれている。
+    どちらがレイヤでどちらがレイヤグループかの見分け方を2回間違えている:
+
+      (1) 当初はx座標順に並べて前半/後半で決め打ちしていた。ツールバーの
+          配置に依存するため、レイヤグループバーが左にあるPCでは**丸ごと
+          入れ替わった**(kosakaPC:「F-Fにしたのに0-Fに描かれる」)。
+      (2) Ver3.73で親のウィンドウテキスト("レイヤ"/"レイヤグループ")で
+          判別するよう変えたが、**jw_cadはこのテキストを選択中の状態に
+          応じて書き換える**(実機でグループFを選んだらキャプションが
+          'F'になった)。そのため実際にはすぐフォールバックへ落ちて
+          (1)の不具合が再発していた。
+
+    今はツールバー自身の`GWL_ID`で判別する。これは利用者の操作では変化
+    しない(実測: レイヤ=32854、レイヤグループ=32856)。番号を直接ハード
+    コードせず**「小さい方がレイヤ、大きい方がレイヤグループ」**という
+    順序で判定するので、jw_cadのバージョンが違って番号がずれても効く。
+    バー内の0〜Fの並び順は従来どおり(x,y)順。"""
+    global _last_bar_detection
     found = []
 
     def cb(child, _extra):
@@ -277,6 +297,7 @@ def _find_layer_group_buttons(hwnd):
     except Exception:
         pass
     if len(found) != 32:
+        _last_bar_detection = f"⚠️ ボタンが32個見つかりません({len(found)}個)"
         return None, None
 
     by_parent = {}
@@ -287,26 +308,35 @@ def _find_layer_group_buttons(hwnd):
         items.sort(key=lambda item: (item[1], item[2]))
         return [item[0] for item in items]
 
-    if len(by_parent) == 2:
-        layer_hwnds = group_hwnds = None
+    if len(by_parent) == 2 and all(len(v) == 16 for v in by_parent.values()):
+        info = []
         for parent, items in by_parent.items():
-            if len(items) != 16:
-                layer_hwnds = group_hwnds = None
-                break
+            try:
+                bar_id = win32api.GetWindowLong(parent, win32con.GWL_ID)
+            except Exception:
+                bar_id = None
             try:
                 caption = win32gui.GetWindowText(parent)
             except Exception:
                 caption = ""
-            # 「レイヤグループ」は「レイヤ」を含むため、先に判定する。
-            if caption == _LAYER_GROUP_BAR_CAPTION:
-                group_hwnds = sorted_hwnds(items)
-            elif caption == _LAYER_BAR_CAPTION:
-                layer_hwnds = sorted_hwnds(items)
-        if layer_hwnds and group_hwnds:
+            info.append((bar_id, caption, items))
+        if all(i[0] is not None for i in info):
+            info.sort(key=lambda i: i[0])
+            layer_hwnds = sorted_hwnds(info[0][2])
+            group_hwnds = sorted_hwnds(info[1][2])
+            _last_bar_detection = (
+                f"ツールバーID順で判別OK "
+                f"(レイヤ=ID{info[0][0]}/表示{info[0][1]!r}、"
+                f"レイヤグループ=ID{info[1][0]}/表示{info[1][1]!r})"
+            )
             return layer_hwnds, group_hwnds
 
-    # 👑 親の名前で判別できなかった場合のみ、従来のx座標順の推定に戻す
-    # (英語版等、想定外の環境で機能ごと死なせないため)。
+    # 👑 IDが読めない等の想定外環境でのみ、従来のx座標順の推定に戻す
+    # (機能ごと死なせないため。ただし入れ替わる可能性があるので記録する)。
+    _last_bar_detection = (
+        "⚠️ ツールバーIDで判別できずx座標順の推定にフォールバック"
+        f"(親の数={len(by_parent)}) — レイヤとレイヤグループが入れ替わる可能性があります"
+    )
     found.sort(key=lambda item: (item[1], item[2]))
     return [item[0] for item in found[:16]], [item[0] for item in found[16:]]
 

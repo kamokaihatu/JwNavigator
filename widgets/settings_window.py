@@ -2817,8 +2817,11 @@ class SettingsWindow(tk.Toplevel):
         return None
 
     def _update_remove_palette_btn(self):
+        # 👑 2026-09-16: 以前は組み込みの"左"/"右"を削除不可にしていたため、
+        # 「パレットは1枚でいい」という人が2枚目を消せなかった
+        # (kamo報告)。最後の1枚だけ残せば、どれでも削除してよい。
         current = self._current_side()
-        removable = current is not None and current not in palette_config.SIDES
+        removable = current is not None and len(self.panels) > 1
         self.remove_palette_btn.configure(state="normal" if removable else "disabled")
 
     def _on_add_palette(self):
@@ -2828,10 +2831,10 @@ class SettingsWindow(tk.Toplevel):
         self._update_remove_palette_btn()
 
     def _on_remove_palette(self):
-        # 👑 組み込みの"左"/"右"は削除不可(_update_remove_palette_btnで
-        # ボタン自体を無効化しているが、念のため二重に防御)。
+        # 👑 最後の1枚は削除させない(_update_remove_palette_btnでボタン
+        # 自体を無効化しているが、念のため二重に防御)。
         current = self._current_side()
-        if current is None or current in palette_config.SIDES:
+        if current is None or len(self.panels) <= 1:
             return
         if not messagebox.askyesno(
             "パレットを削除", "このパレットを削除しますか?(中のボタンも全て削除されます)", parent=self,

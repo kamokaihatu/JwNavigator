@@ -500,15 +500,21 @@ def normalize_config(raw):
     # 実際に存在する分だけ拾い、正規化後にボタンが0個になったものは
     # 保存のたびに消す(「パレット削除」操作を専用UIなしで実現する:
     # 中身を全部消せば次の保存でパレット自体が消える)。
+    # 👑 2026-09-16: 以前は組み込みの"左"/"右"を**常に**作り直していたため、
+    # 「パレットは1枚でいい」という人が消しても次の読み込みで必ず復活して
+    # いた(kamo報告:「パレット1枚でいいときにパレット1と2は削除できない」)。
+    # config.jsonに実在するものだけを採る形に変え、削除できるようにする。
+    # ただしボタン0個のものを捨てる従来の挙動は組み込み以外にのみ適用する
+    # (組み込みは空でも明示的に消すまで残す。中身を全部消しただけで
+    # パレットごと消えると、作り直しの途中で消える事故になるため)。
     sides = {}
-    for side in SIDES:
-        sides[side] = _normalize_side(raw_sides.get(side), known_icons)
     for side, raw_side in raw_sides.items():
-        if side in sides:
-            continue
         normalized = _normalize_side(raw_side, known_icons)
-        if count_buttons(normalized) > 0:
+        if side in SIDES or count_buttons(normalized) > 0:
             sides[side] = normalized
+    # 👑 1枚も無いと操作する術が無くなるので、その時だけ既定を作る。
+    if not sides:
+        sides = {SIDES[0]: _default_side()}
 
     # 👑 「パレット重なり防止」チェックボックス(2026-09-10)。同じ(辺,位置)に
     # 複数パレットが割り当たった時に積み上げるか(utils/palette_layout.pyの
