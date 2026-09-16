@@ -55,8 +55,30 @@ from utils import external_transform_setup
 from utils.jww_watcher import get_raw_statusbar_text
 
 VK_CONTROL = 0x11
-SAVE_KEY_VK = 0x4A  # 'J' (Ctrl+J、GCOM_100の10番目=Jに割り付け済み)
-FAST_SAVE_KEY_VK = 0x4B  # 'K' (Ctrl+K、GCOM_110の1番目=Kに割り付け済み。A_SAVE直結)
+# 👑 既定値。GCOM_100の10番目=Ctrl+J(B_MARK)、GCOM_110の1番目=Ctrl+K(A_SAVE)。
+# 👑 2026-09-16: 以前はこの2つが固定で、既定のスロットが他の外部変形に
+# 使われている環境では手の打ちようが無かった(利用者が別スロットへ手動
+# 登録しても、JwNavigatorはCtrl+J/Ctrl+Kを送り続けるため動かない)。
+# 現在はexternal_transform_setup側が空きスロットを探して登録し、実際に
+# 使ったキーをset_external_transform_keys()でここへ教える。
+SAVE_KEY_VK = 0x4A
+FAST_SAVE_KEY_VK = 0x4B
+
+
+def set_external_transform_keys(save_letter=None, fast_letter=None):
+    """jw_cadのプロファイルに実際に登録されたキーを反映する。
+    引数は"J"/"K"のような1文字(Noneなら既定値のまま)。"""
+    global SAVE_KEY_VK, FAST_SAVE_KEY_VK
+    if save_letter:
+        SAVE_KEY_VK = ord(save_letter.upper()[0])
+    if fast_letter:
+        FAST_SAVE_KEY_VK = ord(fast_letter.upper()[0])
+
+
+def _fast_key_label():
+    return f"Ctrl+{chr(FAST_SAVE_KEY_VK)}"
+
+
 BM_CLICK = 0x00F5
 # 👑 jw_cad本体の条件設定バー上の「選択確定」ボタンのctrl_id(GWL_ID)。
 # 実機確認済み(2026-09-14)、jw_cadのバージョンが変わらない限り固定と
@@ -134,7 +156,7 @@ _FAST_SELECT_END_RETRY_MAX = 5
 # (2)GCOM登録の無い環境設定ファイルを[読込み]してしまい、メモリ上の
 # 割り付けが消えた(jw_cad再起動で復活する)。
 _CTRL_K_NO_RESPONSE_MESSAGE = (
-    "❌[レイヤ保存詳細]({mode}) Ctrl+Kを送ってもjw_cadが無反応でした。"
+    "❌[レイヤ保存詳細]({mode}) {key}を送ってもjw_cadが無反応でした。"
     "外部変形(A_SAVE)の割り付けがjw_cad側に読み込まれていません。"
     "別の環境設定ファイルを[設定]→[環境設定ファイル]→[読込み]しませんでしたか？ "
     "その場合はjw_cadを再起動すれば直ります。"
@@ -567,7 +589,7 @@ def trigger_save_fast(hwnd, log=None):
 
     # 👑 基準はCtrl+Kを送る前に取る(送信後だと即応時に誤判定する)。
     baseline_status = get_raw_statusbar_text(hwnd)
-    _log("[レイヤ保存詳細](高速) Ctrl+K送信(A_SAVEへ直接)")
+    _log(f"[レイヤ保存詳細](高速) {_fast_key_label()}送信(A_SAVEへ直接)")
     win32api.keybd_event(VK_CONTROL, 0, 0, 0)
     win32api.keybd_event(FAST_SAVE_KEY_VK, 0, 0, 0)
     win32api.keybd_event(FAST_SAVE_KEY_VK, 0, win32con.KEYEVENTF_KEYUP, 0)
@@ -583,7 +605,7 @@ def trigger_save_fast(hwnd, log=None):
                 "(先に図形を1つ以上選択してから押してください)"
             )
         else:
-            _log(_CTRL_K_NO_RESPONSE_MESSAGE.format(mode="高速"))
+            _log(_CTRL_K_NO_RESPONSE_MESSAGE.format(mode="高速", key=_fast_key_label()))
         return None
     win32gui.SendMessage(btn, BM_CLICK, 0, 0)
     _log("[レイヤ保存詳細](高速) 選択確定ボタンをクリック(以後はjw_cad内部処理待ち)")
@@ -653,7 +675,7 @@ def trigger_save_fast_auto(hwnd, log=None):
 
     # 👑 基準はCtrl+Kを送る前に取る(送信後だと即応時に誤判定する)。
     baseline_status = get_raw_statusbar_text(hwnd)
-    _log("[レイヤ保存詳細](全自動) Ctrl+K送信(A_SAVEへ直接)")
+    _log(f"[レイヤ保存詳細](全自動) {_fast_key_label()}送信(A_SAVEへ直接)")
     win32api.keybd_event(VK_CONTROL, 0, 0, 0)
     win32api.keybd_event(FAST_SAVE_KEY_VK, 0, 0, 0)
     win32api.keybd_event(FAST_SAVE_KEY_VK, 0, win32con.KEYEVENTF_KEYUP, 0)
@@ -671,7 +693,7 @@ def trigger_save_fast_auto(hwnd, log=None):
                 "(自動選択に失敗した可能性があります)"
             )
         else:
-            _log(_CTRL_K_NO_RESPONSE_MESSAGE.format(mode="全自動"))
+            _log(_CTRL_K_NO_RESPONSE_MESSAGE.format(mode="全自動", key=_fast_key_label()))
         # 👑 点だけ作図されて選択に失敗した場合でも、後始末は試みる。
         _remove_last_drawn_point(hwnd)
         return None

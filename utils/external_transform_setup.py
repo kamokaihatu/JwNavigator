@@ -213,29 +213,186 @@ def ensure_gcom100_registered(jw_cad_exe_dir, log=None):
 
     did_new_registration = False
     conflicts = []
+    keys = {_EXTERNAL_TRANSFORM_FILENAME: None, _FAST_SAVE_FILENAME: None}
     for jwf_path in jwf_paths:
         if os.path.basename(jwf_path).lower() in _SKIP_PROFILE_NAMES:
             continue
-        for key, name_idx, dir_idx, min_f, filename, label in (
-            (_GCOM100_KEY, _GCOM100_NAME_FIELD_INDEX, _GCOM100_DIR_FIELD_INDEX,
-             _GCOM100_MIN_FIELDS, _EXTERNAL_TRANSFORM_FILENAME, "Ctrl+J"),
-            (_GCOM110_KEY, _GCOM110_NAME_FIELD_INDEX, _GCOM110_DIR_FIELD_INDEX,
-             _GCOM110_MIN_FIELDS, _FAST_SAVE_FILENAME, "Ctrl+K"),
-        ):
-            result = _ensure_gcom_slot_in_file(
-                jwf_path, target_dir, key, name_idx, dir_idx, min_f, filename,
-                label, log=log,
-            )
-            if result == "new":
-                did_new_registration = True
-            elif isinstance(result, tuple) and result[0] == "conflict":
-                conflicts.append((os.path.basename(jwf_path), label, result[1]))
+        result = _register_in_profile(jwf_path, target_dir, log=log)
+        if result["new_registration"]:
+            did_new_registration = True
+        conflicts.extend(result["conflicts"])
+        # 👑 実際に送るキーはjw_cadが起動時に読むJw_win.jwfの登録が正。
+        # 他のプロファイルは明示的に読み込まない限り効かないため
+        # (jwnavigator_jwcad_settings_architecture参照)。
+        if os.path.basename(jwf_path).lower() == "jw_win.jwf":
+            keys = result["keys"]
 
     return {
         "new_registration": did_new_registration,
         "conflicts": conflicts,
         "has_jw_win": has_jw_win_jwf(jw_cad_exe_dir),
+        "save_key_letter": keys.get(_EXTERNAL_TRANSFORM_FILENAME),
+        "fast_save_key_letter": keys.get(_FAST_SAVE_FILENAME),
     }
+
+
+# 👑 GCOM_100の0〜9番目がCtrl+A〜Ctrl+J、GCOM_110の0〜9番目がCtrl+K〜Ctrl+T
+# (実機確認済み)。この並びから「スロット位置 → 送るべきキー」が一意に決まる。
+_GCOM_BLOCK_KEYS = (_GCOM100_KEY, _GCOM110_KEY)
+_SLOTS_PER_BLOCK = 10
+_DIR_FIELD_INDEX = 10
+_MIN_FIELDS = 11
+# 既定の割り当て(従来と同じ): B_MARK=Ctrl+J、A_SAVE=Ctrl+K
+_PREFERRED_SLOT = {
+    _EXTERNAL_TRANSFORM_FILENAME: (0, 9),   # GCOM_100の10番目 = Ctrl+J
+    _FAST_SAVE_FILENAME: (1, 0),            # GCOM_110の1番目  = Ctrl+K
+}
+
+
+def _slot_key_letter(block_index, slot_index):
+    return chr(ord("A") + block_index * _SLOTS_PER_BLOCK + slot_index)
+
+
+def _register_in_profile(jwf_path, target_dir, log=None):
+    """1つのプロファイルにB_MARK/A_SAVEを登録する。
+
+    👑 2026-09-16: 以前は「Ctrl+Jが埋まっていたら諦める」だけだった。
+    しかしJwNavigatorが送るキーは`utils/layer_snapshot.py`にハードコード
+    されていたため、利用者が別のスロットへ手動登録しても**JwNavigatorは
+    Ctrl+J/Ctrl+Kを送り続け、結局動かなかった**(案内文も「空いている
+    スロットへ手動登録を」と誤った手順を書いていた)。
+    ここでは既定のスロットが埋まっていたら**空いているスロットを自動で
+    探して登録し、実際に使ったキーを呼び出し側へ返す**。呼び出し側は
+    そのキーをlayer_snapshotへ渡すので、どのスロットに入っても動く。
+
+    戻り値: {"keys": {"B_MARK": "J"等 or None, "A_SAVE": ...},
+             "new_registration": bool,
+             "conflicts": [(プロファイル名, 説明, 既存の外部変形名)]}"""
+    name = os.path.basename(jwf_path)
+    empty = {"keys": {_EXTERNAL_TRANSFORM_FILENAME: None, _FAST_SAVE_FILENAME: None},
+             "new_registration": False, "conflicts": []}
+    try:
+        raw = open(jwf_path, "rb").read()
+    except Exception as e:
+        if log:
+            log(f"⚠️ {name}の読み込みに失敗したため外部変形の登録をスキップしました: {e}")
+        return empty
+
+    newline = b"\r\n" if b"\r\n" in raw else b"\n"
+    lines = raw.split(newline)
+
+    # ブロックごとに (linesの行番号, 行頭"GCOM_1X0 ", フィールド配列) を用意する
+    blocks = {}
+    for block_index, gcom_key in enumerate(_GCOM_BLOCK_KEYS):
+        key_bytes = gcom_key.encode("ascii")
+        for i, line_bytes in enumerate(lines):
+            if not line_bytes.startswith(key_bytes) or b"=" not in line_bytes:
+                continue
+            try:
+                line_text = line_bytes.decode("cp932")
+            except UnicodeDecodeError:
+                if log:
+                    log(f"⚠️ {name}の{gcom_key}行の文字コードが想定と違うため、自動登録をスキップしました。")
+                break
+            prefix, _, rest = line_text.partition("=")
+            fields = rest.split(",")
+            while len(fields) < _MIN_FIELDS:
+                fields.append("")
+            blocks[block_index] = {"line": i, "prefix": prefix, "fields": fields}
+            break
+        else:
+            if log:
+                log(
+                    f"⚠️ {name}に{gcom_key}の行がありません。"
+                    "このプロファイルにはその範囲のキーを登録できませんでした。"
+                )
+
+    if not blocks:
+        return empty
+
+    result = dict(empty)
+    result["keys"] = dict(empty["keys"])
+    changed = False
+
+    for filename in (_EXTERNAL_TRANSFORM_FILENAME, _FAST_SAVE_FILENAME):
+        # 1) 既に登録済みならその場所を使う(フォルダだけ今の展開先へ追従)
+        found_at = None
+        for block_index, block in blocks.items():
+            for slot in range(_SLOTS_PER_BLOCK):
+                if block["fields"][slot].strip() == filename:
+                    found_at = (block_index, slot)
+                    break
+            if found_at:
+                break
+        if found_at:
+            block = blocks[found_at[0]]
+            letter = _slot_key_letter(*found_at)
+            if block["fields"][_DIR_FIELD_INDEX].strip() != target_dir:
+                block["fields"][_DIR_FIELD_INDEX] = target_dir
+                changed = True
+                if log:
+                    log(f"🔧 {name}の{filename}(Ctrl+{letter})の登録先を更新しました: {target_dir}")
+            elif log:
+                log(f"✅ {name}の{filename}はCtrl+{letter}に登録済みです: {target_dir}")
+            result["keys"][filename] = letter
+            continue
+
+        # 2) 既定のスロット → 空いていれば使う。埋まっていれば他の空きを探す
+        candidates = [_PREFERRED_SLOT[filename]]
+        for block_index in sorted(blocks):
+            for slot in range(_SLOTS_PER_BLOCK):
+                if (block_index, slot) not in candidates:
+                    candidates.append((block_index, slot))
+        placed = None
+        for block_index, slot in candidates:
+            block = blocks.get(block_index)
+            if block is None:
+                continue
+            if block["fields"][slot].strip() == "":
+                block["fields"][slot] = filename
+                block["fields"][_DIR_FIELD_INDEX] = target_dir
+                placed = (block_index, slot)
+                break
+        if placed:
+            letter = _slot_key_letter(*placed)
+            changed = True
+            result["new_registration"] = True
+            result["keys"][filename] = letter
+            if log:
+                pref = _slot_key_letter(*_PREFERRED_SLOT[filename])
+                note = "" if letter == pref else f"(既定のCtrl+{pref}は使用中だったため)"
+                log(f"🔧 {name}の{filename}をCtrl+{letter}に新規登録しました{note}: {target_dir}")
+        else:
+            occupant = ""
+            pb, ps = _PREFERRED_SLOT[filename]
+            if pb in blocks:
+                occupant = blocks[pb]["fields"][ps].strip()
+            letter = _slot_key_letter(pb, ps)
+            result["conflicts"].append((name, f"Ctrl+{letter}", occupant or "不明"))
+            if log:
+                log(
+                    f"⚠️ {name}に{filename}を登録できる空きキーがありません"
+                    f"(既定のCtrl+{letter}は「{occupant}」が使用中)。"
+                    "レイヤ保存を使うには、jw_cad側でどれか1つ割り当てを外してください。"
+                )
+
+    if not changed:
+        return result
+
+    for block in blocks.values():
+        new_line = block["prefix"] + "=" + ",".join(block["fields"])
+        lines[block["line"]] = new_line.encode("cp932")
+    try:
+        backup_path = jwf_path + ".bak_jwnavigator"
+        if not os.path.exists(backup_path):
+            shutil.copy2(jwf_path, backup_path)
+        with open(jwf_path, "wb") as f:
+            f.write(newline.join(lines))
+    except Exception as e:
+        if log:
+            log(f"⚠️ {name}への書き込みに失敗しました: {e}")
+        result["new_registration"] = False
+    return result
 
 
 def has_jw_win_jwf(jw_cad_exe_dir):
@@ -342,112 +499,4 @@ def describe_environment(jw_cad_exe_dir, log=None):
             _log_registered_dir_contents(line_text, key, log)
 
 
-def _ensure_gcom_slot_in_file(
-    jwf_path, target_dir, gcom_key, name_field_index, dir_field_index,
-    min_fields, filename, key_label, log=None,
-):
-    # 👑 実機のjwfに、過去の手編集由来と見られるcp932非適合バイト列が
-    # GCOM_1XX行とは無関係な箇所に混ざっているのを実測で確認した
-    # (2026-09-11)。ファイル全体をテキストとしてdecode→encodeし直すと、
-    # その箇所が書き込み時にエラーになる(直そうとしている訳でもないのに
-    # 巻き添えで壊れる)。そのため、対象の行だけをバイト列のまま特定して
-    # 置き換え、それ以外は元のバイトに一切触れない方式にする。
-    name = os.path.basename(jwf_path)
-    try:
-        raw = open(jwf_path, "rb").read()
-    except Exception as e:
-        if log:
-            log(f"⚠️ {name}の読み込みに失敗したため{gcom_key}確認をスキップしました: {e}")
-        return False
-
-    newline = b"\r\n" if b"\r\n" in raw else b"\n"
-    key_bytes = gcom_key.encode("ascii")
-    lines = raw.split(newline)
-
-    changed = False
-    is_new_registration = False
-    found_line = False
-    conflict_with = None
-    for i, line_bytes in enumerate(lines):
-        if not line_bytes.startswith(key_bytes):
-            continue
-        found_line = True
-        if b"=" not in line_bytes:
-            break
-        try:
-            line_text = line_bytes.decode("cp932")
-        except UnicodeDecodeError:
-            if log:
-                log(f"⚠️ {name}の{gcom_key}行の文字コードが想定と違うため、自動登録をスキップしました。")
-            break
-        prefix, _, rest = line_text.partition("=")
-        fields = rest.split(",")
-        while len(fields) < min_fields:
-            fields.append("")
-        current_name = fields[name_field_index].strip()
-        current_dir = fields[dir_field_index].strip()
-
-        new_dir = None
-        if current_name == "":
-            fields[name_field_index] = filename
-            new_dir = target_dir
-            is_new_registration = True
-            if log:
-                log(f"🔧 {name}の{gcom_key}({key_label})に{filename}を新規登録しました: {target_dir}")
-        elif current_name == filename:
-            if current_dir != target_dir:
-                new_dir = target_dir
-                if log:
-                    log(f"🔧 {name}の{gcom_key}登録先を更新しました: {current_dir} → {target_dir}")
-            elif log:
-                # 👑 2026-09-16: 「既に正しく登録済みなので何もしなかった」
-                # 場合も痕跡を残す。kosakaPCの調査で、ログに何も出ない状態が
-                # 「確認した上で正常」なのか「そのファイルを見ていない」のか
-                # 区別できず原因切り分けに丸1日かかったため。
-                log(f"✅ {name}の{gcom_key}({key_label})は既に登録済みです: {current_dir}")
-        else:
-            conflict_with = current_name
-            if log:
-                log(
-                    f"⚠️ {name}の{gcom_key}({key_label})は別の外部変形({current_name})が"
-                    "既に使用中のため、自動登録をスキップしました。"
-                    "レイヤ保存機能を使うにはconfig/keybind_setup.mdを参照して手動で調整してください。"
-                )
-
-        if new_dir is not None:
-            fields[dir_field_index] = new_dir
-            new_line_text = prefix + "=" + ",".join(fields)
-            lines[i] = new_line_text.encode("cp932")
-            changed = True
-        break  # 対象のGCOM_1XX行は1ファイルに1つのはず
-
-    if not found_line and log:
-        # 👑 2026-09-16: 行自体が無いプロファイルは今まで無言で素通りして
-        # いた。jw_cadが実際に読むのは Jw_win.jwf なので、そこに行が無いと
-        # 「登録したはずなのにCtrl+J/Ctrl+Kが効かない」状態になり、しかも
-        # ログに何の痕跡も残らない(kosakaPCの調査で判明)。
-        log(
-            f"⚠️ {name}に{gcom_key}の行がありません。"
-            f"このプロファイルには{key_label}の外部変形を登録できませんでした。"
-        )
-
-    if conflict_with:
-        return ("conflict", conflict_with)
-
-    if not changed:
-        return None
-
-    try:
-        backup_path = jwf_path + ".bak_jwnavigator"
-        if not os.path.exists(backup_path):
-            shutil.copy2(jwf_path, backup_path)
-        new_raw = newline.join(lines)
-        with open(jwf_path, "wb") as f:
-            f.write(new_raw)
-    except Exception as e:
-        if log:
-            log(f"⚠️ {name}への書き込みに失敗しました: {e}")
-        return None
-
-    return "new" if is_new_registration else "updated"
 # ===== ✂️ utils/external_transform_setup.py END ✂️ =====

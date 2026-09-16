@@ -335,7 +335,7 @@ class JwNavigatorManager:
         # 20マイクロ秒/行(約620倍)まで落ちた。os.path.getsizeも毎回
         # 呼んでいたが、実測では誤差だったのでtell()に置き換えた。
         self._log_fp = None
-        self.write_system_log("--- JwNavigator Ver3.73 メインシステム始動 ---")
+        self.write_system_log("--- JwNavigator Ver3.74 メインシステム始動 ---")
 
         # 👑 2026-09-11: 「exeを入れ替え/移動しても設定が消えないように」、
         # パッケージ版は設定の保存先を%APPDATA%\JwNavigator\へ移した
@@ -946,6 +946,16 @@ class JwNavigatorManager:
                                 result = external_transform_setup.ensure_gcom100_registered(
                                     os.path.dirname(jw_exe_path), log=self.write_system_log
                                 )
+                                # 👑 2026-09-16: 既定のCtrl+J/Ctrl+Kが他の外部
+                                # 変形に使われていた場合、登録側は空いている
+                                # スロットへ回す。実際に送るキーもそこへ
+                                # 合わせないと意味がないので反映する
+                                # (utils/layer_snapshot.pyの
+                                # set_external_transform_keys参照)。
+                                layer_snapshot.set_external_transform_keys(
+                                    result.get("save_key_letter"),
+                                    result.get("fast_save_key_letter"),
+                                )
                                 if result["new_registration"]:
                                     self._notify_jw_cad_restart_required()
                                 if result["conflicts"] and not self._gcom_conflict_notified:
@@ -1023,6 +1033,29 @@ class JwNavigatorManager:
         except Exception as e:
             self.write_system_log(f"🔎 [環境] ツールバー情報の取得に失敗: {e}")
 
+    _MESSAGE_LOCK = threading.Lock()
+
+    def _show_message_async(self, text, icon=0x40):
+        """👑 2026-09-16: MessageBoxWをメインスレッドから呼ぶと、OKを押すまで
+        Tkのイベントループごと止まる。これらの案内はjw_cadを検出した直後
+        (=パレットを生成している最中)に出るため、実機では「起動したら
+        パレットが画面の隅に張り付いたまま固まり、警告が出ている」状態に
+        なっていた(検証中に実際に踏んだ)。ワーカースレッドから出せば
+        パレットの生成は止まらない(MessageBoxWは自前のメッセージループを
+        持つので、hwnd=0ならワーカースレッドから呼んで問題ない)。
+        複数の案内が同時に出て重ならないよう、ロックで順番に出す。"""
+        def worker():
+            with self._MESSAGE_LOCK:
+                try:
+                    ctypes.windll.user32.MessageBoxW(0, text, "JwNavigator", icon)
+                except Exception:
+                    pass
+
+        try:
+            threading.Thread(target=worker, daemon=True).start()
+        except Exception:
+            pass
+
     def _has_layer_save_button(self):
         # 👑 Jw_win.jwfが無いことを画面で知らせるのは、レイヤ保存を実際に
         # 使う人だけにする(使わない人には無関係な警告になるため)。
@@ -1051,24 +1084,19 @@ class JwNavigatorManager:
         self.write_system_log(
             "⚠️ Jw_win.jwfが無いため、レイヤ保存が使えない状態です(画面で案内しました)。"
         )
-        try:
-            ctypes.windll.user32.MessageBoxW(
-                0,
-                "レイヤ保存を使うための準備が1つ残っています。\n\n"
-                f"jw_cadのフォルダ({jw_cad_exe_dir})に Jw_win.jwf がありません。\n"
-                "jw_cadは外部変形のキー割り付けをこのファイルからしか読まないため、\n"
-                "このままではレイヤ保存は動作しません。\n\n"
-                "【対処方法】\n"
-                "1. jw_cadで [設定] → [環境設定ファイル] → [書込み] を選ぶ\n"
-                f"2. {jw_cad_exe_dir} に「Jw_win.jwf」という名前で保存する\n"
-                "3. jw_cadを再起動する\n\n"
-                "現在の設定がそのまま保存されるだけなので、設定は変わりません。\n"
-                "一度行えば、以後はこの案内は出ません。",
-                "JwNavigator",
-                0x30,  # MB_ICONWARNING
-            )
-        except Exception:
-            pass
+        self._show_message_async(
+            "レイヤ保存を使うための準備が1つ残っています。\n\n"
+            f"jw_cadのフォルダ({jw_cad_exe_dir})に Jw_win.jwf がありません。\n"
+            "jw_cadは外部変形のキー割り付けをこのファイルからしか読まないため、\n"
+            "このままではレイヤ保存は動作しません。\n\n"
+            "【対処方法】\n"
+            "1. jw_cadで [設定] → [環境設定ファイル] → [書込み] を選ぶ\n"
+            f"2. {jw_cad_exe_dir} に「Jw_win.jwf」という名前で保存する\n"
+            "3. jw_cadを再起動する\n\n"
+            "現在の設定がそのまま保存されるだけなので、設定は変わりません。\n"
+            "一度行えば、以後はこの案内は出ません。",
+            icon=0x30,  # MB_ICONWARNING
+        )
 
     def _notify_gcom_conflict(self, conflicts):
         # 👑 2026-09-16: Ctrl+J/Ctrl+Kを既に自分の外部変形で使っている人の
@@ -1079,17 +1107,15 @@ class JwNavigatorManager:
             f"・{name} の {key_label} は「{current}」が使用中"
             for name, key_label, current in conflicts
         )
-        ctypes.windll.user32.MessageBoxW(
-            0,
-            "レイヤ保存に使うキー(Ctrl+J / Ctrl+K)が、jw_cad側で別の外部変形に\n"
-            "割り当てられていたため、自動登録を見送りました。\n"
-            "他の設定を壊さないよう、JwNavigatorは既存の割り当てを書き換えません。\n\n"
+        self._show_message_async(
+            "レイヤ保存に使う外部変形を、jw_cadへ登録できませんでした。\n"
+            "空いているキーが見つからなかったためです。\n"
+            "他の設定を壊さないよう、既に使われている割り当ては書き換えません。\n\n"
             f"{detail}\n\n"
             "このままではレイヤ保存は使えません。\n"
-            "jw_cadの[設定]→[環境設定ファイル]で空いているスロットへ手動登録するか、\n"
-            "上記の割り当てを外してからJwNavigatorを再起動してください。",
-            "JwNavigator",
-            0x30,  # MB_ICONWARNING
+            "jw_cadの[設定]→[環境設定ファイル]で、上記のどれか1つの割り当てを\n"
+            "外してからJwNavigatorを再起動してください。",
+            icon=0x30,  # MB_ICONWARNING
         )
 
     def _notify_jw_cad_restart_required(self):
@@ -1106,18 +1132,12 @@ class JwNavigatorManager:
             "jw_cadは起動時にしか割り付けを読まないため、"
             "一度jw_cadを閉じて開き直すまでレイヤ保存は動作しません。"
         )
-        try:
-            ctypes.windll.user32.MessageBoxW(
-                0,
-                "レイヤ保存用のキー割り付け(Ctrl+J / Ctrl+K)をjw_cadへ登録しました。\n\n"
-                "jw_cadは起動時にしかキー割り付けを読み込まないため、\n"
-                "お手数ですが一度jw_cadを閉じて開き直してください。\n"
-                "(この案内が出るのは初回だけです)",
-                "JwNavigator",
-                0x40,  # MB_ICONINFORMATION
-            )
-        except Exception:
-            pass
+        self._show_message_async(
+            "レイヤ保存用のキー割り付けをjw_cadへ登録しました。\n\n"
+            "jw_cadは起動時にしかキー割り付けを読み込まないため、\n"
+            "お手数ですが一度jw_cadを閉じて開き直してください。\n"
+            "(この案内が出るのは初回だけです)"
+        )
 
     def reload_all_palettes(self):
         # 設定画面で保存した直後に呼ばれる。既存パレットを全部破棄して、
