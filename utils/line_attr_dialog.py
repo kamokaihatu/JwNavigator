@@ -237,9 +237,24 @@ _PROCESS_VM_ACCESS = (
 )
 
 
+_LAYER_BAR_CAPTION = "レイヤ"
+_LAYER_GROUP_BAR_CAPTION = "レイヤグループ"
+
+
 def _find_layer_group_buttons(hwnd):
     """戻り値: (layer_hwnds[16], group_hwnds[16])。見つからなければ
-    (None, None)。hwnd自体は実行のたびに変わるので毎回列挙し直す。"""
+    (None, None)。hwnd自体は実行のたびに変わるので毎回列挙し直す。
+
+    👑 2026-09-16: 以前は32個を**x座標順に並べて前半16個をレイヤ、後半16個を
+    レイヤグループ**と決め打ちしていた。これはツールバーの配置に依存する
+    仮定で、レイヤグループバーがレイヤバーより左にあるPCでは**両者が丸ごと
+    入れ替わる**(kosakaPCで発覚: 「F-Fに設定したのに0-Fに描かれる」。
+    グループを変えるつもりでレイヤ側を右クリックしていた)。
+    実機調査の結果、32個は`ToolbarWindow32`の親2つに分かれていて、
+    その親のウィンドウテキストがそれぞれ「レイヤ」「レイヤグループ」で
+    あることが分かったため、位置ではなく親の名前で判別する。
+    バー内での0〜Fの並び順は従来どおり(x,y)順で決める(こちらは実機で
+    正しく効いていることを確認済み)。"""
     found = []
 
     def cb(child, _extra):
@@ -252,7 +267,7 @@ def _find_layer_group_buttons(hwnd):
             if win32gui.GetWindowText(child) == "All":
                 return True
             rect = win32gui.GetWindowRect(child)
-            found.append((child, rect[0], rect[1]))
+            found.append((child, rect[0], rect[1], win32gui.GetParent(child)))
         except Exception:
             pass
         return True
@@ -263,10 +278,37 @@ def _find_layer_group_buttons(hwnd):
         pass
     if len(found) != 32:
         return None, None
+
+    by_parent = {}
+    for item in found:
+        by_parent.setdefault(item[3], []).append(item)
+
+    def sorted_hwnds(items):
+        items.sort(key=lambda item: (item[1], item[2]))
+        return [item[0] for item in items]
+
+    if len(by_parent) == 2:
+        layer_hwnds = group_hwnds = None
+        for parent, items in by_parent.items():
+            if len(items) != 16:
+                layer_hwnds = group_hwnds = None
+                break
+            try:
+                caption = win32gui.GetWindowText(parent)
+            except Exception:
+                caption = ""
+            # 「レイヤグループ」は「レイヤ」を含むため、先に判定する。
+            if caption == _LAYER_GROUP_BAR_CAPTION:
+                group_hwnds = sorted_hwnds(items)
+            elif caption == _LAYER_BAR_CAPTION:
+                layer_hwnds = sorted_hwnds(items)
+        if layer_hwnds and group_hwnds:
+            return layer_hwnds, group_hwnds
+
+    # 👑 親の名前で判別できなかった場合のみ、従来のx座標順の推定に戻す
+    # (英語版等、想定外の環境で機能ごと死なせないため)。
     found.sort(key=lambda item: (item[1], item[2]))
-    layer_hwnds = [item[0] for item in found[:16]]
-    group_hwnds = [item[0] for item in found[16:]]
-    return layer_hwnds, group_hwnds
+    return [item[0] for item in found[:16]], [item[0] for item in found[16:]]
 
 
 _LAYER_LIST_DIALOG_TITLES = ("レイヤ一覧", "レイヤグループ一覧")

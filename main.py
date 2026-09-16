@@ -335,7 +335,7 @@ class JwNavigatorManager:
         # 20マイクロ秒/行(約620倍)まで落ちた。os.path.getsizeも毎回
         # 呼んでいたが、実測では誤差だったのでtell()に置き換えた。
         self._log_fp = None
-        self.write_system_log("--- JwNavigator Ver3.72 メインシステム始動 ---")
+        self.write_system_log("--- JwNavigator Ver3.73 メインシステム始動 ---")
 
         # 👑 2026-09-11: 「exeを入れ替え/移動しても設定が消えないように」、
         # パッケージ版は設定の保存先を%APPDATA%\JwNavigator\へ移した
