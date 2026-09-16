@@ -285,7 +285,8 @@ def _register_in_profile(jwf_path, target_dir, log=None, reserved_letters=None):
     empty = {"keys": {_EXTERNAL_TRANSFORM_FILENAME: None, _FAST_SAVE_FILENAME: None},
              "new_registration": False, "conflicts": []}
     try:
-        raw = open(jwf_path, "rb").read()
+        with open(jwf_path, "rb") as f:
+            raw = f.read()
     except Exception as e:
         if log:
             log(f"⚠️ {name}の読み込みに失敗したため外部変形の登録をスキップしました: {e}")
@@ -498,7 +499,8 @@ def describe_environment(jw_cad_exe_dir, log=None):
         if name.lower() in _SKIP_PROFILE_NAMES:
             continue
         try:
-            raw = open(jwf_path, "rb").read()
+            with open(jwf_path, "rb") as f:
+                raw = f.read()
         except Exception as e:
             log(f"🔎 [環境]   {name}: 読み取り失敗 {e}")
             continue
