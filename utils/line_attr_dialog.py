@@ -42,9 +42,6 @@ WIDTH_EDIT_ID = 2224
 OK_CTRL_ID = 1
 CANCEL_CTRL_ID = 2
 
-DEFAULT_COLOR_CTRL_ID = 1409  # 補助線色
-DEFAULT_TYPE_CTRL_ID = 2457   # 補助線種
-
 
 def _find_dialog_hwnd(timeout=0.6):
     deadline = time.time() + timeout
@@ -236,9 +233,6 @@ _PROCESS_VM_ACCESS = (
     | win32con.PROCESS_VM_WRITE | win32con.PROCESS_QUERY_INFORMATION
 )
 
-
-_LAYER_BAR_CAPTION = "レイヤ"
-_LAYER_GROUP_BAR_CAPTION = "レイヤグループ"
 
 # 👑 2026-09-16: レイヤ/レイヤグループのバーをどう見分けたかの記録。
 # 名前で判別できず位置推定のフォールバックに落ちると、配置次第で両者が

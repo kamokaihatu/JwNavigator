@@ -381,7 +381,6 @@ class JwNavigatorManager:
         self._save_notice_window = None
         self.settings_window = None
         self.last_jww_state = "STATE_IDLE"
-        self.event_engines = {}  # 👑 ウィンドウ個別の安定判定エンジン管理辞書
         self.locked_intent = (
             {}
         )  # 👑 コマンド実行中の凹み上書き防止ロック（インテントホールド、値は(name, timestamp)）
@@ -809,8 +808,6 @@ class JwNavigatorManager:
                     if tb:
                         tb.destroy()
                 del self.active_launchers[hwnd]
-                if hwnd in self.event_engines:
-                    del self.event_engines[hwnd]
                 if hwnd in self.locked_intent:
                     del self.locked_intent[hwnd]
                 self._auto_attr_pending.pop(hwnd, None)
@@ -1234,7 +1231,6 @@ class JwNavigatorManager:
                 except Exception:
                     pass
             pending_pins[hwnd] = pins
-            self.event_engines.pop(hwnd, None)
             self.locked_intent.pop(hwnd, None)
         self._pending_pin_restore = pending_pins
         self.root.after(50, self._rebuild_palettes_now)

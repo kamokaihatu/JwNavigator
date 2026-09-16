@@ -316,14 +316,6 @@ NON_HOVER_ONLY_RULE_NAMES = {
     "DIM_BRACKET", "SETSUEN_WAIT_3RD",
 }
 
-STATES_WITH_WAIT_RULE = {
-    state_id
-    for state_id, rule_tuples in STATE_DATABASE.items()
-    if any(
-        rule_enum.name.endswith("_WAIT") or rule_enum.name in NON_HOVER_ONLY_RULE_NAMES
-        for _, rule_enum in rule_tuples
-    )
-}
 
 
 def is_hover_trustworthy_rule(rule_name: str) -> bool:

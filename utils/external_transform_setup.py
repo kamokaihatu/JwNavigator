@@ -56,9 +56,7 @@ _BUNDLE_ITEMS = ("B_MARK.BAT", "A_SAVE.BAT", "mark_point.ps1", "dump_layers.ps1"
 # その次(11番目)がフォルダ名。実機のJw_win.jwf/kamo.JWFで実測確認済み
 # (2026-09-11): "GCOM_100 =,,,,,,,,,B_MARK,C:\jww\JWW_EXT"。
 _GCOM100_KEY = "GCOM_100"
-_GCOM100_NAME_FIELD_INDEX = 9   # 0-indexed、Ctrl+Jは10番目
 _GCOM100_DIR_FIELD_INDEX = 10
-_GCOM100_MIN_FIELDS = 11
 _EXTERNAL_TRANSFORM_FILENAME = "B_MARK"
 _SKIP_PROFILE_NAMES = {"sample.jwf"}  # jw_cad同梱のひな形、実プロファイルではない
 
@@ -70,9 +68,6 @@ _SKIP_PROFILE_NAMES = {"sample.jwf"}  # jw_cad同梱のひな形、実プロフ�
 # trigger_save_fast()参照)。安全のための制約(スロットが空でない場合は
 # 書き換えない、バックアップ作成等)はGCOM_100と全く同じ。
 _GCOM110_KEY = "GCOM_110"
-_GCOM110_NAME_FIELD_INDEX = 0   # 0-indexed、Ctrl+KはGCOM_110の1番目
-_GCOM110_DIR_FIELD_INDEX = 10
-_GCOM110_MIN_FIELDS = 11
 _FAST_SAVE_FILENAME = "A_SAVE"
 
 
