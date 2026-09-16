@@ -9,6 +9,7 @@ from utils.send_key import force_foreground_window
 
 WM_COMMAND = 0x0111
 TB_GETSTATE = 0x0412
+TB_BUTTONCOUNT = 0x0418
 TBSTATE_CHECKED = 0x01
 TBSTATE_PRESSED = 0x02
 TBSTATE_ENABLED = 0x04
@@ -40,6 +41,27 @@ def _is_not_found_state(raw):
     # TB_GETSTATEは「idCommandが見つからない」場合-1を返すが、pywin32からは
     # 符号なし32bit（4294967295）で返ってくることがあるため両方を弾く。
     return raw is None or raw in (-1, 0xFFFFFFFF)
+
+
+def describe_toolbars(hwnd: int):
+    """👑 2026-09-16: 他人のPCの解析用。CHECKED判定がNone(=どのツールバーにも
+    そのidCommandが見つからない)になる環境かどうかを、ログだけで切り分ける
+    ための情報を返す。jw_cadのツールバー構成は利用者ごとに違い、表示中で
+    ないツールバーページにあるボタンは読めない(get_command_checked_states()
+    のコメント参照)。kosakaPCで「補助線モードが凹んだまま戻らない」不具合の
+    調査に必要だった情報。
+    戻り値: (ツールバー数, 各ツールバーのボタン数リスト)。"""
+    counts = []
+    try:
+        toolbars = _find_toolbar_windows(hwnd)
+    except Exception:
+        return (0, counts)
+    for tb_hwnd in toolbars:
+        try:
+            counts.append(win32gui.SendMessage(tb_hwnd, TB_BUTTONCOUNT, 0, 0))
+        except Exception:
+            counts.append(-1)
+    return (len(toolbars), counts)
 
 
 def is_command_enabled(hwnd: int, id_command: int):

@@ -64,7 +64,7 @@ from widgets.toolbar import Toolbar
 from widgets.settings_window import SettingsWindow, TextInputDialog
 from widgets.first_launch_dialog import run_first_launch_setup_if_needed, run_preset_reset
 from utils.send_key import send_key_to_hwnd
-from utils.send_command import send_command_to_hwnd, is_command_enabled, get_command_states, get_command_checked_states, get_command_pressed_states
+from utils.send_command import send_command_to_hwnd, is_command_enabled, get_command_states, get_command_checked_states, get_command_pressed_states, describe_toolbars
 from utils import line_attr_dialog
 from utils import command_master
 from utils.jww_watcher import get_raw_statusbar_text
@@ -327,7 +327,15 @@ class JwNavigatorManager:
             else os.getcwd()
         )
         self.log_file_path = os.path.join(exe_dir, "JwNavigator_Log.txt")
-        self.write_system_log("--- JwNavigator Ver3.71 メインシステム始動 ---")
+        # 👑 2026-09-16: ログは開きっぱなしにする。1行ごとにopen/closeして
+        # いた頃は実測で**1行あたり約12.5ミリ秒**かかっていた(法人向け
+        # ウイルス対策ソフトがファイルを開くたびに走査しているためと思われ
+        # る)。監視ループが毎秒2行出すので、それだけで毎秒25ミリ秒を
+        # メインスレッドで浪費していた計算になる。ハンドルを保持すると
+        # 20マイクロ秒/行(約620倍)まで落ちた。os.path.getsizeも毎回
+        # 呼んでいたが、実測では誤差だったのでtell()に置き換えた。
+        self._log_fp = None
+        self.write_system_log("--- JwNavigator Ver3.72 メインシステム始動 ---")
 
         # 👑 2026-09-11: 「exeを入れ替え/移動しても設定が消えないように」、
         # パッケージ版は設定の保存先を%APPDATA%\JwNavigator\へ移した
@@ -404,6 +412,11 @@ class JwNavigatorManager:
         self.palette_edges = {}
         self.palette_positions = {}
         self._gcom100_checked = False
+        # 👑 2026-09-16: 環境スナップショット(約30行)は1セッション1回だけ。
+        # Jw_win.jwfが無い環境では_gcom100_checkedを意図的に立て直さない
+        # ため、この歯止めが無いとjw_cadを検出するたびに毎回吐いてしまう。
+        self._env_described = False
+        self._gcom_conflict_notified = False
         self.window_state = window_state.load_state()
         self._pending_pin_restore = {}
         self.tray_icon = None
@@ -413,29 +426,41 @@ class JwNavigatorManager:
     LOG_MAX_BYTES = 5 * 1024 * 1024  # 5MB
 
     def write_system_log(self, text):
+        # 👑 flushは毎回行う(__init__のコメント参照)。バッファに溜めると
+        # 速くはなるが、クラッシュや強制終了の直前の数行が消える。トレイ
+        # アイコンのクラッシュ調査(Ver3.71)では、まさにその末尾数行が
+        # 決め手だったため、速度より確実性を優先する。flushを入れても
+        # 20マイクロ秒/行で、open/close方式の620分の1で済む。
         now_str = datetime.datetime.now().strftime("%H:%M:%S.%f")[:-3]
         try:
-            self._rotate_log_if_needed(self.log_file_path)
-            with open(self.log_file_path, "a", encoding="utf-8") as f:
-                f.write(f"[{now_str}] {text}\n")
+            f = self._log_fp
+            if f is None or f.closed:
+                f = self._log_fp = open(self.log_file_path, "a", encoding="utf-8")
+            f.write(f"[{now_str}] {text}\n")
+            f.flush()
+            if f.tell() > self.LOG_MAX_BYTES:
+                self._rotate_log()
         except Exception as e:
             print(f"Log Write Error: {e}")
 
-    def _rotate_log_if_needed(self, path):
+    def _rotate_log(self):
         # 👑 配布後は開発時と違って無制限に増え続けても誰も気づかないため、
         # 一定サイズを超えたら古い前半を切り捨てる簡易ローテーション。
         # 不具合報告時にログをコピペしてもらう運用は残したいので、
         # 完全に消さず直近分は必ず残す。
+        # 👑 2026-09-16: ハンドルを保持する方式にしたため、書き換える前に
+        # 必ず閉じる(次の書き込みで開き直される)。
         try:
-            if os.path.getsize(path) <= self.LOG_MAX_BYTES:
-                return
-        except OSError:
-            return
+            if self._log_fp is not None:
+                self._log_fp.close()
+        except Exception:
+            pass
+        self._log_fp = None
         try:
-            with open(path, "r", encoding="utf-8", errors="ignore") as f:
+            with open(self.log_file_path, "r", encoding="utf-8", errors="ignore") as f:
                 lines = f.readlines()
             keep = lines[len(lines) // 2:]
-            with open(path, "w", encoding="utf-8") as f:
+            with open(self.log_file_path, "w", encoding="utf-8") as f:
                 f.writelines(keep)
         except Exception:
             pass
@@ -917,9 +942,35 @@ class JwNavigatorManager:
                         try:
                             jw_exe_path = self._get_exe_path_for_hwnd(hwnd)
                             if jw_exe_path:
-                                external_transform_setup.ensure_gcom100_registered(
+                                result = external_transform_setup.ensure_gcom100_registered(
                                     os.path.dirname(jw_exe_path), log=self.write_system_log
                                 )
+                                if result["new_registration"]:
+                                    self._notify_jw_cad_restart_required()
+                                if result["conflicts"] and not self._gcom_conflict_notified:
+                                    self._gcom_conflict_notified = True
+                                    self._notify_gcom_conflict(result["conflicts"])
+                                # 👑 2026-09-16: 登録の「結果」を必ず残す。他人の
+                                # PCは頻繁に触れないため、1回のログで原因が
+                                # 確定できるようにしておく(kosakaPCの調査参照)。
+                                if not self._env_described:
+                                    self._env_described = True
+                                    external_transform_setup.describe_environment(
+                                        os.path.dirname(jw_exe_path), log=self.write_system_log
+                                    )
+                                    self._log_display_and_toolbar_environment(hwnd)
+                                # 👑 2026-09-16: Jw_win.jwfが無い環境では、登録
+                                # しても永久に効かない(GCOMはこのファイルから
+                                # しか読まれない)。利用者が案内に従って後から
+                                # 作った場合に拾えるよう、確認済みフラグを立て
+                                # 直さず、次にjw_cadを検出した時にもう一度確認
+                                # する。案内どおりjw_cadを再起動すればそのまま
+                                # 登録が走る(kosakaPCの手順で「JwNavigatorも
+                                # 再起動が要る」という余計な条件を無くすため)。
+                                if not external_transform_setup.has_jw_win_jwf(
+                                    os.path.dirname(jw_exe_path)
+                                ):
+                                    self._gcom100_checked = False
                             else:
                                 # 👑 ここが無言で素通りすると「GCOM_100が古い展開先の
                                 # ままで、原因がログから追えない」事故になる
@@ -934,6 +985,82 @@ class JwNavigatorManager:
                     self.write_system_log(
                         f"❌ パレット動的構築失敗 [HWND:{hwnd}]: {str(e)}"
                     )
+
+    def _log_display_and_toolbar_environment(self, hwnd):
+        # 👑 2026-09-16: 他人のPCは頻繁に触れないため、1回の起動ログで環境差を
+        # 追えるようにする。DPIはkosakaPCで「文字がボタンからはみ出す」不具合の
+        # 原因だった要素(DECISIONS.md 2026-09-14参照)。ツールバー構成は
+        # 補助線モードのCHECKED判定がNoneになるかどうかを左右する
+        # (utils/send_command.pyのdescribe_toolbars()参照)。
+        try:
+            dpi = ctypes.windll.user32.GetDpiForWindow(hwnd)
+        except Exception:
+            dpi = None
+        try:
+            sw = ctypes.windll.user32.GetSystemMetrics(0)
+            sh = ctypes.windll.user32.GetSystemMetrics(1)
+        except Exception:
+            sw = sh = None
+        self.write_system_log(
+            f"🔎 [環境] 画面={sw}x{sh} DPI={dpi}"
+            f"(96で等倍、{'拡大表示あり' if dpi and dpi != 96 else '拡大なし'})"
+        )
+        try:
+            count, button_counts = describe_toolbars(hwnd)
+            self.write_system_log(
+                f"🔎 [環境] jw_cadのツールバー数={count} 各ボタン数={button_counts}"
+            )
+        except Exception as e:
+            self.write_system_log(f"🔎 [環境] ツールバー情報の取得に失敗: {e}")
+
+    def _notify_gcom_conflict(self, conflicts):
+        # 👑 2026-09-16: Ctrl+J/Ctrl+Kを既に自分の外部変形で使っている人の
+        # プロファイルは、他人の登録を壊さないため意図的に書き換えない。
+        # ただしその場合レイヤ保存は永久に使えず、今まではログを読まないと
+        # 気づけなかった。黙って使えないのが一番たちが悪いので知らせる。
+        detail = "\n".join(
+            f"・{name} の {key_label} は「{current}」が使用中"
+            for name, key_label, current in conflicts
+        )
+        ctypes.windll.user32.MessageBoxW(
+            0,
+            "レイヤ保存に使うキー(Ctrl+J / Ctrl+K)が、jw_cad側で別の外部変形に\n"
+            "割り当てられていたため、自動登録を見送りました。\n"
+            "他の設定を壊さないよう、JwNavigatorは既存の割り当てを書き換えません。\n\n"
+            f"{detail}\n\n"
+            "このままではレイヤ保存は使えません。\n"
+            "jw_cadの[設定]→[環境設定ファイル]で空いているスロットへ手動登録するか、\n"
+            "上記の割り当てを外してからJwNavigatorを再起動してください。",
+            "JwNavigator",
+            0x30,  # MB_ICONWARNING
+        )
+
+    def _notify_jw_cad_restart_required(self):
+        # 👑 2026-09-16: jw_cadはキー割り付け(GCOM_1XX)を自分の起動時にしか
+        # 読み込まない。既にjw_cadが起動している状態で初回登録を行った場合、
+        # ファイルには書けても起動中のjw_cadには反映されず、Ctrl+J/Ctrl+Kを
+        # 送っても完全に無反応になる(kosakaPCの実機ログで発覚。新規登録の
+        # 直後にレイヤ保存(全自動)を実行したところ、jw_cad側の状態が一切
+        # 変化しないまま「選択確定」ボタンのタイムアウトで失敗していた)。
+        # 症状がログ無しでは原因不明の「保存できない」にしか見えないため、
+        # 登録した時点で利用者へはっきり案内する。
+        self.write_system_log(
+            "⚠️ レイヤ保存用のキー割り付けを新規登録しました。"
+            "jw_cadは起動時にしか割り付けを読まないため、"
+            "一度jw_cadを閉じて開き直すまでレイヤ保存は動作しません。"
+        )
+        try:
+            ctypes.windll.user32.MessageBoxW(
+                0,
+                "レイヤ保存用のキー割り付け(Ctrl+J / Ctrl+K)をjw_cadへ登録しました。\n\n"
+                "jw_cadは起動時にしかキー割り付けを読み込まないため、\n"
+                "お手数ですが一度jw_cadを閉じて開き直してください。\n"
+                "(この案内が出るのは初回だけです)",
+                "JwNavigator",
+                0x40,  # MB_ICONINFORMATION
+            )
+        except Exception:
+            pass
 
     def reload_all_palettes(self):
         # 設定画面で保存した直後に呼ばれる。既存パレットを全部破棄して、
@@ -1586,6 +1713,10 @@ class JwNavigatorManager:
     # 切替先コマンドはボタンごとに設定可能(既定は直線=C001、ユーザー要望:
     # 「他のコマンド選択することできる？連続線とか」)。
     AUTO_ATTR_DEFAULT_TARGET_COMMAND = "C001"  # 直線
+    # 👑 対象コマンドへの切替がjw_cad側で確認できないまま補助線モードに
+    # 閉じ込められるのを防ぐための上限(_check_auto_attr_revert参照)。
+    # 正常時はtick1回(1秒未満)でconfirmedになるため、余裕を持った値。
+    AUTO_ATTR_CONFIRM_TIMEOUT_SEC = 5.0
 
     def start_auto_attr_sequence(self, hwnd, entry, trigger_btn=None):
         # 👑 既にこのhwndで補助線系モードが有効な状態でもう一度押した場合
@@ -1635,8 +1766,22 @@ class JwNavigatorManager:
             "original": original, "confirmed": False, "trigger_btn": trigger_btn,
             "horizontal_vertical": bool(entry.get("horizontal_vertical")),
             "target_command": target_command,
+            # 👑 2026-09-16: 対象コマンドがCHECKEDにならないまま固まった場合の
+            # 保険用(_check_auto_attr_revert参照)。
+            "started_at": time.time(),
         }
         auto_attr_state.save_pending(self._auto_attr_pending)
+        # 👑 2026-09-16: 他人のPCでの解析用。凹んだまま戻らなくなった時に
+        # 「何を適用して、どのコマンドへ切り替えようとしたのか」がログだけで
+        # 追えるようにする(kosakaPCの調査で、この情報が無いため往復した)。
+        self.write_system_log(
+            f"🔎 [補助線系ボタン] 開始 name={entry.get('name')} "
+            f"線色={entry.get('line_color')} 線種={entry.get('line_type')} "
+            f"線幅={entry.get('line_width')} レイヤG={target_group} レイヤ={target_layer} "
+            f"対象コマンド={target_command}(idCommand={command_master.get_id_command(target_command)}) "
+            f"水平垂直={bool(entry.get('horizontal_vertical'))} "
+            f"元の属性={original}"
+        )
         if trigger_btn:
             # 👑 「凹むの遅い」という指摘のため、tickでのCHECKEDビット監視を
             # 待たず即座に凹ませる。この凹み表示は独立管理(トリガー自身の
@@ -1659,6 +1804,16 @@ class JwNavigatorManager:
             return
         line_id = command_master.get_id_command(pending["target_command"])
         checked = get_command_checked_states(hwnd, [line_id]).get(line_id)
+        # 👑 2026-09-16: CHECKED判定の遷移だけを残す(毎tickは出さない)。
+        # Noneが出続けるのか、Falseのままなのかで原因が分かれるため
+        # (send_command.pyのコメント: None=対象ボタンが表示中のツールバーに
+        # 無い=判定不能)。他人のPCで1回動かせば切り分く材料になる。
+        if pending.get("last_checked", "init") != checked:
+            pending["last_checked"] = checked
+            self.write_system_log(
+                f"🔎 [補助線系ボタン] CHECKED判定={checked} "
+                f"(対象={pending['target_command']}, confirmed={pending['confirmed']})"
+            )
         if checked is True:
             # 👑 直線への切替がjw_cad側に反映されたことを確認できるまでは
             # 「まだ切り替わっていないだけ」の可能性があるので戻し判定に
@@ -1680,6 +1835,32 @@ class JwNavigatorManager:
             return
         if checked is False and pending["confirmed"]:
             self._revert_auto_attr(hwnd)
+            return
+
+        # 👑 2026-09-16: ここから下は「対象コマンドが一度もCHECKEDにならない」
+        # 環境向けの保険(kosakaPCで発覚: ボタンが凹んだまま戻らず、線属性が
+        # 補助線のまま固定されて「線がひけない」状態になった)。
+        # 上の2分岐は両方とも`confirmed`がTrueになることが前提で、confirmedは
+        # `checked is True`でしか立たない。つまりCHECKEDが読めない(None=対象の
+        # ボタンが今表示中のツールバーページに無い、send_command.pyのコメント
+        # 参照)か、ずっとFalse(コマンド切替自体が効いていない)環境では、
+        # **モードから抜ける経路が一切存在しなかった**。
+        if pending["confirmed"]:
+            return
+        started_at = pending.get("started_at")
+        if started_at is None:
+            # JwNavigator再起動をまたいで復元されたpendingには無いので、
+            # 見つけた時点を起点にする(即座に保険が働かないようにする)。
+            pending["started_at"] = time.time()
+            return
+        if time.time() - started_at < self.AUTO_ATTR_CONFIRM_TIMEOUT_SEC:
+            return
+        self.write_system_log(
+            f"⚠️ [補助線系ボタン] 対象コマンド({pending['target_command']})の選択状態を"
+            f"{self.AUTO_ATTR_CONFIRM_TIMEOUT_SEC:.0f}秒間確認できなかったため、"
+            f"線属性を元に戻します(CHECKED判定={checked})。"
+        )
+        self._revert_auto_attr(hwnd)
 
     def _revert_auto_attr(self, hwnd):
         pending = self._auto_attr_pending.pop(hwnd, None)
@@ -1830,6 +2011,15 @@ class JwNavigatorManager:
             self.root.after_cancel(self._monitor_job)
         except Exception as exc:
             logging.exception("shutdown_manager after_cancel failed")
+        # 👑 開きっぱなしにしているログのハンドルを閉じる(write_system_log
+        # 参照)。毎回flushしているので閉じ忘れても内容は失われないが、
+        # 終了後にログファイルを削除/移動できるようにしておく。
+        try:
+            if self._log_fp is not None:
+                self._log_fp.close()
+                self._log_fp = None
+        except Exception:
+            pass
         self.root.quit()
         self.root.destroy()
 

@@ -150,11 +150,30 @@ def ensure_gcom100_registered(jw_cad_exe_dir, log=None):
     開発環境(python main.py)ではexternal_transform_dir()がbat/exeを
     実際には展開しない場所を指すため、ここで登録するとむしろ壊れた
     パスを書いてしまう(2026-09-11、実装中に気づいて追加した安全策)。
-    """
+
+    👑 2026-09-16追記: 戻り値は「今回どこかのプロファイルへ新規登録
+    (元々空だったスロットへの初回書き込み)を行ったか」のbool。jw_cadは
+    キー割り付けを自分の起動時にしか読み込まないため、jw_cadが既に
+    起動済みの状態でここが新規登録を行った場合、書き込みはファイルには
+    反映されるが起動中のjw_cadのメモリ上の割り付けには反映されず、
+    Ctrl+J/Ctrl+Kを送っても無反応になる(実機で発覚: kosakaPCで新規
+    登録直後にレイヤ保存(全自動)を実行したところ、jw_cad側の状態が
+    一切変化せず「選択確定」ボタンが見つからずタイムアウトした)。
+    呼び出し側(main.py)はこれを見て、利用者に「一度jw_cadを閉じて
+    開き直してください」と案内する。
+
+    👑 2026-09-16再追記: 戻り値はdict。
+      new_registration: 空スロットへ初回登録した(=jw_cadの再起動が要る)
+      conflicts: [(プロファイル名, "Ctrl+J"/"Ctrl+K", 既存の外部変形名)]
+                 他人の登録があって書き換えを見送った箇所。放置すると
+                 「レイヤ保存だけ永久に使えない」状態に無自覚で陥るため、
+                 呼び出し側で利用者に知らせる。
+      has_jw_win: Jw_win.jwfの有無(has_jw_win_jwf()参照)。"""
+    empty = {"new_registration": False, "conflicts": [], "has_jw_win": False}
     if not getattr(sys, "frozen", False):
-        return
+        return empty
     if not jw_cad_exe_dir or not os.path.isdir(jw_cad_exe_dir):
-        return
+        return empty
 
     target_dir = external_transform_dir()
 
@@ -167,19 +186,155 @@ def ensure_gcom100_registered(jw_cad_exe_dir, log=None):
                 seen.add(key)
                 jwf_paths.append(p)
 
+    # 👑 2026-09-16: jw_cadは設定の大半をレジストリ
+    # (HKCU\Software\Jw_cad\jw_win)に保存しているが、**GCOM_1XX(Ctrl+英字
+    # での外部変形起動)だけはレジストリに一切保存されない**(実機のレジストリ
+    # を全走査して確認。KEY割り付けは`KeyCom`キーにあるのにGCOMは無く、
+    # あるのは「最後に使った外部変形ファイル」等の履歴パスだけだった)。
+    # GCOMはjw_cadが**起動時にJw_win.jwfから読む**ときにしかメモリへ載らない。
+    # そのためJw_win.jwfが無い環境では、kousaka.JWFのような名前付き
+    # プロファイルへいくら登録しても、明示的に読み込まない限り永久に
+    # Ctrl+J/Ctrl+Kが効かない(kosakaPCがこの状態で、9/11から一度も
+    # レイヤ保存が成功していなかった)。無言では気づけないので警告する。
+    if not any(os.path.basename(p).lower() == "jw_win.jwf" for p in jwf_paths):
+        if log:
+            log(
+                "⚠️ jw_cadのフォルダにJw_win.jwfがありません。"
+                "jw_cadは起動時にこのファイルからしか外部変形のキー割り付けを"
+                "読まないため、このままではレイヤ保存が動きません。"
+                "jw_cadの[設定]→[環境設定ファイル]→[書込み]でJw_win.jwfを"
+                "作成してください。"
+            )
+
+    did_new_registration = False
+    conflicts = []
     for jwf_path in jwf_paths:
         if os.path.basename(jwf_path).lower() in _SKIP_PROFILE_NAMES:
             continue
-        _ensure_gcom_slot_in_file(
-            jwf_path, target_dir, _GCOM100_KEY, _GCOM100_NAME_FIELD_INDEX,
-            _GCOM100_DIR_FIELD_INDEX, _GCOM100_MIN_FIELDS, _EXTERNAL_TRANSFORM_FILENAME,
-            "Ctrl+J", log=log,
-        )
-        _ensure_gcom_slot_in_file(
-            jwf_path, target_dir, _GCOM110_KEY, _GCOM110_NAME_FIELD_INDEX,
-            _GCOM110_DIR_FIELD_INDEX, _GCOM110_MIN_FIELDS, _FAST_SAVE_FILENAME,
-            "Ctrl+K", log=log,
-        )
+        for key, name_idx, dir_idx, min_f, filename, label in (
+            (_GCOM100_KEY, _GCOM100_NAME_FIELD_INDEX, _GCOM100_DIR_FIELD_INDEX,
+             _GCOM100_MIN_FIELDS, _EXTERNAL_TRANSFORM_FILENAME, "Ctrl+J"),
+            (_GCOM110_KEY, _GCOM110_NAME_FIELD_INDEX, _GCOM110_DIR_FIELD_INDEX,
+             _GCOM110_MIN_FIELDS, _FAST_SAVE_FILENAME, "Ctrl+K"),
+        ):
+            result = _ensure_gcom_slot_in_file(
+                jwf_path, target_dir, key, name_idx, dir_idx, min_f, filename,
+                label, log=log,
+            )
+            if result == "new":
+                did_new_registration = True
+            elif isinstance(result, tuple) and result[0] == "conflict":
+                conflicts.append((os.path.basename(jwf_path), label, result[1]))
+
+    return {
+        "new_registration": did_new_registration,
+        "conflicts": conflicts,
+        "has_jw_win": has_jw_win_jwf(jw_cad_exe_dir),
+    }
+
+
+def has_jw_win_jwf(jw_cad_exe_dir):
+    """👑 2026-09-16: jw_cadが起動時に読む唯一のファイルJw_win.jwfがあるか。
+    GCOM(Ctrl+英字での外部変形起動)はレジストリに保存されず、このファイル
+    からしか読み込まれないことを実機の対照実験で確認済み(GCOM_110行を空に
+    して再起動するとCtrl+Kが完全に無反応になり、戻すとまた効く)。
+    無い場合は登録しても永久に効かないため、呼び出し側(main.py)は
+    「利用者が後からJw_win.jwfを作った」ケースを拾えるよう、確認済み
+    フラグを立てずに次回のjw_cad検出でもう一度確認する。"""
+    if not jw_cad_exe_dir or not os.path.isdir(jw_cad_exe_dir):
+        return False
+    return os.path.isfile(os.path.join(jw_cad_exe_dir, "Jw_win.jwf"))
+
+
+def _log_registered_dir_contents(line_text, gcom_key, log):
+    """GCOM_1XX行の11番目(フォルダ)を取り出し、そこに実際の.BATがあるかを見る。
+    jw_cadが本当に見に行くのはこのフォルダなので、展開先(external_transform_dir)
+    が正しくても、ここがズレていればレイヤ保存は動かない。"""
+    fields = line_text.partition("=")[2].split(",")
+    if len(fields) <= _GCOM100_DIR_FIELD_INDEX:
+        return
+    registered_dir = fields[_GCOM100_DIR_FIELD_INDEX].strip()
+    if not registered_dir:
+        log(f"🔎 [環境]     → {gcom_key}の登録先フォルダが空です")
+        return
+    filename = (
+        _EXTERNAL_TRANSFORM_FILENAME if gcom_key == _GCOM100_KEY else _FAST_SAVE_FILENAME
+    ) + ".BAT"
+    path = os.path.join(registered_dir, filename)
+    if os.path.isfile(path):
+        log(f"🔎 [環境]     → 登録先に{filename}あり: {registered_dir}")
+    else:
+        log(f"🔎 [環境]     → ❌ 登録先に{filename}がありません: {registered_dir}")
+
+
+def describe_environment(jw_cad_exe_dir, log=None):
+    """👑 2026-09-16: 他人のPC(kosakaPC等)は頻繁に触れないため、「1回起動して
+    ログを送ってもらえば原因が確定する」ことを狙った環境スナップショット。
+    レイヤ保存が動かない時に必要な情報(外部変形ファイルの実在、jw_cadの
+    プロファイル構成、GCOM行の実際の中身)を起動直後にまとめて吐く。
+
+    実際にkosakaPCの調査では、この情報が無いために
+    「Jw_win.jwfが無い」という一点に辿り着くまで往復を繰り返した。"""
+    if not log:
+        return
+
+    target_dir = external_transform_dir()
+    log(f"🔎 [環境] 外部変形フォルダ: {target_dir}")
+    for name in _BUNDLE_ITEMS:
+        path = os.path.join(target_dir, name)
+        try:
+            size = os.path.getsize(path)
+            log(f"🔎 [環境]   {name}: あり ({size} bytes)")
+        except OSError:
+            log(f"🔎 [環境]   {name}: ❌ ありません")
+
+    log(f"🔎 [環境] jw_cadフォルダ: {jw_cad_exe_dir}")
+    if not jw_cad_exe_dir or not os.path.isdir(jw_cad_exe_dir):
+        log("🔎 [環境]   ❌ フォルダを特定できませんでした")
+        return
+
+    seen = set()
+    jwf_paths = []
+    for pattern in ("*.jwf", "*.JWF"):
+        for p in glob.glob(os.path.join(jw_cad_exe_dir, pattern)):
+            key = os.path.normcase(os.path.abspath(p))
+            if key not in seen:
+                seen.add(key)
+                jwf_paths.append(p)
+    if not jwf_paths:
+        log("🔎 [環境]   ❌ プロファイル(*.jwf/*.JWF)が1つもありません")
+        return
+
+    has_jw_win = any(os.path.basename(p).lower() == "jw_win.jwf" for p in jwf_paths)
+    log(f"🔎 [環境]   Jw_win.jwf(jw_cadが起動時に読む唯一のファイル): "
+        f"{'あり' if has_jw_win else '❌ ありません'}")
+    for jwf_path in jwf_paths:
+        name = os.path.basename(jwf_path)
+        if name.lower() in _SKIP_PROFILE_NAMES:
+            continue
+        try:
+            raw = open(jwf_path, "rb").read()
+        except Exception as e:
+            log(f"🔎 [環境]   {name}: 読み取り失敗 {e}")
+            continue
+        newline = b"\r\n" if b"\r\n" in raw else b"\n"
+        found = {}
+        for line_bytes in raw.split(newline):
+            for key in (_GCOM100_KEY, _GCOM110_KEY):
+                if line_bytes.startswith(key.encode("ascii")):
+                    found[key] = line_bytes.decode("cp932", errors="replace").rstrip()
+        for key in (_GCOM100_KEY, _GCOM110_KEY):
+            line_text = found.get(key)
+            if line_text is None:
+                log(f"🔎 [環境]   {name}: ❌ {key}の行がありません")
+                continue
+            log(f"🔎 [環境]   {name}: {line_text}")
+            # 👑 DECISIONS.md(2026-09-14)の教訓: 「外部変形が絡む不具合を追う
+            # 前に、まずGCOM_1XXが指すフォルダにA_SAVE.BAT/B_MARK.BATが実在
+            # するかを確認すること」。展開先(external_transform_dir())と
+            # jw_cadが実際に見に行く登録先はズレることがある(リビルド後、
+            # exeの置き場所を変えた後など)ので、登録先の方を確認する。
+            _log_registered_dir_contents(line_text, key, log)
 
 
 def _ensure_gcom_slot_in_file(
@@ -198,16 +353,20 @@ def _ensure_gcom_slot_in_file(
     except Exception as e:
         if log:
             log(f"⚠️ {name}の読み込みに失敗したため{gcom_key}確認をスキップしました: {e}")
-        return
+        return False
 
     newline = b"\r\n" if b"\r\n" in raw else b"\n"
     key_bytes = gcom_key.encode("ascii")
     lines = raw.split(newline)
 
     changed = False
+    is_new_registration = False
+    found_line = False
+    conflict_with = None
     for i, line_bytes in enumerate(lines):
         if not line_bytes.startswith(key_bytes):
             continue
+        found_line = True
         if b"=" not in line_bytes:
             break
         try:
@@ -227,6 +386,7 @@ def _ensure_gcom_slot_in_file(
         if current_name == "":
             fields[name_field_index] = filename
             new_dir = target_dir
+            is_new_registration = True
             if log:
                 log(f"🔧 {name}の{gcom_key}({key_label})に{filename}を新規登録しました: {target_dir}")
         elif current_name == filename:
@@ -234,7 +394,14 @@ def _ensure_gcom_slot_in_file(
                 new_dir = target_dir
                 if log:
                     log(f"🔧 {name}の{gcom_key}登録先を更新しました: {current_dir} → {target_dir}")
+            elif log:
+                # 👑 2026-09-16: 「既に正しく登録済みなので何もしなかった」
+                # 場合も痕跡を残す。kosakaPCの調査で、ログに何も出ない状態が
+                # 「確認した上で正常」なのか「そのファイルを見ていない」のか
+                # 区別できず原因切り分けに丸1日かかったため。
+                log(f"✅ {name}の{gcom_key}({key_label})は既に登録済みです: {current_dir}")
         else:
+            conflict_with = current_name
             if log:
                 log(
                     f"⚠️ {name}の{gcom_key}({key_label})は別の外部変形({current_name})が"
@@ -249,8 +416,21 @@ def _ensure_gcom_slot_in_file(
             changed = True
         break  # 対象のGCOM_1XX行は1ファイルに1つのはず
 
+    if not found_line and log:
+        # 👑 2026-09-16: 行自体が無いプロファイルは今まで無言で素通りして
+        # いた。jw_cadが実際に読むのは Jw_win.jwf なので、そこに行が無いと
+        # 「登録したはずなのにCtrl+J/Ctrl+Kが効かない」状態になり、しかも
+        # ログに何の痕跡も残らない(kosakaPCの調査で判明)。
+        log(
+            f"⚠️ {name}に{gcom_key}の行がありません。"
+            f"このプロファイルには{key_label}の外部変形を登録できませんでした。"
+        )
+
+    if conflict_with:
+        return ("conflict", conflict_with)
+
     if not changed:
-        return
+        return None
 
     try:
         backup_path = jwf_path + ".bak_jwnavigator"
@@ -262,4 +442,7 @@ def _ensure_gcom_slot_in_file(
     except Exception as e:
         if log:
             log(f"⚠️ {name}への書き込みに失敗しました: {e}")
+        return None
+
+    return "new" if is_new_registration else "updated"
 # ===== ✂️ utils/external_transform_setup.py END ✂️ =====

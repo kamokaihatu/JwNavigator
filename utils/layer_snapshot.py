@@ -42,6 +42,7 @@ Windows「開く」ダイアログを開くため、ファイル名欄への直�
 import ctypes
 import os
 import shutil
+import sys
 import time
 
 import win32api
@@ -88,6 +89,25 @@ FAST_SELECT_CLICK_HOLD_SEC = 0.08      # mousedown〜mouseupの間隔
 FAST_SELECT_AFTER_CLICK_SEC = 0.2      # クリック後、次の操作までの待ち
 
 
+def _missing_external_transform_file(filename):
+    """Ctrl+J/Ctrl+K送信前の事前チェック。呼び出し先の.BATが実在しない場合、
+    jw_cadは外部変形を開始せず**何の反応も返さない**ため、こちらからは
+    「選択確定ボタンが出てこない」という形でしか検知できず、原因が
+    ログから全く追えない(kosakaPCの調査、2026-09-16)。送る前に確認する。
+    戻り値: 存在すればNone、無ければ期待していたフルパス。
+
+    👑 配布版(sys.frozen)だけで判定する。開発環境では
+    external_transform_dir()がリポジトリ直下を指すのに対し、jw_cadの
+    プロファイルに登録されているのはdist配下(過去に配布版を動かした時の
+    登録)で、両者がズレるため必ず誤検知になる。実際にこのチェックを
+    入れた直後、開発モードのレイヤ保存が動かなくなって気づいた
+    (jw_cadが見に行くのは登録先であってこちらの展開先ではない)。"""
+    if not getattr(sys, "frozen", False):
+        return None
+    path = os.path.join(external_transform_setup.external_transform_dir(), filename)
+    return None if os.path.isfile(path) else path
+
+
 def _hw_click(hwnd, x, y, settle=FAST_SELECT_CLICK_SETTLE_SEC):
     """実際のマウスカーソルを動かし、ハードウェアレベルでクリックする。
     👑 win32gui.PostMessage(WM_LBUTTONDOWN/UP)では、jw_cadの「点」コマンド
@@ -106,6 +126,20 @@ def _hw_click(hwnd, x, y, settle=FAST_SELECT_CLICK_SETTLE_SEC):
 
 
 _FAST_SELECT_END_RETRY_MAX = 5
+
+# 👑 2026-09-16: Ctrl+Kを送ってもjw_cadが一切反応しない(ステータスバーが
+# 1文字も変わらない)場合の案内。実機で確認できた原因は2つあり、どちらも
+# 「利用者からは突然レイヤ保存が壊れたようにしか見えない」ため、復旧方法
+# まで書く。(1)Jw_win.jwfが無い(GCOMはこのファイルからしか読まれない)、
+# (2)GCOM登録の無い環境設定ファイルを[読込み]してしまい、メモリ上の
+# 割り付けが消えた(jw_cad再起動で復活する)。
+_CTRL_K_NO_RESPONSE_MESSAGE = (
+    "❌[レイヤ保存詳細]({mode}) Ctrl+Kを送ってもjw_cadが無反応でした。"
+    "外部変形(A_SAVE)の割り付けがjw_cad側に読み込まれていません。"
+    "別の環境設定ファイルを[設定]→[環境設定ファイル]→[読込み]しませんでしたか？ "
+    "その場合はjw_cadを再起動すれば直ります。"
+    "再起動しても直らない場合は、jw_cadフォルダにJw_win.jwfがあるか確認してください。"
+)
 
 
 def auto_select_something(hwnd, log=None):
@@ -422,7 +456,7 @@ def _find_visible_confirm_buttons(hwnd):
     return found
 
 
-def _wait_for_new_confirm_selection_button(hwnd, known, timeout=10.0):
+def _wait_for_new_confirm_selection_button(hwnd, known, timeout=10.0, baseline_status=None):
     """`known`(Ctrl+K送信直前に見えていた1120のhwnd集合)に含まれない、
     新しく現れた「選択確定」ボタンを待つ。_find_visible_confirm_buttons()
     のコメント参照。
@@ -438,14 +472,34 @@ def _wait_for_new_confirm_selection_button(hwnd, known, timeout=10.0):
     この`known`除外版に一本化した(重複していた2つの関数は削除済み)。
     タイムアウト値(既定10秒)は「重い図面だと時間がかかる」という
     推測に基づいていたが、その裏付けは無い(実測では最重量図面でも
-    8.6秒)。ポーリング自体は固定待ちより素直なのでこの形にしてある。"""
+    8.6秒)。ポーリング自体は固定待ちより素直なのでこの形にしてある。
+
+    👑 2026-09-16: 戻り値を (ボタンhwnd or None, ステータスバーが一度でも
+    変化したか) に変更した。失敗した時の原因が2つあり、区別できないと
+    利用者も開発側も詰むため(kosakaPCの調査で丸1日溶かした):
+      (A) 自動選択の失敗 → jw_cadは反応しているのでステータスバーは動く
+      (B) Ctrl+Kにそもそも外部変形が割り付いていない → jw_cadは**完全に
+          無反応**でステータスバーが1文字も変わらない
+    (B)は「Jw_win.jwfが無い」「GCOM登録の無い環境設定ファイルを読み込んで
+    しまい、メモリ上の割り付けが消えた」時に起きる(どちらも実機で再現
+    確認済み)。待っている間にステータスバーを覗いておけば、追加の待ち
+    時間ゼロで切り分けられる。
+
+    👑 `baseline_status`は**Ctrl+Kを送る前**に呼び出し側で取得して渡すこと。
+    ここで取ると、jw_cadが数ミリ秒で反応した場合に「変化後」を基準に
+    してしまい、正常に動いているのに(B)と誤判定する(実機で踏んだ)。"""
+    if baseline_status is None:
+        baseline_status = get_raw_statusbar_text(hwnd)
+    status_changed = False
     deadline = time.time() + timeout
     while time.time() < deadline:
         for h in _find_visible_confirm_buttons(hwnd):
             if h not in known:
-                return h
+                return h, True
+        if not status_changed and get_raw_statusbar_text(hwnd) != baseline_status:
+            status_changed = True
         time.sleep(0.15)
-    return None
+    return None, status_changed
 
 
 def trigger_save_fast(hwnd, log=None):
@@ -511,18 +565,25 @@ def trigger_save_fast(hwnd, log=None):
     # 新規出現分だけを対象にする(trigger_save_fast_auto()と同じ対策)。
     known_buttons = set(_find_visible_confirm_buttons(hwnd))
 
+    # 👑 基準はCtrl+Kを送る前に取る(送信後だと即応時に誤判定する)。
+    baseline_status = get_raw_statusbar_text(hwnd)
     _log("[レイヤ保存詳細](高速) Ctrl+K送信(A_SAVEへ直接)")
     win32api.keybd_event(VK_CONTROL, 0, 0, 0)
     win32api.keybd_event(FAST_SAVE_KEY_VK, 0, 0, 0)
     win32api.keybd_event(FAST_SAVE_KEY_VK, 0, win32con.KEYEVENTF_KEYUP, 0)
     win32api.keybd_event(VK_CONTROL, 0, win32con.KEYEVENTF_KEYUP, 0)
 
-    btn = _wait_for_new_confirm_selection_button(hwnd, known_buttons)
+    btn, status_changed = _wait_for_new_confirm_selection_button(
+        hwnd, known_buttons, baseline_status=baseline_status
+    )
     if not btn:
-        _log(
-            "❌[レイヤ保存詳細](高速) 「選択確定」ボタンが見つかりません"
-            "(先に図形を1つ以上選択してから押してください)"
-        )
+        if status_changed:
+            _log(
+                "❌[レイヤ保存詳細](高速) 「選択確定」ボタンが見つかりません"
+                "(先に図形を1つ以上選択してから押してください)"
+            )
+        else:
+            _log(_CTRL_K_NO_RESPONSE_MESSAGE.format(mode="高速"))
         return None
     win32gui.SendMessage(btn, BM_CLICK, 0, 0)
     _log("[レイヤ保存詳細](高速) 選択確定ボタンをクリック(以後はjw_cad内部処理待ち)")
@@ -563,6 +624,13 @@ def trigger_save_fast_auto(hwnd, log=None):
     mem = get_memory_status()
     if mem:
         _log(f"[レイヤ保存詳細](全自動) 空きメモリ: {mem[1]:.0f}MB / {mem[2]:.0f}MB (使用率{mem[0]}%)")
+    missing = _missing_external_transform_file("A_SAVE.BAT")
+    if missing:
+        _log(
+            f"❌[レイヤ保存詳細](全自動) 外部変形ファイルが見つかりません: {missing}"
+            "(ウイルス対策ソフトに削除された可能性があります)"
+        )
+        return None
     force_foreground(hwnd)
     time.sleep(0.2)
     if win32gui.GetForegroundWindow() != hwnd:
@@ -583,18 +651,27 @@ def trigger_save_fast_auto(hwnd, log=None):
     # (_find_visible_confirm_buttons()のコメント参照)。
     known_buttons = set(_find_visible_confirm_buttons(hwnd))
 
+    # 👑 基準はCtrl+Kを送る前に取る(送信後だと即応時に誤判定する)。
+    baseline_status = get_raw_statusbar_text(hwnd)
     _log("[レイヤ保存詳細](全自動) Ctrl+K送信(A_SAVEへ直接)")
     win32api.keybd_event(VK_CONTROL, 0, 0, 0)
     win32api.keybd_event(FAST_SAVE_KEY_VK, 0, 0, 0)
     win32api.keybd_event(FAST_SAVE_KEY_VK, 0, win32con.KEYEVENTF_KEYUP, 0)
     win32api.keybd_event(VK_CONTROL, 0, win32con.KEYEVENTF_KEYUP, 0)
 
-    btn = _wait_for_new_confirm_selection_button(hwnd, known_buttons)
+    btn, status_changed = _wait_for_new_confirm_selection_button(
+        hwnd, known_buttons, baseline_status=baseline_status
+    )
     if not btn:
-        _log(
-            "❌[レイヤ保存詳細](全自動) 「選択確定」ボタンが見つかりません"
-            "(自動選択に失敗した可能性があります)"
-        )
+        # 👑 2026-09-16: ここに来る原因は2つあり、ステータスバーが動いたか
+        # どうかで区別できる(_wait_for_new_confirm_selection_button参照)。
+        if status_changed:
+            _log(
+                "❌[レイヤ保存詳細](全自動) 「選択確定」ボタンが見つかりません"
+                "(自動選択に失敗した可能性があります)"
+            )
+        else:
+            _log(_CTRL_K_NO_RESPONSE_MESSAGE.format(mode="全自動"))
         # 👑 点だけ作図されて選択に失敗した場合でも、後始末は試みる。
         _remove_last_drawn_point(hwnd)
         return None
