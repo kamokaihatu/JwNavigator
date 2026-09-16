@@ -6,6 +6,7 @@ import win32gui
 import win32api
 
 from utils.send_key import force_foreground_window
+from utils import diagnostics
 
 WM_COMMAND = 0x0111
 TB_GETSTATE = 0x0412
@@ -32,8 +33,20 @@ def _find_toolbar_windows(hwnd):
 
     try:
         win32gui.EnumChildWindows(hwnd, _cb, None)
-    except Exception:
-        pass
+    except Exception as e:
+        # 👑 2026-09-16: 列挙自体が失敗したら、ツールバーの状態が一切
+        # 読めない=パレットの凹み連動もコマンドの有効判定も死ぬ。
+        # 黙って空を返すと「なぜか連動しない」にしか見えないので記録する。
+        diagnostics.note("jw_cadのツールバー列挙", f"失敗しました: {e}")
+        return toolbars
+    if not toolbars:
+        diagnostics.note(
+            "jw_cadのツールバー",
+            "表示中のToolbarWindow32が1つも見つかりません"
+            "(コマンドの選択状態・有効判定が働きません)",
+        )
+    else:
+        diagnostics.ok("jw_cadのツールバー", f"{len(toolbars)}個")
     return toolbars
 
 

@@ -25,6 +25,7 @@ import win32gui
 import win32process
 
 from utils.send_key import force_foreground_window
+from utils import diagnostics
 
 WM_COMMAND = 0x0111
 BM_CLICK = 0x00F5
@@ -61,8 +62,17 @@ def _find_dialog_hwnd(timeout=0.6):
         except Exception:
             pass
         if found:
+            diagnostics.ok("線属性ダイアログ")
             return found[0]
         time.sleep(0.03)
+    # 👑 2026-09-16: ここでNoneを返すとread_current_attr()/apply_attr()が
+    # 揃って失敗し、モードボタンが「押しても何も起きない」状態になる。
+    # 今までは黙ってNoneだったため原因が追えなかったので記録する。
+    diagnostics.note(
+        "線属性ダイアログ",
+        f"{timeout}秒待っても開きませんでした"
+        "(モードボタンの線属性切替が働きません)",
+    )
     return None
 
 
@@ -79,8 +89,19 @@ def _build_ctrl_map(dialog_hwnd):
 
     try:
         win32gui.EnumChildWindows(dialog_hwnd, cb, None)
-    except Exception:
-        pass
+    except Exception as e:
+        diagnostics.note("線属性ダイアログの中身", f"列挙に失敗しました: {e}")
+        return ctrl_map
+    # 👑 2026-09-16: 空やOKボタン欠けは「ダイアログは開いたのに操作できない」
+    # 状態で、apply_attr()が黙ってFalseを返すだけになる。
+    if OK_CTRL_ID not in ctrl_map:
+        diagnostics.note(
+            "線属性ダイアログの中身",
+            f"OKボタン(ctrl_id={OK_CTRL_ID})が見つかりません"
+            f"(検出したコントロール数={len(ctrl_map)})",
+        )
+    else:
+        diagnostics.ok("線属性ダイアログの中身", f"コントロール{len(ctrl_map)}個")
     return ctrl_map
 
 
@@ -434,6 +455,19 @@ def _find_statusbar(hwnd):
         win32gui.EnumChildWindows(hwnd, cb, None)
     except Exception:
         pass
+    if not found:
+        # 👑 2026-09-16: ここが見つからないとread_current_layer_group()が
+        # (None, None)を返す。すると set_layer_group() の「既に選択中の
+        # ボタンは右クリックしない」という判定が効かなくなり、レイヤ一覧
+        # ダイアログが勝手に開く(同関数の👑コメント参照)。実害があるのに
+        # 今まで黙ってNoneを返していたので記録する。
+        diagnostics.note(
+            "jw_cadのステータスバー",
+            "見つかりません(現在のレイヤ/グループを読めず、"
+            "レイヤ一覧ダイアログが開く場合があります)",
+        )
+    else:
+        diagnostics.ok("jw_cadのステータスバー")
     return found[0] if found else None
 
 
