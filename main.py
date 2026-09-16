@@ -943,8 +943,11 @@ class JwNavigatorManager:
                         try:
                             jw_exe_path = self._get_exe_path_for_hwnd(hwnd)
                             if jw_exe_path:
+                                reserved = self._jw_cad_reserved_ctrl_letters(hwnd)
                                 result = external_transform_setup.ensure_gcom100_registered(
-                                    os.path.dirname(jw_exe_path), log=self.write_system_log
+                                    os.path.dirname(jw_exe_path),
+                                    log=self.write_system_log,
+                                    reserved_letters=reserved,
                                 )
                                 # 👑 2026-09-16: 既定のCtrl+J/Ctrl+Kが他の外部
                                 # 変形に使われていた場合、登録側は空いている
@@ -1006,6 +1009,48 @@ class JwNavigatorManager:
                         f"❌ パレット動的構築失敗 [HWND:{hwnd}]: {str(e)}"
                     )
 
+    # 👑 jw_cadのメニューに出てこないが、利用者が当然使えると思っている
+    # Windows定番のキー。奪うと「Ctrl+Aが効かなくなった」と言われるので
+    # 外部変形の割り当て先からは常に除外する。
+    _ALWAYS_RESERVED_CTRL_LETTERS = frozenset("AF")
+
+    def _jw_cad_reserved_ctrl_letters(self, hwnd):
+        """jw_cad自身がCtrl+英字で使っているキーを、メニューのアクセラレータ
+        表示から読み取って返す(実測: 新規作成=Ctrl+N、上書き保存=Ctrl+S、
+        コピー=Ctrl+C 等)。外部変形の割り当て先を自動で決める際、ここに
+        入っているキーは避ける。
+        👑 推測した固定リストではなく実機から読むのは、jw_cadのバージョンや
+        利用者のカスタマイズで変わり得るため(2026-09-16、kamoの指摘
+        「Ctrl+Aとかターゲットが違ったら違う話になります」への対応)。"""
+        letters = set(self._ALWAYS_RESERVED_CTRL_LETTERS)
+        user32 = ctypes.windll.user32
+
+        def walk(menu, depth):
+            try:
+                count = win32gui.GetMenuItemCount(menu)
+            except Exception:
+                return
+            for i in range(count):
+                try:
+                    buf = ctypes.create_unicode_buffer(256)
+                    user32.GetMenuStringW(menu, i, buf, 256, win32con.MF_BYPOSITION)
+                    text = buf.value
+                    sub = user32.GetSubMenu(menu, i)
+                except Exception:
+                    continue
+                if sub and depth < 3:
+                    walk(sub, depth + 1)
+                elif "\t" in text:
+                    accel = text.split("\t", 1)[1].strip().upper()
+                    if accel.startswith("CTRL+") and len(accel) == len("CTRL+") + 1:
+                        letters.add(accel[-1])
+
+        try:
+            walk(win32gui.GetMenu(hwnd), 0)
+        except Exception:
+            pass
+        return letters
+
     def _log_display_and_toolbar_environment(self, hwnd):
         # 👑 2026-09-16: 他人のPCは頻繁に触れないため、1回の起動ログで環境差を
         # 追えるようにする。DPIはkosakaPCで「文字がボタンからはみ出す」不具合の
@@ -1032,6 +1077,13 @@ class JwNavigatorManager:
             )
         except Exception as e:
             self.write_system_log(f"🔎 [環境] ツールバー情報の取得に失敗: {e}")
+        try:
+            reserved = sorted(self._jw_cad_reserved_ctrl_letters(hwnd))
+            self.write_system_log(
+                f"🔎 [環境] 外部変形に使わないCtrl+英字(jw_cadが使用中+定番): {''.join(reserved)}"
+            )
+        except Exception as e:
+            self.write_system_log(f"🔎 [環境] Ctrl+英字の使用状況の取得に失敗: {e}")
 
     _MESSAGE_LOCK = threading.Lock()
 

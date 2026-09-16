@@ -140,7 +140,7 @@ def ensure_deployed(log=None):
         log(f"🔧 外部変形ツールを展開しました: {target_dir}")
 
 
-def ensure_gcom100_registered(jw_cad_exe_dir, log=None):
+def ensure_gcom100_registered(jw_cad_exe_dir, log=None, reserved_letters=None):
     """jw_cadのプロファイル(*.jwf/*.JWF)全部のGCOM_100/GCOM_110を確認し、
     必要ならCtrl+J(B_MARK)/Ctrl+K(A_SAVE直結、レイヤ保存高速版用)へ
     外部変形の登録(フォルダは今のexternal_transform_dir())を行う。既に
@@ -217,7 +217,9 @@ def ensure_gcom100_registered(jw_cad_exe_dir, log=None):
     for jwf_path in jwf_paths:
         if os.path.basename(jwf_path).lower() in _SKIP_PROFILE_NAMES:
             continue
-        result = _register_in_profile(jwf_path, target_dir, log=log)
+        result = _register_in_profile(
+            jwf_path, target_dir, log=log, reserved_letters=reserved_letters
+        )
         if result["new_registration"]:
             did_new_registration = True
         conflicts.extend(result["conflicts"])
@@ -253,7 +255,23 @@ def _slot_key_letter(block_index, slot_index):
     return chr(ord("A") + block_index * _SLOTS_PER_BLOCK + slot_index)
 
 
-def _register_in_profile(jwf_path, target_dir, log=None):
+def _slot_of_letter(letter):
+    index = ord(letter) - ord("A")
+    return index // _SLOTS_PER_BLOCK, index % _SLOTS_PER_BLOCK
+
+
+# 👑 2026-09-16: 既定のCtrl+J/Ctrl+Kが埋まっていた時に代わりを探す順番。
+# アルファベット順(A,B,C…)だと左手の狭い範囲に集中してしまい、Ctrlを
+# 押しながらだと押しづらい上に、定番ショートカットとも近い。kamoの指示
+# 「BDEは後回しに。キーボードの右のほうから使いましょう」に従い、
+# QWERTY配列で**右側にあるキーから順**に並べてある(同じくらいの位置なら
+# ホームポジション行を優先)。使えるのはGCOM_100=A〜J、GCOM_110=K〜Tの
+# 20文字だけなので、その20文字をすべて1回ずつ並べている。
+# 実際にはこの順から「jw_cadが使用中のキー」を除外して使う。
+_FALLBACK_LETTER_ORDER = "PLOKIMJNHTGBFREDCSQA"
+
+
+def _register_in_profile(jwf_path, target_dir, log=None, reserved_letters=None):
     """1つのプロファイルにB_MARK/A_SAVEを登録する。
 
     👑 2026-09-16: 以前は「Ctrl+Jが埋まっていたら諦める」だけだった。
@@ -338,11 +356,21 @@ def _register_in_profile(jwf_path, target_dir, log=None):
             continue
 
         # 2) 既定のスロット → 空いていれば使う。埋まっていれば他の空きを探す
+        # 👑 2026-09-16: 空きを探す際、jw_cadが既にCtrl+英字で使っている
+        # キー(Ctrl+C/N/O/P/S等。呼び出し側がメニューから実測して渡す)は
+        # 避ける。奪うとその人の普段の操作が変わってしまうため
+        # (kamoの指摘「Ctrl+Aとかターゲットが違ったら違う話になります」)。
+        # 避けた結果どこにも入らない場合は、勝手に奪わずconflictとして
+        # 利用者に知らせる。
+        reserved = {c.upper() for c in (reserved_letters or ())}
         candidates = [_PREFERRED_SLOT[filename]]
-        for block_index in sorted(blocks):
-            for slot in range(_SLOTS_PER_BLOCK):
-                if (block_index, slot) not in candidates:
-                    candidates.append((block_index, slot))
+        for letter in _FALLBACK_LETTER_ORDER:
+            slot = _slot_of_letter(letter)
+            if slot not in candidates:
+                candidates.append(slot)
+        candidates = [
+            c for c in candidates if _slot_key_letter(*c) not in reserved
+        ]
         placed = None
         for block_index, slot in candidates:
             block = blocks.get(block_index)
