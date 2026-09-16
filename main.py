@@ -75,6 +75,7 @@ from utils.win_event_watcher import WinEventWatcher
 from utils.palette_layout import compute_palette_geometry
 from utils import window_state
 from utils import external_transform_setup
+from utils import diagnostics
 from utils import app_paths
 from utils import auto_attr_state
 from utils import menu_prefs
@@ -335,6 +336,9 @@ class JwNavigatorManager:
         # 20マイクロ秒/行(約620倍)まで落ちた。os.path.getsizeも毎回
         # 呼んでいたが、実測では誤差だったのでtell()に置き換えた。
         self._log_fp = None
+        # 👑 2026-09-16: 「探したが見つからなかった」を黙って握りつぶさない
+        # ための共通記録先(utils/diagnostics.py)。ここでログ出力先を渡す。
+        diagnostics.set_log_sink(self.write_system_log)
         self.write_system_log("--- JwNavigator Ver3.75 メインシステム始動 ---")
 
         # 👑 2026-09-11: 「exeを入れ替え/移動しても設定が消えないように」、
@@ -1094,6 +1098,10 @@ class JwNavigatorManager:
             )
         except Exception as e:
             self.write_system_log(f"🔎 [環境] レイヤバー判別の確認に失敗: {e}")
+        # 👑 2026-09-16: 起動時点で既に記録されている「見つからなかった」を
+        # まとめて出す(set_log_sink前のnote()はログに出ないため、ここで拾う)。
+        for key, message in diagnostics.describe().items():
+            self.write_system_log(f"🔎 [環境] {key}: {message}")
 
     _MESSAGE_LOCK = threading.Lock()
 
