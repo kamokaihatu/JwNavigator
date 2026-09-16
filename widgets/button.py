@@ -4,6 +4,7 @@ import os
 import re
 import tkinter as tk
 
+from utils import diagnostics
 from utils.palette_config import (
     png_icon_path, BUTTON_KIND_FLYOUT, BUTTON_KIND_MACRO, BUTTON_KIND_AUTO_ATTR,
     BUTTON_KIND_LAYER_SNAPSHOT, layer_snapshot_path,
@@ -307,8 +308,18 @@ class NavButton(tk.Frame):
                     self.photo_img = tk.PhotoImage(file=png_path)
                     self.canvas.create_image(self.center, self.center, image=self.photo_img)
                     drawn = True
-                except Exception:
-                    pass
+                except Exception as e:
+                    # 👑 2026-09-16: ファイルは在るのに読めない場合(JPEGを
+                    # .pngにリネームした、破損している等)。今までは黙って
+                    # 文字表示へフォールバックしていたため、利用者からは
+                    # 「PNGを置いたのにアイコンにならない」としか見えず、
+                    # 原因を知る手段が無かった。readmeで自作PNGの追加を
+                    # 案内している以上、これは案内すべき失敗。
+                    diagnostics.note(
+                        f"アイコン画像 {self.icon_name}.png",
+                        "読み込めないため文字表示にしました。PNG形式か確認してください"
+                        f"(他の形式を.pngにリネームしただけでは表示できません): {e}",
+                    )
 
             if not drawn and self.icon_module:
                 try:
