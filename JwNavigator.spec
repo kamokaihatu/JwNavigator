@@ -32,6 +32,9 @@ a = Analysis(
     # 参照)。外部変形ツール(B_MARK.BAT/A_SAVE.BAT/mark_point.ps1/
     # dump_layers.ps1)を同梱し、utils/external_transform_setup.pyが
     # 起動のたびにexeの隣へ展開する。
+    # 👑 2026-09-24: これらの元ファイルはリポジトリ直下からexternal_transform_src/
+    # へ移動した。BAT同士は%~dp0で兄弟を呼び合うので、まとめて置く限り
+    # 壊れない(展開先のexternal_transform/では従来どおり同じ並びになる)。
     # 👑 2026-09-11さらに追記: mark_point.exe/dump_layers.exe(PyInstaller
     # 単体ビルド)は法人向けウイルス対策ソフトにブロックされる実例が
     # あったため、Windows標準搭載のpowershell.exe経由へ全面移行した
@@ -44,10 +47,10 @@ a = Analysis(
         ('data/app_icon.ico', 'data'),
         ('data/starter_presets', 'data/starter_presets'),
         ('data/commands_master.csv', 'data'),
-        ('B_MARK.BAT', 'external_transform_bundle'),
-        ('A_SAVE.BAT', 'external_transform_bundle'),
-        ('mark_point.ps1', 'external_transform_bundle'),
-        ('dump_layers.ps1', 'external_transform_bundle'),
+        ('external_transform_src/B_MARK.BAT', 'external_transform_bundle'),
+        ('external_transform_src/A_SAVE.BAT', 'external_transform_bundle'),
+        ('external_transform_src/mark_point.ps1', 'external_transform_bundle'),
+        ('external_transform_src/dump_layers.ps1', 'external_transform_bundle'),
     ],
     hiddenimports=collect_submodules('icons'),
     hookspath=[],
