@@ -179,6 +179,46 @@ LINE_TYPE_LABELS = ["実線", "点線1", "点線2", "点線3", "一点鎖1", "�
 DEFAULT_LINE_COLOR_CTRL_ID = 1409  # 補助線色
 DEFAULT_LINE_TYPE_CTRL_ID = 2457   # 補助線種
 
+# 👑 2026-09-24: jw_cadの線属性ダイアログで「SXF対応拡張線色・線種」に
+# チェックが入っているときの一覧(実機ダンプで採取、
+# tools/dump_line_attr_dialog.py)。**線色16個に対して線種は15個**と数が
+# 違う。2464は存在せず、2465は「ユーザー定義線種(UDLT)」なので含めない。
+#
+# ⚠️ **線種のctrl_idは既定モードと重なる**(既定の補助線種=2457は、SXFでは
+# 9番=二点鎖線)。したがって番号だけでは区別できず、ボタン側に
+# line_attr_sxf(どちらのモードの番号か)を必ず持たせる。詳細は
+# utils/line_attr_dialog.pyのSXF_CHECKBOX_ID付近のコメント参照。
+#
+# 👑 SXFには**補助線色・補助線種が存在しない**(9番目はdeeppink/二点鎖線)。
+# 補助線モードボタンを作りたい人は既定モード側を選ぶ必要がある。
+SXF_LINE_COLOR_CTRL_IDS = tuple(range(2268, 2284))
+SXF_LINE_TYPE_CTRL_IDS = tuple(range(2449, 2464))
+SXF_LINE_COLOR_LABELS = [
+    "1:black", "2:red", "3:green", "4:blue", "5:yellow", "6:magenta",
+    "7:cyan", "8:white", "9:deeppink", "10:brown", "11:orange",
+    "12:lightgreen", "13:lightblue", "14:lavender", "15:lightgray",
+    "16:darkgray",
+]
+SXF_LINE_TYPE_LABELS = [
+    "1:実線", "2:破線", "3:跳び破線", "4:一点長鎖線", "5:二点長鎖線",
+    "6:三点長鎖線", "7:点線", "8:一点鎖線", "9:二点鎖線", "10:一点短鎖線",
+    "11:一点二短鎖線", "12:二点短鎖線", "13:二点二短鎖線", "14:三点短鎖線",
+    "15:三点二短鎖線",
+]
+SXF_DEFAULT_LINE_COLOR_CTRL_ID = 2268  # 1:black
+SXF_DEFAULT_LINE_TYPE_CTRL_ID = 2449   # 1:実線
+
+
+def line_attr_choices(sxf):
+    """設定画面のドロップダウン用。(線色IDs, 線色ラベル, 線種IDs, 線種ラベル)。
+    👑 IDとラベルは必ずこの関数から対で取ること。既定とSXFで**個数が違う**
+    ため、片方だけ切り替えると添字がずれる。"""
+    if sxf:
+        return (SXF_LINE_COLOR_CTRL_IDS, SXF_LINE_COLOR_LABELS,
+                SXF_LINE_TYPE_CTRL_IDS, SXF_LINE_TYPE_LABELS)
+    return (LINE_COLOR_CTRL_IDS, LINE_COLOR_LABELS,
+            LINE_TYPE_CTRL_IDS, LINE_TYPE_LABELS)
+
 # 👑 レイヤ/レイヤグループ番号(0〜15)の表示ラベル(16進1桁、jw_cadの
 # 表記に合わせて0〜9,A〜F)。「変更しない」を含めて設定画面のドロップ
 # ダウンに使う。
@@ -396,12 +436,20 @@ def _normalize_button(raw, known_icons, allow_group=True):
         # たびに消滅していた)。
         button["sub_buttons"] = sub_buttons
     elif kind == BUTTON_KIND_AUTO_ATTR:
+        # 👑 2026-09-24: line_color/line_typeのctrl_idは**line_attr_sxfと
+        # セットでしか意味を持たない**。既定モードとSXFモードで線種の番号が
+        # 重なっているため(既定の補助線種=2457はSXFでは9番=二点鎖線)、
+        # どちらの一覧の番号かをここで必ず保持する。キーが無い古いconfigは
+        # False(既定モード)として扱う = 従来どおりの動作になる。
+        sxf = bool(raw.get("line_attr_sxf"))
+        color_ids, _clabels, type_ids, _tlabels = line_attr_choices(sxf)
         line_color = raw.get("line_color")
-        if line_color not in LINE_COLOR_CTRL_IDS:
-            line_color = DEFAULT_LINE_COLOR_CTRL_ID
+        if line_color not in color_ids:
+            line_color = SXF_DEFAULT_LINE_COLOR_CTRL_ID if sxf else DEFAULT_LINE_COLOR_CTRL_ID
         line_type = raw.get("line_type")
-        if line_type not in LINE_TYPE_CTRL_IDS:
-            line_type = DEFAULT_LINE_TYPE_CTRL_ID
+        if line_type not in type_ids:
+            line_type = SXF_DEFAULT_LINE_TYPE_CTRL_ID if sxf else DEFAULT_LINE_TYPE_CTRL_ID
+        button["line_attr_sxf"] = sxf
         button["line_color"] = line_color
         button["line_type"] = line_type
         button["line_width"] = str(raw.get("line_width") or "")

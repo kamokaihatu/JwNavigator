@@ -27,9 +27,14 @@ WM_CLOSE = 0x0010
 class CtrlIdFactsTests(unittest.TestCase):
     """IDの並びは実機の観測結果。ここが崩れると判別ロジックの前提が壊れる。"""
 
-    def test_sxf_ids_have_sixteen_entries_each(self):
+    def test_sxf_has_sixteen_colors_but_fifteen_types(self):
+        """👑 2026-09-24 実測。色16/線種15で**数が違う**。2464は存在せず、
+        2465は「ユーザー定義線種(UDLT)」なので線種一覧に入れてはいけない
+        (入れると、UDLTが選ばれている時に線種として誤って拾う)。"""
         self.assertEqual(len(lad.SXF_COLOR_CTRL_IDS), 16)
-        self.assertEqual(len(lad.SXF_TYPE_CTRL_IDS), 16)
+        self.assertEqual(len(lad.SXF_TYPE_CTRL_IDS), 15)
+        self.assertNotIn(2464, lad.SXF_TYPE_CTRL_IDS)
+        self.assertNotIn(2465, lad.SXF_TYPE_CTRL_IDS, "UDLTを線種として扱っている")
 
     def test_line_type_ids_collide_so_ids_cannot_identify_the_mode(self):
         """👑 **この事実がバグの根っこ**。既定の線種IDはSXFの線種IDに

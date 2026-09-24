@@ -58,8 +58,26 @@ CANCEL_CTRL_ID = 2
 #      閉じられず、モーダルのままjw_cadが操作不能になる(kamo報告「モード
 #      ボタンおしたらとまっちゃった」の直接原因)。_close_after_read()を使う。
 SXF_CHECKBOX_ID = 2312
+# 👑 2026-09-24 実測: 線色は16個、**線種は15個**(色の方が1つ多い)。
+# 2464は存在せず、2465は「ユーザー定義線種(UDLT)」ボタンなので線種の
+# 一覧に含めてはいけない(選択状態を線種として誤って拾ってしまう)。
 SXF_COLOR_CTRL_IDS = list(range(2268, 2284))   # 1〜16番
-SXF_TYPE_CTRL_IDS = list(range(2449, 2465))    # 1〜16番
+SXF_TYPE_CTRL_IDS = list(range(2449, 2464))    # 1〜15番
+# 見本ダイアログの見出し用(実機のStaticから採取)。utils/palette_config.py
+# にも同じ一覧があるが、あちらはwin32非依存の方針なので互いにimportしない
+# (COLOR_LABELS等と同じ既存の重複パターン)。
+SXF_COLOR_LABELS = [
+    "1:black", "2:red", "3:green", "4:blue", "5:yellow", "6:magenta",
+    "7:cyan", "8:white", "9:deeppink", "10:brown", "11:orange",
+    "12:lightgreen", "13:lightblue", "14:lavender", "15:lightgray",
+    "16:darkgray",
+]
+SXF_TYPE_LABELS = [
+    "1:実線", "2:破線", "3:跳び破線", "4:一点長鎖線", "5:二点長鎖線",
+    "6:三点長鎖線", "7:点線", "8:一点鎖線", "9:二点鎖線", "10:一点短鎖線",
+    "11:一点二短鎖線", "12:二点短鎖線", "13:二点二短鎖線", "14:三点短鎖線",
+    "15:三点二短鎖線",
+]
 BM_GETCHECK = 0x00F0
 BM_SETCHECK = 0x00F1
 
@@ -728,7 +746,7 @@ def _rgb_to_hex(pixel):
     return f"#{r:02x}{g:02x}{b:02x}"
 
 
-def capture_swatches(hwnd, on_color=None, on_type=None, on_dialog_found=None):
+def capture_swatches(hwnd, on_color=None, on_type=None, on_dialog_found=None, sxf=False):
     """線属性ダイアログを開いて色9個・線種9個の実際の見本を読み取り、
     変更せずキャンセルで閉じる。戻り値:
     {"colors": [(ctrl_id, "#rrggbb"), ...], "types": [(ctrl_id, [bool,...]), ...]}
@@ -760,13 +778,18 @@ def capture_swatches(hwnd, on_color=None, on_type=None, on_dialog_found=None):
     # 状態へ戻す(最後はキャンセル相当で閉じるので図面には残らないが、
     # チェックが即時反映される作りだった場合の副作用を避けるため明示的に
     # 戻す)。
+    # 👑 2026-09-24: 読む対象の一覧はsxf引数で決まる(既定=9色/9線種、
+    # SXF=16色/15線種)。モードと一覧が食い違うと、**既定の見本を見せながら
+    # SXFの番号を保存する**という食い違いになる(同日の不具合と同じ形)。
     sxf_before = read_sxf_mode(ctrl_map)
-    if sxf_before:
-        dlg, ctrl_map, mode_ok = _set_sxf_mode(dlg, ctrl_map, False)
+    color_ids = SXF_COLOR_CTRL_IDS if sxf else COLOR_CTRL_IDS
+    type_ids = SXF_TYPE_CTRL_IDS if sxf else TYPE_CTRL_IDS
+    if sxf_before is not None and bool(sxf_before) != bool(sxf):
+        dlg, ctrl_map, mode_ok = _set_sxf_mode(dlg, ctrl_map, sxf)
         if not mode_ok:
             diagnostics.note(
                 "線属性の見本読み取り",
-                "SXF対応を外せなかったため、見本が正しく読めません",
+                f"SXF対応を{'ON' if sxf else 'OFF'}にできなかったため、見本が正しく読めません",
             )
         elif on_dialog_found:
             # 👑 切替でダイアログが作り直され、位置も大きさも変わる
@@ -790,7 +813,7 @@ def capture_swatches(hwnd, on_color=None, on_type=None, on_dialog_found=None):
         # コントロール失敗で全体を巻き込まないよう、個別にtry/exceptで
         # 守り、失敗した項目だけ既定値にフォールバックする。
         colors = []
-        for cid in COLOR_CTRL_IDS:
+        for cid in color_ids:
             h = ctrl_map.get(cid)
             if not h:
                 hex_color = "#f0f0f0"
@@ -808,7 +831,7 @@ def capture_swatches(hwnd, on_color=None, on_type=None, on_dialog_found=None):
                 time.sleep(0.08)
 
         types = []
-        for cid in TYPE_CTRL_IDS:
+        for cid in type_ids:
             h = ctrl_map.get(cid)
             if not h:
                 pattern = [False] * TYPE_PATTERN_SAMPLES
@@ -862,8 +885,8 @@ def capture_swatches(hwnd, on_color=None, on_type=None, on_dialog_found=None):
     finally:
         win32gui.ReleaseDC(0, hdc)
 
-    if sxf_before:
-        dlg, ctrl_map, _ = _set_sxf_mode(dlg, ctrl_map, True)
+    if sxf_before is not None and bool(sxf_before) != bool(sxf):
+        dlg, ctrl_map, _ = _set_sxf_mode(dlg, ctrl_map, sxf_before)
     # 👑 2026-09-24: SXFモードのダイアログには**キャンセルが無い**ため、
     # 以前のCANCEL_CTRL_ID頼みの閉じ方では開いたまま残り、モーダルで
     # jw_cadが操作不能になっていた(kamo報告の不具合と同じ原因がここにも

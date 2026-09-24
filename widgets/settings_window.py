@@ -256,28 +256,39 @@ class SidePanel(SidePanelEditMixin, ttk.Frame):
         # バランスが悪い、全体の余白が最小になるように」という指摘
         # (ユーザー、2026-09-14)を受け、2項目/行に組み直して5行程度に
         # 収め、隣のlf(4行)と高さがおおむね釣り合うようにした。
-        ttk.Label(mode_lf, text="線色:").grid(row=0, column=0, sticky="e", padx=(6, 2), pady=3)
+        # 👑 2026-09-24: jw_cadの線属性ダイアログと同じ場所(一番上)・同じ
+        # 文言でSXFの切替を置く。ONにすると線色/線種の選択肢が16色/15種の
+        # SXF側へ入れ替わる。**SXFには補助線色・補助線種が無い**ので、
+        # 補助線モードボタンを作るときはOFFのままにする。
+        self.auto_attr_sxf_var = tk.BooleanVar()
+        self.auto_attr_sxf_check = ttk.Checkbutton(
+            mode_lf, text="SXF対応拡張線色・線種", variable=self.auto_attr_sxf_var,
+            command=self._on_auto_attr_sxf_toggled,
+        )
+        self.auto_attr_sxf_check.grid(row=0, column=0, columnspan=4, sticky="w", padx=(6, 6), pady=(3, 1))
+
+        ttk.Label(mode_lf, text="線色:").grid(row=1, column=0, sticky="e", padx=(6, 2), pady=3)
         self.auto_attr_color_var = tk.StringVar()
         self.auto_attr_color_combo = ttk.Combobox(
             mode_lf, textvariable=self.auto_attr_color_var, values=palette_config.LINE_COLOR_LABELS,
             state="readonly", width=7,
         )
-        self.auto_attr_color_combo.grid(row=0, column=1, sticky="w", padx=(0, 6), pady=3)
+        self.auto_attr_color_combo.grid(row=1, column=1, sticky="w", padx=(0, 6), pady=3)
         self.auto_attr_color_combo.bind("<<ComboboxSelected>>", self._on_auto_attr_changed)
 
-        ttk.Label(mode_lf, text="線種:").grid(row=0, column=2, sticky="e", padx=(6, 2), pady=3)
+        ttk.Label(mode_lf, text="線種:").grid(row=1, column=2, sticky="e", padx=(6, 2), pady=3)
         self.auto_attr_type_var = tk.StringVar()
         self.auto_attr_type_combo = ttk.Combobox(
             mode_lf, textvariable=self.auto_attr_type_var, values=palette_config.LINE_TYPE_LABELS,
             state="readonly", width=7,
         )
-        self.auto_attr_type_combo.grid(row=0, column=3, sticky="w", padx=(0, 6), pady=3)
+        self.auto_attr_type_combo.grid(row=1, column=3, sticky="w", padx=(0, 6), pady=3)
         self.auto_attr_type_combo.bind("<<ComboboxSelected>>", self._on_auto_attr_changed)
 
-        ttk.Label(mode_lf, text="線幅:").grid(row=1, column=0, sticky="e", padx=(6, 2), pady=3)
+        ttk.Label(mode_lf, text="線幅:").grid(row=2, column=0, sticky="e", padx=(6, 2), pady=3)
         self.auto_attr_width_var = tk.StringVar()
         self.auto_attr_width_entry = ttk.Entry(mode_lf, textvariable=self.auto_attr_width_var, width=7)
-        self.auto_attr_width_entry.grid(row=1, column=1, sticky="w", padx=(0, 6), pady=3)
+        self.auto_attr_width_entry.grid(row=2, column=1, sticky="w", padx=(0, 6), pady=3)
         self.auto_attr_width_var.trace_add("write", self._on_auto_attr_width_changed)
 
         self.auto_attr_hv_var = tk.BooleanVar()
@@ -285,24 +296,24 @@ class SidePanel(SidePanelEditMixin, ttk.Frame):
             mode_lf, text="水平･垂直もON", variable=self.auto_attr_hv_var,
             command=self._on_auto_attr_changed,
         )
-        self.auto_attr_hv_check.grid(row=1, column=2, columnspan=2, sticky="w", padx=(6, 6), pady=3)
+        self.auto_attr_hv_check.grid(row=2, column=2, columnspan=2, sticky="w", padx=(6, 6), pady=3)
 
-        ttk.Label(mode_lf, text="レイヤG:").grid(row=2, column=0, sticky="e", padx=(6, 2), pady=3)
+        ttk.Label(mode_lf, text="レイヤG:").grid(row=3, column=0, sticky="e", padx=(6, 2), pady=3)
         self.auto_attr_layer_group_var = tk.StringVar()
         self.auto_attr_layer_group_combo = ttk.Combobox(
             mode_lf, textvariable=self.auto_attr_layer_group_var,
             values=palette_config.LAYER_NUMBER_LABELS, state="readonly", width=7,
         )
-        self.auto_attr_layer_group_combo.grid(row=2, column=1, sticky="w", padx=(0, 6), pady=3)
+        self.auto_attr_layer_group_combo.grid(row=3, column=1, sticky="w", padx=(0, 6), pady=3)
         self.auto_attr_layer_group_combo.bind("<<ComboboxSelected>>", self._on_auto_attr_changed)
 
-        ttk.Label(mode_lf, text="レイヤ:").grid(row=2, column=2, sticky="e", padx=(6, 2), pady=3)
+        ttk.Label(mode_lf, text="レイヤ:").grid(row=3, column=2, sticky="e", padx=(6, 2), pady=3)
         self.auto_attr_layer_number_var = tk.StringVar()
         self.auto_attr_layer_number_combo = ttk.Combobox(
             mode_lf, textvariable=self.auto_attr_layer_number_var,
             values=palette_config.LAYER_NUMBER_LABELS, state="readonly", width=7,
         )
-        self.auto_attr_layer_number_combo.grid(row=2, column=3, sticky="w", padx=(0, 6), pady=3)
+        self.auto_attr_layer_number_combo.grid(row=3, column=3, sticky="w", padx=(0, 6), pady=3)
         self.auto_attr_layer_number_combo.bind("<<ComboboxSelected>>", self._on_auto_attr_changed)
 
         # 👑 切替先コマンド(既定は直線)。「他のコマンド選択することできる？
@@ -312,7 +323,7 @@ class SidePanel(SidePanelEditMixin, ttk.Frame):
         # ため選ばせない(ユーザー指摘:「コマンド全部いれたら問題おき
         # ないかな。クラッシュしそうじゃない？」→ クラッシュはしないが、
         # 選ぶと線属性が戻らなくなる実害があるため制限した)。
-        ttk.Label(mode_lf, text="コマンド:").grid(row=3, column=0, sticky="e", padx=(6, 2), pady=3)
+        ttk.Label(mode_lf, text="コマンド:").grid(row=4, column=0, sticky="e", padx=(6, 2), pady=3)
         self._target_command_options = [
             (row["command_id"], f"{row['command_id']} {row['toolbar_name']}")
             for row in command_master.list_available_commands()
@@ -323,11 +334,11 @@ class SidePanel(SidePanelEditMixin, ttk.Frame):
             mode_lf, textvariable=self.auto_attr_target_var,
             values=[label for _cid, label in self._target_command_options], state="readonly", width=20,
         )
-        self.auto_attr_target_combo.grid(row=3, column=1, columnspan=3, sticky="w", padx=(0, 6), pady=3)
+        self.auto_attr_target_combo.grid(row=4, column=1, columnspan=3, sticky="w", padx=(0, 6), pady=3)
         self.auto_attr_target_combo.bind("<<ComboboxSelected>>", self._on_auto_attr_changed)
 
         self.pick_swatches_btn = ttk.Button(mode_lf, text="見本で選ぶ…", command=self._on_pick_swatches)
-        self.pick_swatches_btn.grid(row=4, column=0, columnspan=4, sticky="ew", padx=6, pady=(3, 6))
+        self.pick_swatches_btn.grid(row=5, column=0, columnspan=4, sticky="ew", padx=6, pady=(3, 6))
 
         # 👑 「電灯配線図を復元」等(kind="layer_snapshot", role="restore")用:
         # 復元時に書込レイヤをどう扱うかのチェックボックス(ユーザー要望:
@@ -399,6 +410,7 @@ class SidePanel(SidePanelEditMixin, ttk.Frame):
     def _set_mode_enabled(self, enabled):
         state = "readonly" if enabled else "disabled"
         entry_state = "normal" if enabled else "disabled"
+        self.auto_attr_sxf_check.configure(state=entry_state)
         self.auto_attr_color_combo.configure(state=state)
         self.auto_attr_type_combo.configure(state=state)
         self.auto_attr_width_entry.configure(state=entry_state)
@@ -408,6 +420,7 @@ class SidePanel(SidePanelEditMixin, ttk.Frame):
         self.auto_attr_layer_number_combo.configure(state=state)
         self.auto_attr_target_combo.configure(state=state)
         if not enabled:
+            self.auto_attr_sxf_var.set(False)
             self.auto_attr_color_var.set("")
             self.auto_attr_type_var.set("")
             self.auto_attr_width_var.set("")
@@ -422,17 +435,45 @@ class SidePanel(SidePanelEditMixin, ttk.Frame):
         btn = self._selected_button()
         if btn is None or btn.get("kind") != palette_config.BUTTON_KIND_AUTO_ATTR:
             return
+        # 👑 2026-09-24: ラベルとIDは必ずline_attr_choices()から対で取る。
+        # 既定(9色/9線種)とSXF(16色/15線種)で**個数が違う**ため、片方だけ
+        # 別の一覧を使うと添字がずれて別の線種になる。
+        sxf = bool(self.auto_attr_sxf_var.get())
+        color_ids, color_labels, type_ids, type_labels = palette_config.line_attr_choices(sxf)
+        btn["line_attr_sxf"] = sxf
         try:
-            color_idx = palette_config.LINE_COLOR_LABELS.index(self.auto_attr_color_var.get())
-            btn["line_color"] = palette_config.LINE_COLOR_CTRL_IDS[color_idx]
+            color_idx = color_labels.index(self.auto_attr_color_var.get())
+            btn["line_color"] = color_ids[color_idx]
         except ValueError:
             pass
         try:
-            type_idx = palette_config.LINE_TYPE_LABELS.index(self.auto_attr_type_var.get())
-            btn["line_type"] = palette_config.LINE_TYPE_CTRL_IDS[type_idx]
+            type_idx = type_labels.index(self.auto_attr_type_var.get())
+            btn["line_type"] = type_ids[type_idx]
         except ValueError:
             pass
         btn["horizontal_vertical"] = self.auto_attr_hv_var.get()
+
+    def _on_auto_attr_sxf_toggled(self):
+        """SXFのチェックを切り替えたら、線色/線種の選択肢ごと入れ替える。
+        👑 番号は一覧をまたいで意味が変わるので、切替時は持ち越さずに
+        その一覧の先頭(既定=補助線色/補助線種、SXF=1番)へ寄せる。
+        黙って別の色・線種になるより、選び直してもらう方が安全。"""
+        if self._loading_detail:
+            return
+        btn = self._selected_button()
+        if btn is None or btn.get("kind") != palette_config.BUTTON_KIND_AUTO_ATTR:
+            return
+        sxf = bool(self.auto_attr_sxf_var.get())
+        color_ids, color_labels, type_ids, type_labels = palette_config.line_attr_choices(sxf)
+        btn["line_attr_sxf"] = sxf
+        btn["line_color"] = (palette_config.SXF_DEFAULT_LINE_COLOR_CTRL_ID if sxf
+                             else palette_config.DEFAULT_LINE_COLOR_CTRL_ID)
+        btn["line_type"] = (palette_config.SXF_DEFAULT_LINE_TYPE_CTRL_ID if sxf
+                            else palette_config.DEFAULT_LINE_TYPE_CTRL_ID)
+        self.auto_attr_color_combo.configure(values=color_labels)
+        self.auto_attr_type_combo.configure(values=type_labels)
+        self.auto_attr_color_var.set(color_labels[color_ids.index(btn["line_color"])])
+        self.auto_attr_type_var.set(type_labels[type_ids.index(btn["line_type"])])
 
         def _label_to_layer_value(label):
             try:
@@ -492,7 +533,7 @@ class SidePanel(SidePanelEditMixin, ttk.Frame):
             return
         dlg = LineAttrSwatchDialog(
             self.winfo_toplevel(), hwnd, current_color=btn.get("line_color"), current_type=btn.get("line_type"),
-            swatch_cache=self.swatch_cache,
+            swatch_cache=self.swatch_cache, sxf=bool(btn.get("line_attr_sxf")),
         )
         self.winfo_toplevel().wait_window(dlg)
         if dlg.result_color is not None:
@@ -587,10 +628,18 @@ class SidePanel(SidePanelEditMixin, ttk.Frame):
                     target_label = next((lbl for cid, lbl in self._target_command_options if cid == target_cid), target_cid)
                     self.cmd_var.set(f"(モード・{target_label})")
                     self.auto_attr_target_var.set(target_label)
-                    color_idx = palette_config.LINE_COLOR_CTRL_IDS.index(btn["line_color"])
-                    type_idx = palette_config.LINE_TYPE_CTRL_IDS.index(btn["line_type"])
-                    self.auto_attr_color_var.set(palette_config.LINE_COLOR_LABELS[color_idx])
-                    self.auto_attr_type_var.set(palette_config.LINE_TYPE_LABELS[type_idx])
+                    # 👑 2026-09-24: どちらの一覧の番号かはline_attr_sxfで
+                    # 決まる。一覧を取り違えると添字がずれて別の線種が
+                    # 表示される(番号が重なっているため例外にもならない)。
+                    sxf = bool(btn.get("line_attr_sxf"))
+                    color_ids, color_labels, type_ids, type_labels =                         palette_config.line_attr_choices(sxf)
+                    self.auto_attr_sxf_var.set(sxf)
+                    self.auto_attr_color_combo.configure(values=color_labels)
+                    self.auto_attr_type_combo.configure(values=type_labels)
+                    color_idx = color_ids.index(btn["line_color"])
+                    type_idx = type_ids.index(btn["line_type"])
+                    self.auto_attr_color_var.set(color_labels[color_idx])
+                    self.auto_attr_type_var.set(type_labels[type_idx])
                     self.auto_attr_width_var.set(btn.get("line_width") or "")
                     self.auto_attr_hv_var.set(bool(btn.get("horizontal_vertical")))
 

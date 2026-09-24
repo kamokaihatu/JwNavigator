@@ -80,9 +80,14 @@ class AutoAttrMixin:
         # 「SXF対応拡張線色・線種」になっていると線種のIDが重なって意味
         # だけが変わるため、必ずsxf=Falseで既定モードへ落としてから押す。
         # 元のSXF状態はoriginal["sxf"]に控えてあり、離脱時に復元する。
+        # 👑 2026-09-24: ボタンがどちらの一覧の番号を持っているかは
+        # line_attr_sxfで決まる(utils/palette_config.pyの_normalize_button)。
+        # 既定モードのボタンならSXFを外してから、SXFモードのボタンならSXFを
+        # 付けてから押す。元のSXF状態はoriginal["sxf"]に控えてあり、離脱時に
+        # 復元する。
         ok = line_attr_dialog.apply_attr(
             hwnd, entry.get("line_color"), entry.get("line_type"),
-            entry.get("line_width") or None, sxf=False,
+            entry.get("line_width") or None, sxf=bool(entry.get("line_attr_sxf")),
         )
         if not ok:
             self.write_system_log("❌ [補助線系ボタン] 線属性の変更に失敗しました。")
