@@ -53,10 +53,15 @@ JwNavigatorの起動ログ(`JwNavigator_Log.txt`)に、以下のような行が�
 警告を確認してください。
 
 Windows 11のSmart App Controlが「オン」になっていると、署名の無い
-`JwNavigator.exe`自体が無言でブロックされることがあります(2026-09-10、
-実際に発生)。設定→プライバシーとセキュリティ→Windowsセキュリティ→
-アプリとブラウザーの制御→Smart App Controlが「評価モード」ならオフに
-できますが、「オン」で固定済みの場合はWindowsの再インストールが必要です。
+`JwNavigator.exe`は警告が出た上でブロックされ、「実行」に進めません
+(2026-09-10、実際に発生)。設定→プライバシーとセキュリティ→Windows
+セキュリティ→アプリとブラウザーの制御→Smart App Control を**オフ**に
+してください(オフにするのに制限はなく、その場で切り替えられます)。
+
+以前は「一度オフにするとクリーンインストールしないとオンに戻せない」と
+いう制限がありましたが、2026年3月のWindows更新で解消されています。
+出典: Smart App Control よくある質問 - Microsoft サポート
+https://support.microsoft.com/ja-jp/windows/285ea03d-fa88-4d56-882e-6698afdb7003
 
 法人向けのウイルス対策ソフト(ウイルスバスター Business等)が別途導入
 されている場合、`mark_point.ps1`/`dump_layers.ps1`を呼び出す
