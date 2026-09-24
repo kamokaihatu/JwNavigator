@@ -44,103 +44,186 @@ class CtrlIdFactsTests(unittest.TestCase):
         self.assertFalse(set(lad.COLOR_CTRL_IDS) & set(lad.SXF_COLOR_CTRL_IDS))
 
 
-class _FakeWin32Gui:
-    """必要なメッセージだけを記録する差し替え。"""
+class _FakeJwDialog:
+    """実機の線属性ダイアログの再現。
 
-    def __init__(self, checked=1):
-        self.sent = []
+    👑 **一番大事な再現点**: SXFのチェックを押すと、jw_cadは中身を
+    入れ替えるのではなく**ダイアログを丸ごと作り直す**(hwndが変わり、
+    古いhwndは無効になる)。2026-09-24の1回目の修正はここを読み違えて
+    いて、古いhwndを列挙して「コントロール0個」になり、新しく開いた
+    ダイアログを閉じられずに残していた。
+    """
+
+    SXF_HWND = 4854510
+    PLAIN_HWND = 7770001
+
+    def __init__(self, sxf=True, rebuild_on_toggle=True):
+        self.sxf = sxf
+        self.rebuild_on_toggle = rebuild_on_toggle
+        self.clicked = []
         self.posted = []
-        self._checked = checked
+        self.dead = set()
+
+    @property
+    def hwnd(self):
+        return self.SXF_HWND if self.sxf else self.PLAIN_HWND
+
+    def ctrl_map_for(self, hwnd):
+        """無効になったhwndを列挙すると空になる(実機と同じ)。"""
+        if hwnd in self.dead or hwnd != self.hwnd:
+            return {}
+        m = {lad.OK_CTRL_ID: hwnd * 10 + 1, lad.WIDTH_EDIT_ID: hwnd * 10 + 2}
+        if self.sxf:
+            m[lad.SXF_CHECKBOX_ID] = hwnd * 10 + 3
+            for cid in lad.SXF_COLOR_CTRL_IDS + lad.SXF_TYPE_CTRL_IDS:
+                m[cid] = hwnd * 100 + cid
+        else:
+            # 既定モードにもチェックボックスは在る(外れた状態で表示される)
+            m[lad.SXF_CHECKBOX_ID] = hwnd * 10 + 3
+            m[lad.CANCEL_CTRL_ID] = hwnd * 10 + 4
+            for cid in lad.COLOR_CTRL_IDS + lad.TYPE_CTRL_IDS:
+                m[cid] = hwnd * 100 + cid
+        return m
+
+    def click(self, ctrl_hwnd):
+        self.clicked.append(ctrl_hwnd)
+        if ctrl_hwnd == self.hwnd * 10 + 3:  # SXFチェックボックス
+            if self.rebuild_on_toggle:
+                self.dead.add(self.hwnd)
+            self.sxf = not self.sxf
+
+
+class _FakeWin32Gui:
+    def __init__(self, dialog):
+        self.d = dialog
 
     def SendMessage(self, hwnd, msg, wparam, lparam):
-        self.sent.append((hwnd, msg))
         if msg == lad.BM_GETCHECK:
-            return self._checked
+            return 1 if self.d.sxf else 0
         if msg == lad.BM_GETSTATE:
             return 0
+        if msg == lad.BM_CLICK:
+            self.d.click(hwnd)
         return 0
 
     def PostMessage(self, hwnd, msg, wparam, lparam):
-        self.posted.append((hwnd, msg))
+        if hwnd in self.d.dead:
+            raise Exception((1400, "PostMessage", "ウィンドウ ハンドルが無効です。"))
+        self.d.posted.append((hwnd, msg))
         return 0
 
     def GetWindowText(self, hwnd):
         return ""
 
+    def SetWindowPos(self, *a, **k):
+        return 0
+
 
 class _Patched:
-    """_open_dialog/_build_ctrl_map/win32guiを差し替えるコンテキスト。"""
-
-    def __init__(self, ctrl_map, checked=1):
-        self.ctrl_map = ctrl_map
-        self.fake = _FakeWin32Gui(checked=checked)
+    def __init__(self, dialog):
+        self.d = dialog
+        self.fake = _FakeWin32Gui(dialog)
 
     def __enter__(self):
-        self._saved = (lad._open_dialog, lad._build_ctrl_map, lad.win32gui)
-        lad._open_dialog = lambda hwnd: 4854510
-        lad._build_ctrl_map = lambda dlg: dict(self.ctrl_map)
+        self._saved = (
+            lad._open_dialog, lad._build_ctrl_map, lad._find_dialog_hwnd, lad.win32gui,
+        )
+        lad._open_dialog = lambda hwnd: self.d.hwnd
+        lad._build_ctrl_map = lambda dlg: self.d.ctrl_map_for(dlg)
+        lad._find_dialog_hwnd = lambda timeout=0.6: self.d.hwnd
         lad.win32gui = self.fake
-        return self.fake
+        return self.d
 
     def __exit__(self, *exc):
-        lad._open_dialog, lad._build_ctrl_map, lad.win32gui = self._saved
+        (lad._open_dialog, lad._build_ctrl_map,
+         lad._find_dialog_hwnd, lad.win32gui) = self._saved
         return False
 
 
-def _sxf_dialog_ctrl_map():
-    """SXFモードのダイアログ(キャンセル無し、線色は2268〜、線種は2449〜)。"""
-    m = {lad.SXF_CHECKBOX_ID: 2312_000, lad.OK_CTRL_ID: 1_000, lad.WIDTH_EDIT_ID: 2224_000}
-    for cid in lad.SXF_COLOR_CTRL_IDS + lad.SXF_TYPE_CTRL_IDS:
-        m[cid] = cid * 1000
-    return m
-
-
 class ApplyAttrTests(unittest.TestCase):
+    def test_switches_out_of_sxf_and_applies_the_default_ids(self):
+        """👑 意図した動作の本筋。SXF図面でも、モードを落としてから
+        既定モードのID(補助線色1409/補助線種2457)を押してOKまで行く。"""
+        d = _FakeJwDialog(sxf=True)
+        with _Patched(d):
+            ok = lad.apply_attr(1, color_ctrl_id=1409, type_ctrl_id=2457, sxf=False)
+        self.assertTrue(ok)
+        self.assertFalse(d.sxf, "SXFが外れていない")
+        plain = d.PLAIN_HWND
+        self.assertIn(plain * 100 + 1409, d.clicked, "補助線色を押していない")
+        self.assertIn(plain * 100 + 2457, d.clicked, "補助線種を押していない")
+        self.assertIn(plain * 10 + 1, d.clicked, "OKを押していない")
+
+    def test_uses_the_new_dialog_handle_after_the_toggle(self):
+        """👑 **2026-09-24の1回目の修正が踏んだ落とし穴**。チェックを押すと
+        ダイアログが作り直されるので、古いhwndを使い続けてはいけない。"""
+        d = _FakeJwDialog(sxf=True)
+        with _Patched(d):
+            lad.apply_attr(1, color_ctrl_id=1409, sxf=False)
+        self.assertIn(d.SXF_HWND, d.dead, "古いダイアログが無効になっていない")
+        stale = [h for h in d.clicked if h // 100 == d.SXF_HWND and h != d.SXF_HWND * 10 + 3]
+        self.assertFalse(stale, f"無効になった古いhwndのコントロールを押している: {stale}")
+
     def test_returns_false_when_the_requested_color_is_absent(self):
-        """👑 **不具合(2)そのもの**。既定モードの補助線色(1409)はSXFモードの
-        ダイアログに存在しない。以前はここを素通りしてOKを押し、何も変えて
-        いないのにTrueを返していた。"""
-        ctrl_map = _sxf_dialog_ctrl_map()
-        with _Patched(ctrl_map, checked=1) as fake:
-            # sxf=Noneでモードを触らせない = 既定IDとSXFダイアログのミスマッチ
+        """👑 SXFのまま既定IDを押そうとしたら、何もせずFalse。以前は
+        素通りしてOKを押し、何も変えていないのにTrueを返していた。"""
+        d = _FakeJwDialog(sxf=True)
+        with _Patched(d):
             ok = lad.apply_attr(1, color_ctrl_id=1409, type_ctrl_id=2457, sxf=None)
         self.assertFalse(ok, "変更できていないのに成功を返した")
-        clicked = [h for h, msg in fake.sent if msg == BM_CLICK]
-        self.assertNotIn(ctrl_map[lad.OK_CTRL_ID], clicked, "失敗時にOKを押している")
-
-    def test_failure_still_closes_the_dialog(self):
-        """👑 **不具合(1)**。失敗して抜けるときもダイアログを閉じること。
-        閉じ忘れるとモーダルのまま残り、jw_cadが操作不能になる。
-        SXFモードにはキャンセルが無いのでWM_CLOSEで閉じる。"""
-        ctrl_map = _sxf_dialog_ctrl_map()
-        self.assertNotIn(lad.CANCEL_CTRL_ID, ctrl_map, "SXFモードにキャンセルは無い")
-        with _Patched(ctrl_map, checked=1) as fake:
-            lad.apply_attr(1, color_ctrl_id=1409, sxf=None)
-        self.assertIn((4854510, WM_CLOSE), fake.posted, "ダイアログを閉じていない")
+        self.assertNotIn(d.SXF_HWND * 10 + 1, d.clicked, "失敗時にOKを押している")
 
     def test_aborts_instead_of_pressing_a_colliding_id(self):
-        """👑 SXFを外せなかった場合は、線種IDが重なっているため**何も押さずに**
-        中止する。押すと黙って別の線種(SXFの9番=点線)に変わってしまう。"""
-        ctrl_map = _sxf_dialog_ctrl_map()
-        with _Patched(ctrl_map, checked=1) as fake:
-            # checked=1固定なので、チェックを押してもOFFにならない環境を模擬
+        """👑 SXFを外せない環境では**何も押さずに**中止する。押すと
+        既定の補助線種(2457)のつもりでSXFの9番(点線)に変えてしまう。"""
+        d = _FakeJwDialog(sxf=True, rebuild_on_toggle=True)
+        d.click = lambda ctrl_hwnd: d.clicked.append(ctrl_hwnd)  # 押しても変わらない環境
+        with _Patched(d):
             ok = lad.apply_attr(1, color_ctrl_id=1409, type_ctrl_id=2457, sxf=False)
         self.assertFalse(ok)
-        clicked = [h for h, msg in fake.sent if msg == BM_CLICK]
-        self.assertNotIn(ctrl_map[2457], clicked, "重なっているIDを押してしまった")
+        self.assertNotIn(d.SXF_HWND * 100 + 2457, d.clicked, "重なっているIDを押した")
+
+    def test_failure_still_closes_the_dialog(self):
+        """👑 失敗して抜けるときもダイアログを閉じること。閉じ忘れると
+        モーダルのまま残り、jw_cadが操作不能になる(報告された症状)。"""
+        d = _FakeJwDialog(sxf=True)
+        with _Patched(d):
+            lad.apply_attr(1, color_ctrl_id=1409, sxf=None)
+        closed = [h for h, msg in d.posted if msg == WM_CLOSE]
+        self.assertTrue(closed, "ダイアログを閉じていない")
+
+
+class ReadCurrentAttrTests(unittest.TestCase):
+    def test_reports_the_sxf_state_along_with_the_ids(self):
+        """👑 ctrl_idは"sxf"とセットでしか意味を持たない。復元時に
+        モードを合わせられるよう、必ず一緒に返すこと。"""
+        d = _FakeJwDialog(sxf=True)
+        with _Patched(d):
+            got = lad.read_current_attr(1)
+        self.assertTrue(got["sxf"])
+        self.assertTrue(d.sxf, "読み取りだけなのにモードを変えている")
+
+    def test_closes_even_without_a_cancel_button(self):
+        """👑 SXFモードにはキャンセルが無い。WM_CLOSEで閉じること。"""
+        d = _FakeJwDialog(sxf=True)
+        self.assertNotIn(lad.CANCEL_CTRL_ID, d.ctrl_map_for(d.hwnd))
+        with _Patched(d):
+            lad.read_current_attr(1)
+        self.assertIn((d.SXF_HWND, WM_CLOSE), d.posted, "WM_CLOSEで閉じていない")
 
 
 class ReadSxfModeTests(unittest.TestCase):
     def test_absent_checkbox_is_none_not_false(self):
-        """👑 None(SXFの概念が無い)とFalse(OFF)を混同しないこと。混同すると
-        「OFFにした」つもりで何もしていない状態を成功と誤認する。"""
-        with _Patched({}, checked=0):
+        """👑 None(SXFの概念が無い)とFalse(OFF)を混同しないこと。"""
+        d = _FakeJwDialog(sxf=True)
+        with _Patched(d):
             self.assertIsNone(lad.read_sxf_mode({}))
 
     def test_reads_checked_state(self):
-        with _Patched({}, checked=1):
+        d = _FakeJwDialog(sxf=True)
+        with _Patched(d):
             self.assertTrue(lad.read_sxf_mode({lad.SXF_CHECKBOX_ID: 1}))
-        with _Patched({}, checked=0):
+            d.sxf = False
             self.assertFalse(lad.read_sxf_mode({lad.SXF_CHECKBOX_ID: 1}))
 
 

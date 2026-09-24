@@ -241,3 +241,9 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# jw_cadの図面と自動保存(検証用に置いたものを誤って追跡しないため)
+*.jww
+*.jw$
+*.jwc
+*.bak

@@ -155,26 +155,51 @@ def read_sxf_mode(ctrl_map):
 
 
 def _set_sxf_mode(dlg, ctrl_map, enabled):
-    """SXFのチェックを指定の状態にし、**作り替わったコントロールを再列挙**して
-    返す。戻り値: (新しいctrl_map, 切り替えたかどうか)。
-    👑 チェックを外すとダイアログの中身が44個/75個で丸ごと入れ替わるため、
-    古いctrl_mapを使い続けると存在しないハンドルを叩くことになる。"""
+    """SXFのチェックを指定の状態にする。戻り値: (dlg, ctrl_map, ok)。
+
+    👑 2026-09-24 実機で判明: チェックを押すとjw_cadは**ダイアログを丸ごと
+    作り直す**。中身が入れ替わるのではなくHWND自体が変わり、古いハンドルは
+    無効になる(ログ: 古いhwndでの列挙が「コントロール0個」、PostMessageが
+    「(1400, 'PostMessage', 'ウィンドウ ハンドルが無効です。')」)。よって
+    子の再列挙だけでは足りず、**ダイアログを探し直す**必要がある。
+
+    ok=False は「頼まれた状態にできたと確認できなかった」。線種はIDが
+    重なっているので、確認できないまま押すと別の線種に変わってしまう。
+    呼び出し側は必ず中止すること。なお**チェックボックス自体が無い環境**
+    (SXFの概念が無い古いjw_cad)は、何もしなくても既定モードなので
+    enabled=Falseならok=Trueで返す。"""
     current = read_sxf_mode(ctrl_map)
-    if current is None or bool(current) == bool(enabled):
-        return ctrl_map, False
+    if current is None:
+        # SXFの概念が無いダイアログ。OFFを頼まれているなら既に目的の状態。
+        return dlg, ctrl_map, not enabled
+    if bool(current) == bool(enabled):
+        return dlg, ctrl_map, True
+
     win32gui.SendMessage(ctrl_map[SXF_CHECKBOX_ID], BM_CLICK, 0, 0)
-    time.sleep(0.08)
-    new_map = _build_ctrl_map(dlg)
+    time.sleep(0.15)
+    new_dlg = _find_dialog_hwnd() or dlg
+    if new_dlg != dlg:
+        # 作り直された新しいダイアログも、見本読み取りのために最前面へ
+        # 引き上げておく(_open_dialog内の同じ処理と同じ理由)。
+        try:
+            win32gui.SetWindowPos(
+                new_dlg, win32con.HWND_TOPMOST, 0, 0, 0, 0,
+                win32con.SWP_NOMOVE | win32con.SWP_NOSIZE | win32con.SWP_NOACTIVATE,
+            )
+        except Exception:
+            pass
+    new_map = _build_ctrl_map(new_dlg)
     after = read_sxf_mode(new_map)
-    if after is not None and bool(after) != bool(enabled):
+    if after is None or bool(after) != bool(enabled):
         diagnostics.note(
             "線属性ダイアログのSXF切替",
-            f"SXF対応を{'ON' if enabled else 'OFF'}にできませんでした"
-            f"(押した後も{'ON' if after else 'OFF'}のまま)",
+            f"SXF対応を{'ON' if enabled else 'OFF'}にできたか確認できません"
+            f"(切替後のダイアログ: hwnd={new_dlg}, コントロール{len(new_map)}個, "
+            f"SXF={'ON' if after else 'OFF' if after is not None else '読めず'})",
         )
-        return new_map, False
+        return new_dlg, new_map, False
     diagnostics.ok("線属性ダイアログのSXF切替", f"SXF対応を{'ON' if enabled else 'OFF'}にしました")
-    return new_map, True
+    return new_dlg, new_map, True
 
 
 def _close_after_read(dlg, ctrl_map):
@@ -193,6 +218,22 @@ def _close_after_read(dlg, ctrl_map):
         time.sleep(0.05)
         return True
     except Exception as e:
+        # 👑 2026-09-24: 渡されたhwndが既に無効なことがある(SXFの切替で
+        # ダイアログが作り直された後など)。ここで諦めるとモーダルのまま
+        # 残ってjw_cadが操作不能になるので、開いているものを探し直して
+        # もう一度閉じにいく。
+        again = _find_dialog_hwnd(timeout=0.3)
+        if again and again != dlg:
+            try:
+                win32gui.PostMessage(again, win32con.WM_CLOSE, 0, 0)
+                time.sleep(0.05)
+                diagnostics.note(
+                    "線属性ダイアログの後始末",
+                    f"渡されたhwndが無効だったため探し直して閉じました({e})",
+                )
+                return True
+            except Exception:
+                pass
         diagnostics.note(
             "線属性ダイアログの後始末",
             f"閉じられませんでした({e})。モーダルのまま残るとjw_cadが操作できません",
@@ -336,14 +377,14 @@ def apply_attr(hwnd, color_ctrl_id=None, type_ctrl_id=None, width_text=None, sxf
     ctrl_map = _build_ctrl_map(dlg)
 
     if sxf is not None:
-        ctrl_map, _changed = _set_sxf_mode(dlg, ctrl_map, sxf)
-        now = read_sxf_mode(ctrl_map)
-        if now is not None and bool(now) != bool(sxf):
-            # 目的のモードにできなかった。このまま押すと違う意味のID
-            # を叩くので、何もせずに閉じて失敗を返す。
+        # 👑 切替でダイアログが作り直されるので、dlgごと受け取り直す。
+        dlg, ctrl_map, mode_ok = _set_sxf_mode(dlg, ctrl_map, sxf)
+        if not mode_ok:
+            # 目的のモードにできたと確認できなかった。このまま押すと
+            # 違う意味のIDを叩く(線種はIDが重なる)ので、何もせず閉じる。
             diagnostics.note(
                 "線属性の変更",
-                f"SXF対応を{'ON' if sxf else 'OFF'}にできなかったため、"
+                f"SXF対応を{'ON' if sxf else 'OFF'}にできたと確認できないため、"
                 f"線属性の変更を中止しました(IDの意味が変わるため)",
             )
             _close_after_read(dlg, ctrl_map)
@@ -721,12 +762,20 @@ def capture_swatches(hwnd, on_color=None, on_type=None, on_dialog_found=None):
     # 戻す)。
     sxf_before = read_sxf_mode(ctrl_map)
     if sxf_before:
-        ctrl_map, _ = _set_sxf_mode(dlg, ctrl_map, False)
-        if read_sxf_mode(ctrl_map):
+        dlg, ctrl_map, mode_ok = _set_sxf_mode(dlg, ctrl_map, False)
+        if not mode_ok:
             diagnostics.note(
                 "線属性の見本読み取り",
                 "SXF対応を外せなかったため、見本が正しく読めません",
             )
+        elif on_dialog_found:
+            # 👑 切替でダイアログが作り直され、位置も大きさも変わる
+            # (SXFモードの方が縦に長い)。呼び出し元が「どく」ための
+            # 矩形を新しいもので通知し直す。
+            try:
+                on_dialog_found(win32gui.GetWindowRect(dlg))
+            except Exception:
+                pass
     # 👑 ダイアログのhwndが見つかった直後は、中の18個のプレビュー(色9+
     # 線種9)がまだ描画し切れていないことがある(実機で、同じ条件でも
     # 読み取り結果が実行のたびにバラつくのを確認)。GetPixelで読む前に
@@ -814,7 +863,7 @@ def capture_swatches(hwnd, on_color=None, on_type=None, on_dialog_found=None):
         win32gui.ReleaseDC(0, hdc)
 
     if sxf_before:
-        ctrl_map, _ = _set_sxf_mode(dlg, ctrl_map, True)
+        dlg, ctrl_map, _ = _set_sxf_mode(dlg, ctrl_map, True)
     # 👑 2026-09-24: SXFモードのダイアログには**キャンセルが無い**ため、
     # 以前のCANCEL_CTRL_ID頼みの閉じ方では開いたまま残り、モーダルで
     # jw_cadが操作不能になっていた(kamo報告の不具合と同じ原因がここにも
