@@ -43,6 +43,26 @@ WIDTH_EDIT_ID = 2224
 OK_CTRL_ID = 1
 CANCEL_CTRL_ID = 2
 
+# 👑 2026-09-24: 外部から受け取った図面が「SXF対応拡張線色・線種」に
+# なっていると、線属性ダイアログが丸ごと別物になる(実機ダンプで確定、
+# tools/dump_line_attr_dialog.py で再取得できる)。
+#
+#   既定モード: コントロール44個、線色1401〜1409、線種2449〜2457、キャンセルあり
+#   SXFモード : コントロール75個、線色2268〜2283、線種2449〜2464、**キャンセル無し**
+#
+# ここには罠が2つある。
+#  (1) **線種のIDが重なる**。既定の「補助線種=2457」はSXFモードでは「9番=点線」。
+#      つまりIDの有無でモードを判別してはいけない。必ずSXF_CHECKBOX_IDの
+#      チェック状態で判別する。判別せずに送ると、黙って意図しない線種に変わる。
+#  (2) SXFモードには**キャンセルボタンが無い**。読み取りだけのつもりで開くと
+#      閉じられず、モーダルのままjw_cadが操作不能になる(kamo報告「モード
+#      ボタンおしたらとまっちゃった」の直接原因)。_close_after_read()を使う。
+SXF_CHECKBOX_ID = 2312
+SXF_COLOR_CTRL_IDS = list(range(2268, 2284))   # 1〜16番
+SXF_TYPE_CTRL_IDS = list(range(2449, 2465))    # 1〜16番
+BM_GETCHECK = 0x00F0
+BM_SETCHECK = 0x00F1
+
 
 def _find_dialog_hwnd(timeout=0.6):
     deadline = time.time() + timeout
@@ -119,6 +139,67 @@ def _find_pushed(ctrl_map, ctrl_ids):
     return None
 
 
+def read_sxf_mode(ctrl_map):
+    """「SXF対応拡張線色・線種」のチェック状態を返す。
+    True=ON / False=OFF / None=チェックボックス自体が無い(この環境の
+    線属性ダイアログにSXFの概念が無い、または列挙に失敗した)。
+    👑 Noneと**Falseを区別する**こと。Noneのときに「OFFにする」操作を
+    しようとしても対象が無いので、黙って成功と言ってはいけない。"""
+    h = ctrl_map.get(SXF_CHECKBOX_ID)
+    if h is None:
+        return None
+    try:
+        return bool(win32gui.SendMessage(h, BM_GETCHECK, 0, 0))
+    except Exception:
+        return None
+
+
+def _set_sxf_mode(dlg, ctrl_map, enabled):
+    """SXFのチェックを指定の状態にし、**作り替わったコントロールを再列挙**して
+    返す。戻り値: (新しいctrl_map, 切り替えたかどうか)。
+    👑 チェックを外すとダイアログの中身が44個/75個で丸ごと入れ替わるため、
+    古いctrl_mapを使い続けると存在しないハンドルを叩くことになる。"""
+    current = read_sxf_mode(ctrl_map)
+    if current is None or bool(current) == bool(enabled):
+        return ctrl_map, False
+    win32gui.SendMessage(ctrl_map[SXF_CHECKBOX_ID], BM_CLICK, 0, 0)
+    time.sleep(0.08)
+    new_map = _build_ctrl_map(dlg)
+    after = read_sxf_mode(new_map)
+    if after is not None and bool(after) != bool(enabled):
+        diagnostics.note(
+            "線属性ダイアログのSXF切替",
+            f"SXF対応を{'ON' if enabled else 'OFF'}にできませんでした"
+            f"(押した後も{'ON' if after else 'OFF'}のまま)",
+        )
+        return new_map, False
+    diagnostics.ok("線属性ダイアログのSXF切替", f"SXF対応を{'ON' if enabled else 'OFF'}にしました")
+    return new_map, True
+
+
+def _close_after_read(dlg, ctrl_map):
+    """読み取りだけで開いたダイアログを閉じる。
+    👑 SXFモードにはキャンセル(ctrl_id=2)が無いのでWM_CLOSEで閉じる。
+    OKを押してはいけない(今表示されている内容を適用してしまう)。"""
+    if CANCEL_CTRL_ID in ctrl_map:
+        try:
+            win32gui.SendMessage(ctrl_map[CANCEL_CTRL_ID], BM_CLICK, 0, 0)
+            time.sleep(0.05)
+            return True
+        except Exception:
+            pass
+    try:
+        win32gui.PostMessage(dlg, win32con.WM_CLOSE, 0, 0)
+        time.sleep(0.05)
+        return True
+    except Exception as e:
+        diagnostics.note(
+            "線属性ダイアログの後始末",
+            f"閉じられませんでした({e})。モーダルのまま残るとjw_cadが操作できません",
+        )
+        return False
+
+
 def _open_dialog(hwnd):
     force_foreground_window(hwnd)
     time.sleep(0.05)
@@ -144,25 +225,50 @@ def _open_dialog(hwnd):
 
 
 def read_current_attr(hwnd):
-    """線属性ダイアログを開いて今の設定を読み取り、変更せずキャンセルで
-    閉じる。戻り値: {"color": ctrl_id, "type": ctrl_id, "width": str}
-    (読み取り失敗時はNone)。"""
+    """線属性ダイアログを開いて今の設定を読み取り、変更せず閉じる。
+    戻り値: {"color": ctrl_id, "type": ctrl_id, "width": str, "sxf": bool|None}
+    (ダイアログが開けなかった場合のみNone)。
+
+    👑 "color"/"type"のctrl_idは **"sxf"とセットでしか意味を持たない**。
+    SXFモードでは線色のIDが別の並びになり、しかも線種はIDが重なって
+    意味だけが違う(SXF_CHECKBOX_ID付近のコメント参照)。apply_attr()へ
+    戻すときは必ずsxfも一緒に渡すこと。"""
     dlg = _open_dialog(hwnd)
     if not dlg:
         return None
     ctrl_map = _build_ctrl_map(dlg)
-    color = _find_pushed(ctrl_map, COLOR_CTRL_IDS)
-    ltype = _find_pushed(ctrl_map, TYPE_CTRL_IDS)
+    sxf = read_sxf_mode(ctrl_map)
+    color_ids = SXF_COLOR_CTRL_IDS if sxf else COLOR_CTRL_IDS
+    type_ids = SXF_TYPE_CTRL_IDS if sxf else TYPE_CTRL_IDS
+    color = _find_pushed(ctrl_map, color_ids)
+    ltype = _find_pushed(ctrl_map, type_ids)
     width = ""
     if WIDTH_EDIT_ID in ctrl_map:
         try:
             width = win32gui.GetWindowText(ctrl_map[WIDTH_EDIT_ID])
         except Exception:
             width = ""
-    if CANCEL_CTRL_ID in ctrl_map:
-        win32gui.SendMessage(ctrl_map[CANCEL_CTRL_ID], BM_CLICK, 0, 0)
-        time.sleep(0.05)
-    return {"color": color, "type": ltype, "width": width}
+    # 👑 見つからなかったことを黙って空で返さない(2026-09-16の棚卸しの
+    # 教訓。ここが「読めたつもりでNoneが入る」入口だった)。
+    if color is None or ltype is None:
+        missing = []
+        if color is None:
+            missing.append("線色")
+        if ltype is None:
+            missing.append("線種")
+        diagnostics.note(
+            "線属性の読み取り",
+            f"{'/'.join(missing)}がどれも選択状態に見えません"
+            f"(SXF対応={'ON' if sxf else 'OFF' if sxf is not None else '不明'}、"
+            f"コントロール{len(ctrl_map)}個)",
+        )
+    else:
+        diagnostics.ok(
+            "線属性の読み取り",
+            f"線色={color} 線種={ltype} (SXF対応={'ON' if sxf else 'OFF'})",
+        )
+    _close_after_read(dlg, ctrl_map)
+    return {"color": color, "type": ltype, "width": width, "sxf": sxf}
 
 
 HV_BUTTON_TEXT = "水平･垂直"
@@ -210,29 +316,75 @@ def set_horizontal_vertical(hwnd, enabled):
     return True
 
 
-def apply_attr(hwnd, color_ctrl_id=None, type_ctrl_id=None, width_text=None):
+def apply_attr(hwnd, color_ctrl_id=None, type_ctrl_id=None, width_text=None, sxf=None):
     """線属性ダイアログを開いて指定の線色・線種(・線幅)に変更し、OKで
     確定する。各引数がNoneの項目は変更しない(現状維持)。
-    戻り値: 成功したらTrue。"""
+
+    sxf: 「SXF対応拡張線色・線種」をこの状態にしてから指定する。
+         False=既定モードのIDを使いたいとき / True=SXFモードのIDを使い
+         たいとき / None=今のモードのまま触らない。
+         👑 color_ctrl_id・type_ctrl_idは**sxfで指定したモードのID**で
+         なければならない。モードが合っていないと、線種はIDが重なって
+         いるため黙って別の線種を押してしまう。
+
+    戻り値: 指定した項目を**実際に押せたら**True。押せなかった項目が
+    あればFalse(理由はdiagnosticsへ)。👑 以前は何も変更できなくても
+    OKを押してTrueを返していた(SXF図面で不具合になった)。"""
     dlg = _open_dialog(hwnd)
     if not dlg:
         return False
     ctrl_map = _build_ctrl_map(dlg)
 
-    if color_ctrl_id and color_ctrl_id in ctrl_map:
-        win32gui.SendMessage(ctrl_map[color_ctrl_id], BM_CLICK, 0, 0)
-        time.sleep(0.03)
-    if type_ctrl_id and type_ctrl_id in ctrl_map:
-        win32gui.SendMessage(ctrl_map[type_ctrl_id], BM_CLICK, 0, 0)
-        time.sleep(0.03)
-    if width_text is not None and WIDTH_EDIT_ID in ctrl_map:
-        win32gui.SendMessage(ctrl_map[WIDTH_EDIT_ID], win32con.WM_SETTEXT, 0, width_text)
-        time.sleep(0.03)
+    if sxf is not None:
+        ctrl_map, _changed = _set_sxf_mode(dlg, ctrl_map, sxf)
+        now = read_sxf_mode(ctrl_map)
+        if now is not None and bool(now) != bool(sxf):
+            # 目的のモードにできなかった。このまま押すと違う意味のID
+            # を叩くので、何もせずに閉じて失敗を返す。
+            diagnostics.note(
+                "線属性の変更",
+                f"SXF対応を{'ON' if sxf else 'OFF'}にできなかったため、"
+                f"線属性の変更を中止しました(IDの意味が変わるため)",
+            )
+            _close_after_read(dlg, ctrl_map)
+            return False
+
+    missing = []
+    if color_ctrl_id:
+        if color_ctrl_id in ctrl_map:
+            win32gui.SendMessage(ctrl_map[color_ctrl_id], BM_CLICK, 0, 0)
+            time.sleep(0.03)
+        else:
+            missing.append(f"線色(ctrl_id={color_ctrl_id})")
+    if type_ctrl_id:
+        if type_ctrl_id in ctrl_map:
+            win32gui.SendMessage(ctrl_map[type_ctrl_id], BM_CLICK, 0, 0)
+            time.sleep(0.03)
+        else:
+            missing.append(f"線種(ctrl_id={type_ctrl_id})")
+    if width_text is not None:
+        if WIDTH_EDIT_ID in ctrl_map:
+            win32gui.SendMessage(ctrl_map[WIDTH_EDIT_ID], win32con.WM_SETTEXT, 0, width_text)
+            time.sleep(0.03)
+        else:
+            missing.append(f"線幅(ctrl_id={WIDTH_EDIT_ID})")
+
+    if missing:
+        diagnostics.note(
+            "線属性の変更",
+            f"{'、'.join(missing)}がこのダイアログに見つかりません"
+            f"(SXF対応={'ON' if read_sxf_mode(ctrl_map) else 'OFF'}、"
+            f"コントロール{len(ctrl_map)}個)",
+        )
+        _close_after_read(dlg, ctrl_map)
+        return False
 
     if OK_CTRL_ID not in ctrl_map:
+        _close_after_read(dlg, ctrl_map)
         return False
     win32gui.SendMessage(ctrl_map[OK_CTRL_ID], BM_CLICK, 0, 0)
     time.sleep(0.1)
+    diagnostics.ok("線属性の変更", "指定した項目を反映しました")
     return True
 
 
@@ -560,6 +712,21 @@ def capture_swatches(hwnd, on_color=None, on_type=None, on_dialog_found=None):
         except Exception:
             pass
     ctrl_map = _build_ctrl_map(dlg)
+    # 👑 2026-09-24: この関数が読むのは**既定モードの**線色9個・線種9個
+    # (COLOR_CTRL_IDS/TYPE_CTRL_IDS)。図面が「SXF対応拡張線色・線種」に
+    # なっているとこれらのIDが別物になり、色は全部灰色、線種は別の線種の
+    # 絵を読んでしまう。一旦既定モードへ落として読み、読み終えたら元の
+    # 状態へ戻す(最後はキャンセル相当で閉じるので図面には残らないが、
+    # チェックが即時反映される作りだった場合の副作用を避けるため明示的に
+    # 戻す)。
+    sxf_before = read_sxf_mode(ctrl_map)
+    if sxf_before:
+        ctrl_map, _ = _set_sxf_mode(dlg, ctrl_map, False)
+        if read_sxf_mode(ctrl_map):
+            diagnostics.note(
+                "線属性の見本読み取り",
+                "SXF対応を外せなかったため、見本が正しく読めません",
+            )
     # 👑 ダイアログのhwndが見つかった直後は、中の18個のプレビュー(色9+
     # 線種9)がまだ描画し切れていないことがある(実機で、同じ条件でも
     # 読み取り結果が実行のたびにバラつくのを確認)。GetPixelで読む前に
@@ -646,9 +813,13 @@ def capture_swatches(hwnd, on_color=None, on_type=None, on_dialog_found=None):
     finally:
         win32gui.ReleaseDC(0, hdc)
 
-    if CANCEL_CTRL_ID in ctrl_map:
-        win32gui.SendMessage(ctrl_map[CANCEL_CTRL_ID], BM_CLICK, 0, 0)
-        time.sleep(0.05)
+    if sxf_before:
+        ctrl_map, _ = _set_sxf_mode(dlg, ctrl_map, True)
+    # 👑 2026-09-24: SXFモードのダイアログには**キャンセルが無い**ため、
+    # 以前のCANCEL_CTRL_ID頼みの閉じ方では開いたまま残り、モーダルで
+    # jw_cadが操作不能になっていた(kamo報告の不具合と同じ原因がここにも
+    # あった。設定画面の「見本で選ぶ」経由でも起きる)。
+    _close_after_read(dlg, ctrl_map)
 
     return {"colors": colors, "types": types}
 # ===== ✂️ utils/line_attr_dialog.py END ✂️ =====

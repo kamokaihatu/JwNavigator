@@ -62,8 +62,27 @@ class AutoAttrMixin:
             orig_group, orig_layer = line_attr_dialog.read_current_layer_group(hwnd)
             original["group"] = orig_group
             original["layer"] = orig_layer
+            # 👑 2026-09-24: 元の線色/線種が読めていない場合、離脱時にそこは
+            # 戻せない。黙って進めると「戻ったつもりで戻っていない」になる
+            # ので、その時点で言う(バックログ①「成功したように見える失敗」)。
+            if original.get("color") is None or original.get("type") is None:
+                lacking = [
+                    label for label, key in (("線色", "color"), ("線種", "type"))
+                    if original.get(key) is None
+                ]
+                self.write_system_log(
+                    f"⚠️ [補助線系ボタン] 元の{'/'.join(lacking)}が読めませんでした"
+                    f"(SXF対応={'ON' if original.get('sxf') else 'OFF'})。"
+                    f"離脱してもその項目は元に戻りません。"
+                )
+        # 👑 2026-09-24: ボタンに保存されている線色/線種は**既定モードの
+        # ctrl_id**(utils/palette_config.pyのLINE_COLOR_CTRL_IDS等)。図面が
+        # 「SXF対応拡張線色・線種」になっていると線種のIDが重なって意味
+        # だけが変わるため、必ずsxf=Falseで既定モードへ落としてから押す。
+        # 元のSXF状態はoriginal["sxf"]に控えてあり、離脱時に復元する。
         ok = line_attr_dialog.apply_attr(
-            hwnd, entry.get("line_color"), entry.get("line_type"), entry.get("line_width") or None
+            hwnd, entry.get("line_color"), entry.get("line_type"),
+            entry.get("line_width") or None, sxf=False,
         )
         if not ok:
             self.write_system_log("❌ [補助線系ボタン] 線属性の変更に失敗しました。")
@@ -207,7 +226,13 @@ class AutoAttrMixin:
             except Exception:
                 pass
         original = pending["original"]
-        line_attr_dialog.apply_attr(hwnd, original["color"], original["type"], original["width"] or None)
+        # 👑 2026-09-24: original["color"]/["type"]は**original["sxf"]のモード
+        # でのctrl_id**なので、sxfも一緒に渡さないと別の線種を押してしまう。
+        # 古い保存状態(auto_attr_pending.json)にsxfが無い場合はNone=今のまま。
+        line_attr_dialog.apply_attr(
+            hwnd, original["color"], original["type"], original["width"] or None,
+            sxf=original.get("sxf"),
+        )
         orig_group = original.get("group")
         orig_layer = original.get("layer")
         if orig_group is not None or orig_layer is not None:
