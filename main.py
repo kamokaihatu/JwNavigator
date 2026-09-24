@@ -343,7 +343,7 @@ class JwNavigatorManager(LayerSaveMixin, AutoAttrMixin):
         # 👑 2026-09-16: 「探したが見つからなかった」を黙って握りつぶさない
         # ための共通記録先(utils/diagnostics.py)。ここでログ出力先を渡す。
         diagnostics.set_log_sink(self.write_system_log)
-        self.write_system_log("--- JwNavigator Ver3.75 メインシステム始動 ---")
+        self.write_system_log("--- JwNavigator Ver3.76 メインシステム始動 ---")
 
         # 👑 2026-09-11: 「exeを入れ替え/移動しても設定が消えないように」、
         # パッケージ版は設定の保存先を%APPDATA%\JwNavigator\へ移した
