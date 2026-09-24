@@ -545,7 +545,7 @@ class LineAttrSwatchDialog(tk.Toplevel):
 
     SWATCH_W, SWATCH_H = 60, 28
 
-    def __init__(self, master, hwnd, current_color=None, current_type=None, swatch_cache=None):
+    def __init__(self, master, hwnd, current_color=None, current_type=None, swatch_cache=None, sxf=False):
         super().__init__(master)
         self.result_color = None
         self.result_type = None
@@ -566,8 +566,13 @@ class LineAttrSwatchDialog(tk.Toplevel):
         #    に残し、次に開いた時はそこから即表示する(自動でjw_cadには
         #    触れない、あくまで前回ユーザーが自分で読み込んだ結果の再利用)。
         #    色に違和感があれば改めて読み込みボタンを押せばよい。
+        # 👑 2026-09-24: 既定モードとSXFモードでは見本そのものが別物なので、
+        # キャッシュもモード別に分ける(同じキーに入れると、片方を見た後に
+        # もう片方を開いたとき前のモードの見本が出てしまう)。
+        self._sxf = bool(sxf)
+        self._cache_key = "data_sxf" if self._sxf else "data"
         self._cache = swatch_cache if swatch_cache is not None else {"data": None}
-        cached = self._cache.get("data")
+        cached = self._cache.get(self._cache_key)
         self._swatches = cached
         self._attempted = cached is not None
 
@@ -663,7 +668,7 @@ class LineAttrSwatchDialog(tk.Toplevel):
             # _build_body()し直す必要はない(成功時)。
             swatches = line_attr_dialog.capture_swatches(
                 self._hwnd, on_color=self._update_color_swatch, on_type=self._update_type_swatch,
-                on_dialog_found=self._on_dialog_found,
+                on_dialog_found=self._on_dialog_found, sxf=self._sxf,
             )
             elapsed = time.time() - t0
             print(f"[LineAttrSwatchDialog] 読み取り: 成功={swatches is not None} 所要={elapsed:.2f}秒")
@@ -685,7 +690,7 @@ class LineAttrSwatchDialog(tk.Toplevel):
         self._swatches = swatches
         self._attempted = True
         if swatches is not None:
-            self._cache["data"] = swatches
+            self._cache[self._cache_key] = swatches
         else:
             self._build_body()
             self._center_on_screen()
@@ -711,14 +716,22 @@ class LineAttrSwatchDialog(tk.Toplevel):
             # 👑 未読み込み(swatches is None かつ self._attempted も False)の
             # 場合は、色・パターンをNoneのまま渡して空白マスとして描画する
             # (キャッシュ済み/読み込み済みなら実データをそのまま使う)。
-            color_items = swatches["colors"] if swatches else [(cid, None) for cid in line_attr_dialog.COLOR_CTRL_IDS]
-            type_items = swatches["types"] if swatches else [(cid, None) for cid in line_attr_dialog.TYPE_CTRL_IDS]
+            color_ids = (line_attr_dialog.SXF_COLOR_CTRL_IDS if self._sxf
+                         else line_attr_dialog.COLOR_CTRL_IDS)
+            type_ids = (line_attr_dialog.SXF_TYPE_CTRL_IDS if self._sxf
+                        else line_attr_dialog.TYPE_CTRL_IDS)
+            color_labels = (line_attr_dialog.SXF_COLOR_LABELS if self._sxf
+                            else line_attr_dialog.COLOR_LABELS)
+            type_labels = (line_attr_dialog.SXF_TYPE_LABELS if self._sxf
+                           else line_attr_dialog.TYPE_LABELS)
+            color_items = swatches["colors"] if swatches else [(cid, None) for cid in color_ids]
+            type_items = swatches["types"] if swatches else [(cid, None) for cid in type_ids]
 
             ttk.Label(body, text="線色", font=("Meiryo UI", 9, "bold")).pack(side="top", anchor="w", padx=10, pady=(10, 2))
             color_frame = ttk.Frame(body)
             color_frame.pack(side="top", padx=10)
             for i, (cid, hex_color) in enumerate(color_items):
-                label = line_attr_dialog.COLOR_LABELS[i]
+                label = color_labels[i]
                 cell = self._build_color_cell(color_frame, cid, hex_color, label)
                 cell.grid(row=0, column=i, padx=2, pady=2)
 
@@ -726,7 +739,7 @@ class LineAttrSwatchDialog(tk.Toplevel):
             type_frame = ttk.Frame(body)
             type_frame.pack(side="top", padx=10)
             for i, (cid, pattern) in enumerate(type_items):
-                label = line_attr_dialog.TYPE_LABELS[i]
+                label = type_labels[i]
                 cell = self._build_type_cell(type_frame, cid, pattern, label)
                 cell.grid(row=i // 3, column=i % 3, padx=3, pady=3)
 
@@ -1111,6 +1124,15 @@ class GroupContentsDialog(tk.Toplevel):
 
         auto_attr_frame = ttk.Frame(detail)
         self.auto_attr_frame = auto_attr_frame
+        # 👑 2026-09-24: SidePanel側(widgets/settings_window.py)と同じ設定を
+        # 箱の中身にも出す。ONにすると線色/線種が16色/15種のSXF側へ
+        # 入れ替わる。**SXFには補助線色・補助線種が無い**点に注意。
+        self.auto_attr_sxf_var = tk.BooleanVar()
+        self.auto_attr_sxf_check = ttk.Checkbutton(
+            auto_attr_frame, text="SXF", variable=self.auto_attr_sxf_var,
+            command=self._on_auto_attr_sxf_toggled,
+        )
+        self.auto_attr_sxf_check.pack(side="left", padx=(0, 8))
         ttk.Label(auto_attr_frame, text="線色:").pack(side="left")
         self.auto_attr_color_var = tk.StringVar()
         self.auto_attr_color_combo = ttk.Combobox(
@@ -1252,10 +1274,18 @@ class GroupContentsDialog(tk.Toplevel):
                     target_cid = first.get("target_command") or palette_config.DEFAULT_AUTO_ATTR_TARGET_COMMAND
                     target_label = next((lbl for cid, lbl in self._target_command_options if cid == target_cid), target_cid)
                     self.cmd_var.set(f"(モード・{target_label})")
-                    color_idx = palette_config.LINE_COLOR_CTRL_IDS.index(first["line_color"])
-                    type_idx = palette_config.LINE_TYPE_CTRL_IDS.index(first["line_type"])
-                    self.auto_attr_color_var.set(palette_config.LINE_COLOR_LABELS[color_idx])
-                    self.auto_attr_type_var.set(palette_config.LINE_TYPE_LABELS[type_idx])
+                    # 👑 どちらの一覧の番号かはline_attr_sxfで決まる。
+                    # 取り違えると添字がずれて別の線種が表示される
+                    # (番号が重なっているので例外にもならない)。
+                    sxf = bool(first.get("line_attr_sxf"))
+                    color_ids, color_labels, type_ids, type_labels =                         palette_config.line_attr_choices(sxf)
+                    self.auto_attr_sxf_var.set(sxf)
+                    self.auto_attr_color_combo.configure(values=color_labels)
+                    self.auto_attr_type_combo.configure(values=type_labels)
+                    color_idx = color_ids.index(first["line_color"])
+                    type_idx = type_ids.index(first["line_type"])
+                    self.auto_attr_color_var.set(color_labels[color_idx])
+                    self.auto_attr_type_var.set(type_labels[type_idx])
                     self.auto_attr_width_var.set(first.get("line_width") or "")
                     self.auto_attr_hv_var.set(bool(first.get("horizontal_vertical")))
 
@@ -1288,17 +1318,42 @@ class GroupContentsDialog(tk.Toplevel):
         if len(indices) != 1 or self._buttons[indices[0]].get("kind") != palette_config.BUTTON_KIND_AUTO_ATTR:
             return
         btn = self._buttons[indices[0]]
+        # 👑 ラベルとIDは必ずline_attr_choices()から対で取る(個数が違う)。
+        sxf = bool(self.auto_attr_sxf_var.get())
+        color_ids, color_labels, type_ids, type_labels = palette_config.line_attr_choices(sxf)
+        btn["line_attr_sxf"] = sxf
         try:
-            color_idx = palette_config.LINE_COLOR_LABELS.index(self.auto_attr_color_var.get())
-            btn["line_color"] = palette_config.LINE_COLOR_CTRL_IDS[color_idx]
+            color_idx = color_labels.index(self.auto_attr_color_var.get())
+            btn["line_color"] = color_ids[color_idx]
         except ValueError:
             pass
         try:
-            type_idx = palette_config.LINE_TYPE_LABELS.index(self.auto_attr_type_var.get())
-            btn["line_type"] = palette_config.LINE_TYPE_CTRL_IDS[type_idx]
+            type_idx = type_labels.index(self.auto_attr_type_var.get())
+            btn["line_type"] = type_ids[type_idx]
         except ValueError:
             pass
         btn["horizontal_vertical"] = self.auto_attr_hv_var.get()
+
+    def _on_auto_attr_sxf_toggled(self):
+        """SXFの切替で選択肢ごと入れ替える。👑 番号は一覧をまたいで意味が
+        変わるので持ち越さず、その一覧の既定へ寄せて選び直してもらう。"""
+        if self._loading_detail:
+            return
+        indices = self._selected_indices()
+        if len(indices) != 1 or self._buttons[indices[0]].get("kind") != palette_config.BUTTON_KIND_AUTO_ATTR:
+            return
+        btn = self._buttons[indices[0]]
+        sxf = bool(self.auto_attr_sxf_var.get())
+        color_ids, color_labels, type_ids, type_labels = palette_config.line_attr_choices(sxf)
+        btn["line_attr_sxf"] = sxf
+        btn["line_color"] = (palette_config.SXF_DEFAULT_LINE_COLOR_CTRL_ID if sxf
+                             else palette_config.DEFAULT_LINE_COLOR_CTRL_ID)
+        btn["line_type"] = (palette_config.SXF_DEFAULT_LINE_TYPE_CTRL_ID if sxf
+                            else palette_config.DEFAULT_LINE_TYPE_CTRL_ID)
+        self.auto_attr_color_combo.configure(values=color_labels)
+        self.auto_attr_type_combo.configure(values=type_labels)
+        self.auto_attr_color_var.set(color_labels[color_ids.index(btn["line_color"])])
+        self.auto_attr_type_var.set(type_labels[type_ids.index(btn["line_type"])])
 
         def _label_to_layer_value(label):
             try:
@@ -1335,7 +1390,7 @@ class GroupContentsDialog(tk.Toplevel):
         btn = self._buttons[indices[0]]
         dlg = LineAttrSwatchDialog(
             self, hwnd, current_color=btn.get("line_color"), current_type=btn.get("line_type"),
-            swatch_cache=self.swatch_cache,
+            swatch_cache=self.swatch_cache, sxf=bool(btn.get("line_attr_sxf")),
         )
         self.wait_window(dlg)
         if dlg.result_color is not None:

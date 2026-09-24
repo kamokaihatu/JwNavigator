@@ -74,3 +74,58 @@ class NormalizeConfigTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class SxfLineAttrTests(unittest.TestCase):
+    """👑 2026-09-24: モードボタンにSXFの線色・線種を設定できるようにした件。
+    既定モードとSXFモードで**線種のctrl_idが重なる**(既定の補助線種=2457は
+    SXFでは9番=二点鎖線)ため、番号だけでは区別できない。ボタン側が
+    line_attr_sxfでどちらの一覧かを覚えていることが前提になっている。"""
+
+    def _norm(self, raw):
+        cfg = {"sides": {"左": {"groups": [{"buttons": [raw]}]}}}
+        out = palette_config.normalize_config(cfg)
+        return out["sides"]["左"]["groups"][0]["buttons"][0]
+
+    def _auto_attr(self, **extra):
+        base = {"kind": palette_config.BUTTON_KIND_AUTO_ATTR, "name": "補助線"}
+        base.update(extra)
+        return base
+
+    def test_existing_buttons_without_the_flag_stay_in_the_default_palette(self):
+        """キーが無い既存のconfigは既定モード扱い＝今までどおり動くこと。"""
+        btn = self._norm(self._auto_attr(line_color=1409, line_type=2457))
+        self.assertFalse(btn["line_attr_sxf"])
+        self.assertEqual(btn["line_color"], 1409)
+        self.assertEqual(btn["line_type"], 2457)
+
+    def test_sxf_button_keeps_its_own_ids(self):
+        btn = self._norm(self._auto_attr(line_attr_sxf=True, line_color=2273, line_type=2457))
+        self.assertTrue(btn["line_attr_sxf"])
+        self.assertEqual(btn["line_color"], 2273, "SXFの線色が既定へ差し替えられた")
+        self.assertEqual(btn["line_type"], 2457)
+
+    def test_ids_from_the_other_palette_fall_back_instead_of_being_kept(self):
+        """👑 SXFボタンに既定モードの線色(1409)が入っていたら、その一覧に
+        無いので既定値へ戻す。黙って持ち越すと存在しないボタンを押しにいく。"""
+        btn = self._norm(self._auto_attr(line_attr_sxf=True, line_color=1409, line_type=2457))
+        self.assertEqual(btn["line_color"], palette_config.SXF_DEFAULT_LINE_COLOR_CTRL_ID)
+
+    def test_choices_come_in_matching_pairs(self):
+        """👑 個数が違う(既定9/9、SXF16/15)ので、IDとラベルは必ず対で取る。
+        片方だけ別の一覧を使うと添字がずれて別の線種になる。"""
+        for sxf in (False, True):
+            cids, clabels, tids, tlabels = palette_config.line_attr_choices(sxf)
+            self.assertEqual(len(cids), len(clabels), f"線色の個数が不一致 (sxf={sxf})")
+            self.assertEqual(len(tids), len(tlabels), f"線種の個数が不一致 (sxf={sxf})")
+        self.assertEqual(len(palette_config.SXF_LINE_COLOR_CTRL_IDS), 16)
+        self.assertEqual(len(palette_config.SXF_LINE_TYPE_CTRL_IDS), 15)
+
+    def test_sxf_has_no_auxiliary_line_color(self):
+        """👑 SXFには補助線色・補助線種が無い(9番目はdeeppink/二点鎖線)。
+        補助線モードボタンを作るには既定モードを選ぶ必要がある、という
+        前提をここで固定しておく。"""
+        self.assertNotIn(palette_config.DEFAULT_LINE_COLOR_CTRL_ID,
+                         palette_config.SXF_LINE_COLOR_CTRL_IDS)
+        self.assertFalse(any("補助" in l for l in palette_config.SXF_LINE_COLOR_LABELS))
+        self.assertFalse(any("補助" in l for l in palette_config.SXF_LINE_TYPE_LABELS))

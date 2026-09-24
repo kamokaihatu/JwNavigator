@@ -247,3 +247,6 @@ __marimo__/
 *.jw$
 *.jwc
 *.bak
+
+# 線属性ダイアログの調査ダンプ(tools/dump_line_attr_dialog.pyが生成)
+tools/line_attr_dump.txt

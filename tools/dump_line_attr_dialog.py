@@ -9,6 +9,7 @@
     .venv/Scripts/python.exe tools/dump_line_attr_dialog.py
 ダイアログは最後にキャンセルで閉じるので、図面は変更されない。
 """
+import io
 import os
 import sys
 
@@ -90,6 +91,20 @@ def main():
 
     win32gui.EnumChildWindows(dlg, cb, None)
     rows.sort(key=lambda r: (r[3][1], r[3][0]))
+
+    # 👑 コンソールの文字コードで日本語が化けるため、UTF-8のファイルにも
+    # 同じ内容を書き出す(ラベルを正確に採るのが目的)。
+    out = os.path.join(os.path.dirname(os.path.abspath(__file__)), "line_attr_dump.txt")
+    sep, nl = chr(9), chr(10)
+    with io.open(out, "w", encoding="utf-8") as f:
+        f.write(f"jw_cad title={win32gui.GetWindowText(hwnd)!r}" + nl)
+        f.write(f"dialog hwnd={dlg}" + nl)
+        f.write(f"controls={len(rows)}" + nl)
+        for cid, cls, text, rect, check, state, bstyle in rows:
+            rect_s = f"{rect[0]},{rect[1]},{rect[2]}x{rect[3]}"
+            f.write(sep.join([str(cid), cls, rect_s, f"chk={check}",
+                              f"state={state}", text]) + nl)
+    print(f"[dump] {out} に書き出しました")
 
     print(f"\nコントロール {len(rows)} 個 (画面の上から順):")
     print(f"{'ctrl_id':>8} {'class':<14} {'x,y,w,h':<22} {'chk':>3} {'state':>5} {'btnstyle':>8}  text")
